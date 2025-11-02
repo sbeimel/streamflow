@@ -1649,6 +1649,7 @@ class StreamCheckerService:
             'progress': progress,
             'last_global_check': self.update_tracker.get_last_global_check(),
             'config': {
+                'pipeline_mode': self.config.get('pipeline_mode'),
                 'check_interval': self.config.get('check_interval'),
                 'global_check_schedule': self.config.get('global_check_schedule'),
                 'queue_settings': self.config.get('queue')

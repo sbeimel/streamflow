@@ -534,10 +534,11 @@ def get_changelog():
 
 @app.route('/api/discover-streams', methods=['POST'])
 def discover_streams():
-    """Trigger stream discovery and assignment."""
+    """Trigger stream discovery and assignment (manual Quick Action)."""
     try:
         manager = get_automation_manager()
-        assignments = manager.discover_and_assign_streams()
+        # Use force=True to bypass feature flags for manual Quick Actions
+        assignments = manager.discover_and_assign_streams(force=True)
         return jsonify({
             "message": "Stream discovery completed",
             "assignments": assignments,
@@ -549,13 +550,14 @@ def discover_streams():
 
 @app.route('/api/refresh-playlist', methods=['POST'])
 def refresh_playlist():
-    """Trigger M3U playlist refresh."""
+    """Trigger M3U playlist refresh (manual Quick Action)."""
     try:
         data = request.get_json() or {}
         account_id = data.get('account_id')
         
         manager = get_automation_manager()
-        success = manager.refresh_playlists()
+        # Use force=True to bypass feature flags for manual Quick Actions
+        success = manager.refresh_playlists(force=True)
         
         if success:
             return jsonify({"message": "Playlist refresh completed successfully"})
