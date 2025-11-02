@@ -377,10 +377,15 @@ class AutomatedStreamManager:
         else:
             logging.info("Automation configuration updated")
     
-    def refresh_playlists(self) -> bool:
-        """Refresh M3U playlists and track changes."""
+    def refresh_playlists(self, force: bool = False) -> bool:
+        """Refresh M3U playlists and track changes.
+        
+        Args:
+            force: If True, bypass the auto_playlist_update feature flag check.
+                   Used for manual/quick action triggers from the UI.
+        """
         try:
-            if not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
+            if not force and not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
                 logging.info("Playlist update is disabled in configuration")
                 return False
             
@@ -521,9 +526,14 @@ class AutomatedStreamManager:
                 })
             return False
     
-    def discover_and_assign_streams(self) -> Dict[str, int]:
-        """Discover new streams and assign them to channels based on regex patterns."""
-        if not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
+    def discover_and_assign_streams(self, force: bool = False) -> Dict[str, int]:
+        """Discover new streams and assign them to channels based on regex patterns.
+        
+        Args:
+            force: If True, bypass the auto_stream_discovery feature flag check.
+                   Used for manual/quick action triggers from the UI.
+        """
+        if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logging.info("Stream discovery is disabled in configuration")
             return {}
         
