@@ -800,27 +800,37 @@ class AutomatedStreamManager:
         logger.info("Automation cycle completed")
     def start_automation(self):
         """Start the automated stream management process."""
+        log_function_call(logger, "start_automation")
         if self.running:
             logger.warning("Automation is already running")
             return
         
+        log_state_change(logger, "automation_manager", "stopped", "starting")
         self.running = True
         logger.info("Starting automated stream management...")
         
         def automation_loop():
+            logger.debug("Automation loop thread started")
             while self.running:
                 try:
+                    logger.debug("Running automation cycle...")
                     self.run_automation_cycle()
+                    logger.debug("Automation cycle completed, sleeping for 60 seconds")
                     
                     # Sleep for a minute before checking again
                     time.sleep(60)
                     
                 except Exception as e:
+                    log_exception(logger, e, "automation loop")
                     logger.error(f"Error in automation loop: {e}")
                     time.sleep(60)  # Continue after error
+            logger.debug("Automation loop thread exiting")
         
         self.automation_thread = threading.Thread(target=automation_loop, daemon=True)
         self.automation_thread.start()
+        logger.debug(f"Automation thread started (id: {self.automation_thread.ident})")
+        log_state_change(logger, "automation_manager", "starting", "running")
+        log_function_return(logger, "start_automation")
     
     def stop_automation(self):
         """Stop the automated stream management process."""

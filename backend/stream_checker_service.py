@@ -126,22 +126,33 @@ class StreamCheckConfig:
             Dict[str, Any]: The configuration dictionary.
         """
         import copy
+        log_function_call(logger, "_load_config", config_file=str(self.config_file))
+        
         if self.config_file.exists():
+            logger.debug(f"Config file exists: {self.config_file}")
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
+                    logger.debug(f"Loaded config with {len(loaded)} top-level keys")
                     # Deep copy defaults to avoid mutating DEFAULT_CONFIG
                     config = copy.deepcopy(self.DEFAULT_CONFIG)
                     config.update(loaded)
+                    logger.debug(f"Merged config: pipeline_mode={config.get('pipeline_mode')}, enabled={config.get('enabled')}")
+                    log_function_return(logger, "_load_config", f"<config with {len(config)} keys>")
                     return config
             except (json.JSONDecodeError, FileNotFoundError) as e:
+                log_exception(logger, e, f"loading config from {self.config_file}")
                 logger.warning(
                     f"Could not load config from "
                     f"{self.config_file}: {e}, using defaults"
                 )
+        else:
+            logger.debug(f"Config file does not exist: {self.config_file}")
         
         # Create default config - use deep copy to avoid mutation
+        logger.debug("Creating default config")
         self._save_config(copy.deepcopy(self.DEFAULT_CONFIG))
+        log_function_return(logger, "_load_config", "<default config>")
         return copy.deepcopy(self.DEFAULT_CONFIG)
     
     def _save_config(
@@ -689,13 +700,25 @@ class StreamCheckerService:
     """Main service for managing stream checking operations."""
     
     def __init__(self):
+        log_function_call(logger, "__init__")
+        logger.debug("Initializing StreamCheckerService components...")
+        
         self.config = StreamCheckConfig()
+        logger.debug(f"Config loaded: pipeline_mode={self.config.get('pipeline_mode')}")
+        
         self.update_tracker = ChannelUpdateTracker()
+        logger.debug("Update tracker initialized")
+        
         self.check_queue = StreamCheckQueue(
             max_size=self.config.get('queue.max_size', 1000)
         )
+        logger.debug(f"Check queue initialized with max_size={self.config.get('queue.max_size', 1000)}")
+        
         self.progress = StreamCheckerProgress()
+        logger.debug("Progress tracker initialized")
+        
         self.dead_streams_tracker = DeadStreamsTracker()
+        logger.debug("Dead streams tracker initialized")
         
         # Initialize changelog manager
         self.changelog = None
@@ -704,6 +727,7 @@ class StreamCheckerService:
                 self.changelog = ChangelogManager(changelog_file=CONFIG_DIR / "stream_checker_changelog.json")
                 logger.info("Stream checker changelog manager initialized")
             except Exception as e:
+                log_exception(logger, e, "changelog initialization")
                 logger.warning(f"Failed to initialize changelog manager: {e}")
         
         self.running = False
@@ -715,30 +739,39 @@ class StreamCheckerService:
         
         # Event for immediate triggering of updated channels check
         self.check_trigger = threading.Event()
+        logger.debug("Check trigger event created")
         
         # Event for immediate config change notification
         self.config_changed = threading.Event()
+        logger.debug("Config changed event created")
         
         logger.info("Stream Checker Service initialized")
+        log_function_return(logger, "__init__")
     
     def start(self):
         """Start the stream checker service."""
+        log_function_call(logger, "start")
         with self.lock:
             if self.running:
                 logger.warning("Stream checker service is already running")
                 return
             
+            log_state_change(logger, "stream_checker_service", "stopped", "starting")
             self.running = True
             
             # Start worker thread for processing queue
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
+            logger.debug(f"Worker thread started (id: {self.worker_thread.ident})")
             
             # Start scheduler thread for periodic checks
             self.scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
             self.scheduler_thread.start()
+            logger.debug(f"Scheduler thread started (id: {self.scheduler_thread.ident})")
             
+            log_state_change(logger, "stream_checker_service", "starting", "running")
             logger.info("Stream checker service started")
+            log_function_return(logger, "start")
     
     def stop(self):
         """Stop the stream checker service."""
@@ -761,21 +794,28 @@ class StreamCheckerService:
     
     def _worker_loop(self):
         """Main worker loop for processing the check queue."""
+        log_function_call(logger, "_worker_loop")
         logger.info("Stream checker worker started")
         
         while self.running:
             try:
+                logger.debug("Worker waiting for next channel from queue...")
                 channel_id = self.check_queue.get_next_channel(timeout=1.0)
                 if channel_id is None:
+                    logger.debug("No channel in queue (timeout)")
                     continue
                 
+                logger.debug(f"Worker processing channel {channel_id}")
                 # Check this channel
                 self._check_channel(channel_id)
+                logger.debug(f"Worker completed channel {channel_id}")
                 
             except Exception as e:
+                log_exception(logger, e, "worker loop")
                 logger.error(f"Error in worker loop: {e}", exc_info=True)
         
         logger.info("Stream checker worker stopped")
+        log_function_return(logger, "_worker_loop")
     
     def _scheduler_loop(self):
         """Scheduler loop for M3U update-triggered and scheduled checks."""
@@ -1151,6 +1191,11 @@ class StreamCheckerService:
     
     def _check_channel(self, channel_id: int):
         """Check and reorder streams for a specific channel."""
+        import time as time_module
+        start_time = time_module.time()
+        log_function_call(logger, "_check_channel", channel_id=channel_id)
+        
+        log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
         self.checking = True
         logger.info(f"=" * 80)
         logger.info(f"Checking channel {channel_id}")
@@ -1158,6 +1203,7 @@ class StreamCheckerService:
         
         try:
             # Get channel information
+            logger.debug(f"Updating progress for channel {channel_id} initialization")
             self.progress.update(
                 channel_id=channel_id,
                 channel_name='Loading...',
@@ -1169,8 +1215,10 @@ class StreamCheckerService:
             )
             
             base_url = _get_base_url()
+            logger.debug(f"Fetching channel data from: {base_url}/api/channels/channels/{channel_id}/")
             channel_data = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/")
             if not channel_data:
+                logger.error(f"fetch_data_from_url returned None for channel {channel_id}")
                 raise Exception(f"Could not fetch channel {channel_id}")
             
             channel_name = channel_data.get('name', f'Channel {channel_id}')
