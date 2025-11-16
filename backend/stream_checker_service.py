@@ -1532,6 +1532,8 @@ class StreamCheckerService:
                         'channel_name': channel_name,
                         'total_streams': len(streams),
                         'streams_analyzed': len(analyzed_streams),
+                        'dead_streams_detected': len(dead_stream_ids) if not force_check else 0,
+                        'streams_revived': len(revived_stream_ids),
                         'success': True,
                         'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
                     }
