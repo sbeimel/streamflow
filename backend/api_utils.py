@@ -215,15 +215,15 @@ def _refresh_token() -> bool:
     Returns:
         bool: True if refresh successful, False otherwise.
     """
-    logging.info("Token expired or invalid. Attempting to refresh...")
+    logger.info("Token expired or invalid. Attempting to refresh...")
     if login():
         # Reload from .env file only if it exists
         if env_path.exists():
             load_dotenv(dotenv_path=env_path, override=True)
-        logging.info("Token refreshed successfully.")
+        logger.info("Token refreshed successfully.")
         return True
     else:
-        logging.error("Token refresh failed.")
+        logger.error("Token refresh failed.")
         return False
 
 def fetch_data_from_url(url: str) -> Optional[Any]:
@@ -313,7 +313,7 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             if _refresh_token():
-                logging.info("Retrying PATCH request with new token...")
+                logger.info("Retrying PATCH request with new token...")
                 resp = requests.patch(
                     url, json=payload, headers=_get_auth_headers()
                 )
@@ -322,12 +322,12 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
             else:
                 raise
         else:
-            logging.error(
+            logger.error(
                 f"Error patching data to {url}: {e.response.text}"
             )
             raise
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error patching data to {url}: {e}")
+        logger.error(f"Error patching data to {url}: {e}")
         raise
 
 def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
@@ -357,7 +357,7 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             if _refresh_token():
-                logging.info("Retrying POST request with new token...")
+                logger.info("Retrying POST request with new token...")
                 resp = requests.post(
                     url, json=payload, headers=_get_auth_headers()
                 )
@@ -366,12 +366,12 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
             else:
                 raise
         else:
-            logging.error(
+            logger.error(
                 f"Error posting data to {url}: {e.response.text}"
             )
             raise
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error posting data to {url}: {e}")
+        logger.error(f"Error posting data to {url}: {e}")
         raise
 
 def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
@@ -425,7 +425,7 @@ def update_channel_streams(
     
     non_existent_count = original_count - len(filtered_stream_ids)
     if non_existent_count > 0:
-        logging.warning(
+        logger.warning(
             f"Filtered out {non_existent_count} non-existent stream(s) for channel {channel_id}"
         )
     
@@ -433,7 +433,7 @@ def update_channel_streams(
     if not allow_dead_streams:
         filtered_stream_ids, dead_count = filter_dead_streams(filtered_stream_ids)
         if dead_count > 0:
-            logging.warning(
+            logger.warning(
                 f"Filtered out {dead_count} dead stream(s) for channel {channel_id}"
             )
     
@@ -443,20 +443,20 @@ def update_channel_streams(
     try:
         response = patch_request(url, data)
         if response and response.status_code in [200, 204]:
-            logging.info(
+            logger.info(
                 f"Successfully updated channel {channel_id} with "
                 f"{len(filtered_stream_ids)} streams"
             )
             return True
         else:
             status = response.status_code if response else 'None'
-            logging.warning(
+            logger.warning(
                 f"Unexpected response for channel {channel_id}: "
                 f"{status}"
             )
             return False
     except Exception as e:
-        logging.error(
+        logger.error(
             f"Failed to update channel {channel_id} streams: {e}"
         )
         raise
@@ -488,10 +488,10 @@ def refresh_m3u_playlists(
     
     try:
         resp = post_request(url, {})
-        logging.info("M3U refresh initiated successfully")
+        logger.info("M3U refresh initiated successfully")
         return resp
     except Exception as e:
-        logging.error(f"Failed to refresh M3U playlists: {e}")
+        logger.error(f"Failed to refresh M3U playlists: {e}")
         raise
 
 
@@ -542,7 +542,7 @@ def get_streams(log_result: bool = True) -> List[Dict[str, Any]]:
             break
     
     if log_result:
-        logging.info(f"Fetched {len(all_streams)} total streams")
+        logger.info(f"Fetched {len(all_streams)} total streams")
     return all_streams
 
 
@@ -561,7 +561,7 @@ def get_valid_stream_ids() -> set:
         valid_ids = {stream['id'] for stream in all_streams if isinstance(stream, dict) and 'id' in stream}
         return valid_ids
     except Exception as e:
-        logging.error(f"Failed to fetch valid stream IDs: {e}")
+        logger.error(f"Failed to fetch valid stream IDs: {e}")
         # Return empty set on error - this will cause all stream IDs to be filtered out
         # which is safer than allowing potentially invalid IDs
         return set()
@@ -583,7 +583,7 @@ def get_dead_stream_urls() -> set:
         dead_streams = tracker.get_dead_streams()
         return set(dead_streams.keys())
     except Exception as e:
-        logging.warning(f"Could not load dead streams tracker: {e}")
+        logger.warning(f"Could not load dead streams tracker: {e}")
         # Return empty set if tracker not available
         return set()
 
@@ -773,7 +773,7 @@ def add_streams_to_channel(
     # Log if any stream IDs were filtered out as non-existent
     non_existent_count = len([sid for sid in stream_ids if sid not in valid_stream_ids])
     if non_existent_count > 0:
-        logging.warning(
+        logger.warning(
             f"Filtered out {non_existent_count} non-existent stream(s) "
             f"before adding to channel {channel_id}"
         )
@@ -782,7 +782,7 @@ def add_streams_to_channel(
     if not allow_dead_streams and valid_new_stream_ids:
         valid_new_stream_ids, dead_count = filter_dead_streams(valid_new_stream_ids)
         if dead_count > 0:
-            logging.warning(
+            logger.warning(
                 f"Filtered out {dead_count} dead stream(s) "
                 f"before adding to channel {channel_id}"
             )
@@ -790,13 +790,13 @@ def add_streams_to_channel(
     if valid_new_stream_ids:
         updated_streams = current_stream_ids + valid_new_stream_ids
         update_channel_streams(channel_id, updated_streams, valid_stream_ids, allow_dead_streams)
-        logging.info(
+        logger.info(
             f"Added {len(valid_new_stream_ids)} new streams to channel "
             f"{channel_id}"
         )
         return len(valid_new_stream_ids)
     else:
-        logging.info(
+        logger.info(
             f"No new streams to add to channel {channel_id}"
         )
         return 0
