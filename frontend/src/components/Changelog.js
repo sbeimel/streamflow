@@ -446,9 +446,31 @@ function Changelog() {
               </Typography>
               
               {details.total_streams && (
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Total Streams: {details.total_streams} | Analyzed: {details.streams_analyzed || details.total_streams}
-                </Typography>
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Total Streams: {details.total_streams} | Analyzed: {details.streams_analyzed || details.total_streams}
+                  </Typography>
+                  {details.dead_streams_detected > 0 && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <Chip 
+                        label={`${details.dead_streams_detected} Dead Stream${details.dead_streams_detected !== 1 ? 's' : ''} Detected`}
+                        color="error"
+                        size="small"
+                        icon={<ErrorIcon />}
+                      />
+                    </Stack>
+                  )}
+                  {details.streams_revived > 0 && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <Chip 
+                        label={`${details.streams_revived} Stream${details.streams_revived !== 1 ? 's' : ''} Revived`}
+                        color="success"
+                        size="small"
+                        icon={<CheckCircleIcon />}
+                      />
+                    </Stack>
+                  )}
+                </Box>
               )}
               
               {details.error && (

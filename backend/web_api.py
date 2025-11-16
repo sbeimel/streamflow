@@ -509,6 +509,37 @@ def get_changelog():
         logger.error(f"Error getting changelog: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/dead-streams', methods=['GET'])
+def get_dead_streams():
+    """Get dead streams statistics and list."""
+    try:
+        checker = get_stream_checker_service()
+        if not checker or not checker.dead_streams_tracker:
+            return jsonify({"error": "Dead streams tracker not available"}), 503
+        
+        dead_streams = checker.dead_streams_tracker.get_dead_streams()
+        
+        # Transform to a more frontend-friendly format
+        dead_streams_list = []
+        for url, info in dead_streams.items():
+            dead_streams_list.append({
+                'url': url,
+                'stream_id': info.get('stream_id'),
+                'stream_name': info.get('stream_name'),
+                'marked_dead_at': info.get('marked_dead_at')
+            })
+        
+        # Sort by marked_dead_at (newest first)
+        dead_streams_list.sort(key=lambda x: x.get('marked_dead_at', ''), reverse=True)
+        
+        return jsonify({
+            "total_dead_streams": len(dead_streams_list),
+            "dead_streams": dead_streams_list
+        })
+    except Exception as e:
+        logger.error(f"Error getting dead streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/discover-streams', methods=['POST'])
 def discover_streams():
     """Trigger stream discovery and assignment (manual Quick Action)."""
