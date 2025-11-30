@@ -165,7 +165,8 @@ def _get_auth_headers() -> Dict[str, str]:
     """Get authorization headers for API requests.
     
     Token validation is not done proactively - invalid tokens are 
-    handled by the 401 retry logic in API request functions.
+    handled by the 401 retry logic in the calling functions (e.g.,
+    _fetch_url, fetch_data_from_url) that make requests with these headers.
     
     Returns:
         Dictionary containing authorization headers.
