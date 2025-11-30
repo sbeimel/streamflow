@@ -296,14 +296,17 @@ class TestM3UAccountsCachingDebugLogs(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
         import logging
         from io import StringIO
+        import automated_stream_manager
         
         # Set up logging capture
         self.log_stream = StringIO()
         self.handler = logging.StreamHandler(self.log_stream)
         self.handler.setLevel(logging.DEBUG)
         
-        # Get the logger used by automated_stream_manager
-        self.logger = logging.getLogger('automated_stream_manager')
+        # Get the logger used by automated_stream_manager dynamically from the module's __name__
+        # This ensures we're capturing logs from the correct logger
+        self.logger_name = automated_stream_manager.__name__
+        self.logger = logging.getLogger(self.logger_name)
         self.original_level = self.logger.level
         self.logger.setLevel(logging.DEBUG)
         self.logger.addHandler(self.handler)
