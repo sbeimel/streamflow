@@ -3,6 +3,10 @@ API utilities for interacting with the Dispatcharr API.
 
 This module provides authentication, request handling, and helper functions
 for communicating with the Dispatcharr API endpoints.
+
+Data access is handled through the Universal Data Index (UDI) system,
+which serves as a single source of truth for all Dispatcharr data.
+Write operations (PATCH, POST, DELETE) still use direct API calls.
 """
 
 import os
@@ -18,6 +22,9 @@ from logging_config import (
     setup_logging, log_function_call, log_function_return,
     log_exception, log_api_request, log_api_response
 )
+
+# Import UDI Manager for data access
+from udi import get_udi_manager
 
 # Setup logging for this module
 logger = setup_logging(__name__)
@@ -376,7 +383,7 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
 
 def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
     """
-    Fetch streams for a given channel ID.
+    Fetch streams for a given channel ID from the UDI cache.
     
     Parameters:
         channel_id (int): The ID of the channel.
@@ -384,11 +391,15 @@ def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
     Returns:
         Optional[List[Dict[str, Any]]]: List of stream objects or None.
     """
-    url = (
-        f"{_get_base_url()}/api/channels/channels/{channel_id}/"
-        f"streams/"
-    )
-    return fetch_data_from_url(url)
+    udi = get_udi_manager()
+    streams = udi.get_channel_streams(channel_id)
+    if streams:
+        return streams
+    # Return empty list if channel exists but has no streams
+    channel = udi.get_channel_by_id(channel_id)
+    if channel is not None:
+        return []
+    return None
 
 
 def update_channel_streams(
@@ -497,21 +508,19 @@ def refresh_m3u_playlists(
 
 def get_m3u_accounts() -> Optional[List[Dict[str, Any]]]:
     """
-    Fetch all M3U accounts.
+    Fetch all M3U accounts from the UDI cache.
     
     Returns:
         Optional[List[Dict[str, Any]]]: List of M3U account objects
-            or None if request fails.
+            or None if not available.
     """
-    url = f"{_get_base_url()}/api/m3u/accounts/"
-    return fetch_data_from_url(url)
+    udi = get_udi_manager()
+    accounts = udi.get_m3u_accounts()
+    return accounts if accounts else None
 
 def get_streams(log_result: bool = True) -> List[Dict[str, Any]]:
     """
-    Fetch all available streams with pagination support.
-    
-    Fetches all streams from the Dispatcharr API, handling pagination
-    automatically. Uses page_size=100 to minimize API calls.
+    Fetch all available streams from the UDI cache.
     
     Parameters:
         log_result (bool): Whether to log the number of fetched streams.
@@ -520,35 +529,14 @@ def get_streams(log_result: bool = True) -> List[Dict[str, Any]]:
     Returns:
         List[Dict[str, Any]]: List of all stream objects.
     """
-    base_url = _get_base_url()
-    # Use page_size parameter to maximize streams per request
-    url = f"{base_url}/api/channels/streams/?page_size=100"
-    
-    all_streams: List[Dict[str, Any]] = []
-    
-    while url:
-        response = fetch_data_from_url(url)
-        if not response:
-            break
-        
-        # Handle paginated response
-        if isinstance(response, dict) and 'results' in response:
-            all_streams.extend(response.get('results', []))
-            url = response.get('next')  # Get next page URL
-        else:
-            # If response is list (non-paginated), use it directly
-            if isinstance(response, list):
-                all_streams.extend(response)
-            break
-    
-    if log_result:
-        logger.info(f"Fetched {len(all_streams)} total streams")
-    return all_streams
+    udi = get_udi_manager()
+    streams = udi.get_streams(log_result=log_result)
+    return streams
 
 
 def get_valid_stream_ids() -> set:
     """
-    Get a set of all valid stream IDs that currently exist in Dispatcharr.
+    Get a set of all valid stream IDs from the UDI cache.
     
     This is used to filter out stream IDs that no longer exist (e.g., removed
     from M3U playlists) before updating channels.
@@ -556,15 +544,8 @@ def get_valid_stream_ids() -> set:
     Returns:
         set: Set of valid stream IDs.
     """
-    try:
-        all_streams = get_streams(log_result=False)
-        valid_ids = {stream['id'] for stream in all_streams if isinstance(stream, dict) and 'id' in stream}
-        return valid_ids
-    except Exception as e:
-        logger.error(f"Failed to fetch valid stream IDs: {e}")
-        # Return empty set on error - this will cause all stream IDs to be filtered out
-        # which is safer than allowing potentially invalid IDs
-        return set()
+    udi = get_udi_manager()
+    return udi.get_valid_stream_ids()
 
 
 def get_dead_stream_urls() -> set:
@@ -638,62 +619,13 @@ def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[i
 
 def has_custom_streams() -> bool:
     """
-    Efficiently check if any custom streams exist.
-    
-    Tries to use API filtering if supported, otherwise iterates through
-    pages with early exit. This is much faster than fetching all streams
-    when there are thousands.
+    Check if any custom streams exist in the UDI cache.
     
     Returns:
         bool: True if at least one custom stream exists, False otherwise.
     """
-    base_url = _get_base_url()
-    
-    # Try filtering by is_custom parameter first (if API supports it)
-    # This would be the most efficient approach
-    url = f"{base_url}/api/channels/streams/?is_custom=true&page_size=1"
-    response = fetch_data_from_url(url)
-    
-    if response:
-        # Handle paginated response
-        if isinstance(response, dict):
-            results = response.get('results', [])
-            # If we got results with the filter, custom streams exist
-            if results and any(s.get('is_custom', False) for s in results):
-                return True
-            # If no results, check if filtering is supported by checking total count
-            # If count is explicitly 0 or results is empty list, no custom streams
-            if 'results' in response:
-                return False
-        elif isinstance(response, list) and response:
-            if any(s.get('is_custom', False) for s in response):
-                return True
-    
-    # Fallback: If filtering isn't supported or unclear, iterate through pages
-    # Use page_size=100 for efficiency (fewer API calls)
-    url = f"{base_url}/api/channels/streams/?page_size=100"
-    
-    while url:
-        response = fetch_data_from_url(url)
-        if not response:
-            break
-        
-        # Handle paginated response
-        if isinstance(response, dict) and 'results' in response:
-            streams = response.get('results', [])
-            # Early exit if we find any custom stream
-            if any(s.get('is_custom', False) for s in streams):
-                return True
-            url = response.get('next')
-        elif isinstance(response, list):
-            # Early exit if we find any custom stream
-            if any(s.get('is_custom', False) for s in response):
-                return True
-            break
-        else:
-            break
-    
-    return False
+    udi = get_udi_manager()
+    return udi.has_custom_streams()
 
 def create_channel_from_stream(
     stream_id: int,
