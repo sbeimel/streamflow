@@ -77,13 +77,14 @@ def _validate_token(token: str) -> bool:
         return False
     
     # Check cache first - if token was recently validated, skip API call
-    current_time = time.time()
+    cache_check_start = time.time()
     cached_time = _token_validation_cache.get(token)
     if cached_time is not None:
-        age = current_time - cached_time
+        age = cache_check_start - cached_time
         if age < TOKEN_VALIDATION_TTL:
+            cache_elapsed = time.time() - cache_check_start
             logger.debug(f"Token validation cached (age: {age:.1f}s, TTL: {TOKEN_VALIDATION_TTL}s)")
-            log_function_return(logger, "_validate_token", True, 0.0)
+            log_function_return(logger, "_validate_token", "cached", cache_elapsed)
             return True
         else:
             logger.debug(f"Token validation cache expired (age: {age:.1f}s, TTL: {TOKEN_VALIDATION_TTL}s)")
@@ -104,9 +105,9 @@ def _validate_token(token: str) -> bool:
         
         result = resp.status_code == 200
         
-        # Cache successful validation
+        # Cache successful validation using start_time as the reference point
         if result:
-            _token_validation_cache[token] = current_time
+            _token_validation_cache[token] = start_time
             logger.debug(f"Token validation successful, cached for {TOKEN_VALIDATION_TTL}s")
         else:
             # Clear cache on failed validation
