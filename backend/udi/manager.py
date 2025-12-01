@@ -164,17 +164,44 @@ class UDIManager:
         self._ensure_initialized()
         return self._channels_cache.copy()
     
-    def get_channel_by_id(self, channel_id: int) -> Optional[Dict[str, Any]]:
+    def get_channel_by_id(self, channel_id: int, fetch_if_missing: bool = True) -> Optional[Dict[str, Any]]:
         """Get a specific channel by ID.
+        
+        If the channel is not in the cache and fetch_if_missing is True,
+        attempts to fetch it from the API and add it to the cache.
         
         Args:
             channel_id: The channel ID
+            fetch_if_missing: If True, fetch from API when not in cache (default: True)
             
         Returns:
             Channel dictionary or None if not found
         """
         self._ensure_initialized()
-        return self._channels_by_id.get(channel_id)
+        channel = self._channels_by_id.get(channel_id)
+        
+        if channel is None and fetch_if_missing:
+            # Channel not in cache, try fetching from API
+            logger.debug(f"Channel {channel_id} not in cache, fetching from API")
+            try:
+                # Fetch channel from Dispatcharr API (returns channel dict or None)
+                channel = self.fetcher.fetch_channel_by_id(channel_id)
+                if channel:
+                    # Add to caches under lock to ensure thread safety
+                    with self._lock:
+                        # Only add if still not in cache (could have been added by another thread)
+                        if channel_id not in self._channels_by_id:
+                            self._channels_by_id[channel_id] = channel
+                            self._channels_cache.append(channel)
+                        else:
+                            # Already in cache, use the cached version
+                            channel = self._channels_by_id[channel_id]
+                    logger.info(f"Fetched and cached channel {channel_id}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch channel {channel_id} from API: {e}")
+                channel = None
+        
+        return channel
     
     def get_channel_streams(self, channel_id: int) -> List[Dict[str, Any]]:
         """Get streams for a specific channel.
