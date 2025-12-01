@@ -184,14 +184,18 @@ class UDIManager:
             # Channel not in cache, try fetching from API
             logger.debug(f"Channel {channel_id} not in cache, fetching from API")
             try:
+                # Fetch channel from Dispatcharr API (returns channel dict or None)
                 channel = self.fetcher.fetch_channel_by_id(channel_id)
                 if channel:
-                    # Add to cache
+                    # Add to caches under lock to ensure thread safety
                     with self._lock:
-                        self._channels_by_id[channel_id] = channel
-                        # Also add to the list cache if not already present
-                        if not any(ch.get('id') == channel_id for ch in self._channels_cache):
+                        # Only add if still not in cache (could have been added by another thread)
+                        if channel_id not in self._channels_by_id:
+                            self._channels_by_id[channel_id] = channel
                             self._channels_cache.append(channel)
+                        else:
+                            # Already in cache, use the cached version
+                            channel = self._channels_by_id[channel_id]
                     logger.info(f"Fetched and cached channel {channel_id}")
             except Exception as e:
                 logger.warning(f"Failed to fetch channel {channel_id} from API: {e}")
