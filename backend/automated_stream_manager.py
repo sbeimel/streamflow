@@ -784,15 +784,17 @@ class AutomatedStreamManager:
     
     def run_automation_cycle(self):
         """Run one complete automation cycle."""
-        # Check if a global action is in progress - if so, skip this cycle
+        # Check if stream checking mode is active - if so, skip this cycle
+        # Stream checking mode includes: global actions, individual checks, and queued checks
         try:
             from stream_checker_service import get_stream_checker_service
             stream_checker = get_stream_checker_service()
-            if stream_checker.global_action_in_progress:
-                logger.debug("Skipping automation cycle - global action in progress")
+            status = stream_checker.get_status()
+            if status.get('stream_checking_mode', False):
+                # Skip silently when in stream checking mode to avoid log spam
                 return
         except Exception as e:
-            logger.debug(f"Could not check global action status: {e}")
+            logger.debug(f"Could not check stream checking mode status: {e}")
         
         # Only log and run if it's actually time to update
         if not self.should_run_playlist_update():
@@ -831,9 +833,8 @@ class AutomatedStreamManager:
             logger.debug("Automation loop thread started")
             while self.running:
                 try:
-                    logger.debug("Running automation cycle...")
+                    # run_automation_cycle handles its own logging based on what actually runs
                     self.run_automation_cycle()
-                    logger.debug("Automation cycle completed, sleeping for 60 seconds")
                     
                     # Sleep for a minute before checking again
                     time.sleep(60)
