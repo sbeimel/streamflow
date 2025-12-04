@@ -132,9 +132,17 @@ def set_mode(mode):
         state['current_channel'] = None
         state['mode'] = 'queue'
     
-    return jsonify({'mode': state['mode'], 'stream_checking_mode': 
-                   state['global_action_in_progress'] or state['checking'] or 
-                   state['queue_size'] > 0 or state['in_progress'] > 0})
+    stream_checking_mode_value = (
+        state['global_action_in_progress'] or 
+        state['checking'] or 
+        state['queue_size'] > 0 or 
+        state['in_progress'] > 0
+    )
+    
+    return jsonify({
+        'mode': state['mode'], 
+        'stream_checking_mode': stream_checking_mode_value
+    })
 
 if __name__ == '__main__':
     print("""
