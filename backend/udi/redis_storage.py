@@ -489,18 +489,34 @@ class UDIRedisStorage:
             logger.error(f"Failed to clear Redis storage: {e}")
             return False
     
-    def health_check(self) -> bool:
-        """Check if Redis connection is healthy.
+    def health_check(self, max_retries: int = 5, initial_delay: float = 0.1) -> bool:
+        """Check if Redis connection is healthy with retry logic.
+        
+        Args:
+            max_retries: Maximum number of retry attempts (default: 5)
+            initial_delay: Initial delay between retries in seconds (default: 0.1)
         
         Returns:
             True if Redis is accessible and working
         """
-        try:
-            self.redis.ping()
-            return True
-        except Exception as e:
-            logger.error(f"Redis health check failed: {e}")
-            return False
+        import time
+        
+        delay = initial_delay
+        for attempt in range(max_retries):
+            try:
+                self.redis.ping()
+                if attempt > 0:
+                    logger.info(f"Redis health check succeeded on attempt {attempt + 1}")
+                return True
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.debug(f"Redis health check attempt {attempt + 1} failed: {e}, retrying in {delay}s...")
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Redis health check failed after {max_retries} attempts: {e}")
+                    return False
+        return False
     
     def close(self) -> None:
         """Close Redis connections and cleanup resources."""
