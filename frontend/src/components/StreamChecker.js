@@ -268,7 +268,11 @@ function StreamChecker() {
                   <Box flex={1}>
                     <CircularProgress
                       variant="determinate"
-                      value={concurrency.global_limit > 0 ? Math.min((concurrency.current_concurrent / concurrency.global_limit) * 100, 100) : 0}
+                      value={
+                        concurrency.global_limit > 0 
+                          ? Math.min(((concurrency.current_concurrent || 0) / concurrency.global_limit) * 100, 100) 
+                          : 0
+                      }
                       size={60}
                       thickness={5}
                       sx={{
@@ -287,13 +291,13 @@ function StreamChecker() {
                     <Typography variant="body2" fontWeight="bold" gutterBottom>
                       Per-Account Activity:
                     </Typography>
-                    {Object.entries(concurrency.accounts).map(([accountId, count]) => (
-                      count > 0 && (
+                    {Object.entries(concurrency.accounts).map(([accountId, count]) => 
+                      count > 0 ? (
                         <Typography key={accountId} variant="caption" display="block">
                           Account {accountId}: {count} concurrent streams
                         </Typography>
-                      )
-                    ))}
+                      ) : null
+                    )}
                   </Box>
                 )}
               </CardContent>
