@@ -262,17 +262,17 @@ function StreamChecker() {
                       Global Concurrent Streams
                     </Typography>
                     <Typography variant="h5">
-                      {concurrency.current_concurrent || 0} / {concurrency.global_limit || 'unlimited'}
+                      {concurrency.current_concurrent || 0} / {concurrency.global_limit === 0 ? 'unlimited' : concurrency.global_limit}
                     </Typography>
                   </Box>
                   <Box flex={1}>
                     <CircularProgress
                       variant="determinate"
-                      value={concurrency.global_limit > 0 ? (concurrency.current_concurrent / concurrency.global_limit) * 100 : 0}
+                      value={concurrency.global_limit > 0 ? Math.min((concurrency.current_concurrent / concurrency.global_limit) * 100, 100) : 0}
                       size={60}
                       thickness={5}
                       sx={{
-                        color: concurrency.current_concurrent >= concurrency.global_limit ? 'error.main' : 'primary.main'
+                        color: (concurrency.global_limit > 0 && concurrency.current_concurrent >= concurrency.global_limit) ? 'error.main' : 'primary.main'
                       }}
                     />
                   </Box>
