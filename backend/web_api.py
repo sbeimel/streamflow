@@ -854,10 +854,43 @@ def test_dispatcharr_connection():
 
 @app.route('/api/stream-checker/status', methods=['GET'])
 def get_stream_checker_status():
-    """Get current stream checker status."""
+    """Get current stream checker status with concurrency information."""
     try:
         service = get_stream_checker_service()
         status = service.get_status()
+        
+        # Add concurrency information if available
+        if CELERY_AVAILABLE:
+            try:
+                concurrency_mgr = get_concurrency_manager()
+                counts = concurrency_mgr.get_current_counts()
+                
+                # Get configured limits
+                global_limit = service.config.get('concurrent_streams.global_limit', 10)
+                concurrent_enabled = service.config.get('concurrent_streams.enabled', True)
+                
+                # Add concurrency info to status
+                status['concurrency'] = {
+                    'enabled': concurrent_enabled,
+                    'global_limit': global_limit,
+                    'current_concurrent': counts['global'],
+                    'accounts': counts['accounts'],
+                    'mode': 'concurrent' if concurrent_enabled else 'sequential'
+                }
+            except Exception as e:
+                logger.warning(f"Could not get concurrency info: {e}")
+                status['concurrency'] = {
+                    'enabled': False,
+                    'mode': 'sequential',
+                    'error': str(e)
+                }
+        else:
+            status['concurrency'] = {
+                'enabled': False,
+                'mode': 'sequential',
+                'reason': 'Celery/Redis not available'
+            }
+        
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting stream checker status: {e}")
