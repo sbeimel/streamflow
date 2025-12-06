@@ -17,8 +17,8 @@ from pathlib import Path
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Get the repository root directory
-REPO_ROOT = Path(__file__).parent.parent.parent
+# Get the repository root directory (3 levels up from this file)
+REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = REPO_ROOT / "backend"
 
 def test_supervisor_config():
