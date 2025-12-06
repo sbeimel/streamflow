@@ -584,6 +584,17 @@ function AutomationSettings() {
                 helperText="Maximum concurrent stream checks across all workers (0 = unlimited). Lower values reduce load on streaming providers."
                 inputProps={{ min: 0, max: 100 }}
               />
+              
+              <TextField
+                label="Stagger Delay (seconds)"
+                type="number"
+                value={streamCheckerConfig.concurrent_streams?.stagger_delay ?? 1.0}
+                onChange={(e) => handleStreamCheckerConfigChange('concurrent_streams.stagger_delay', parseFloat(e.target.value))}
+                fullWidth
+                margin="normal"
+                helperText="Delay between starting each worker to prevent simultaneous stream connections. Recommended: 0.5-2 seconds."
+                inputProps={{ min: 0, max: 10, step: 0.1 }}
+              />
             </CardContent>
           </Card>
           </Grid>
