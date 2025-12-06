@@ -16,8 +16,7 @@ Features:
 
 The service runs continuously in the background, monitoring for channel
 updates and maintaining a queue of channels that need checking. It
-integrates with the dispatcharr-stream-sorter.py module for actual
-stream analysis.
+integrates with the stream_check_utils.py module for stream analysis.
 """
 
 import json
