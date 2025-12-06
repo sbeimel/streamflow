@@ -12,15 +12,20 @@ This test verifies:
 import os
 import sys
 import configparser
+from pathlib import Path
 
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Get the repository root directory
+REPO_ROOT = Path(__file__).parent.parent.parent
+BACKEND_DIR = REPO_ROOT / "backend"
 
 def test_supervisor_config():
     """Test that supervisor configuration is valid."""
     print("Testing supervisor configuration...")
     
-    config_path = "/home/runner/work/streamflow/streamflow/backend/supervisord.conf"
+    config_path = BACKEND_DIR / "supervisord.conf"
     
     if not os.path.exists(config_path):
         print(f"❌ FAIL: Supervisor config not found at {config_path}")
@@ -63,7 +68,7 @@ def test_redis_defaults():
     print("\nTesting Redis default configuration...")
     
     # Test celery_app.py
-    celery_app_path = "/home/runner/work/streamflow/streamflow/backend/celery_app.py"
+    celery_app_path = BACKEND_DIR / "celery_app.py"
     with open(celery_app_path, 'r') as f:
         celery_content = f.read()
         if "REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')" not in celery_content:
@@ -71,7 +76,7 @@ def test_redis_defaults():
             return False
     
     # Test concurrency_manager.py
-    concurrency_path = "/home/runner/work/streamflow/streamflow/backend/concurrency_manager.py"
+    concurrency_path = BACKEND_DIR / "concurrency_manager.py"
     with open(concurrency_path, 'r') as f:
         concurrency_content = f.read()
         if "redis_host = os.environ.get('REDIS_HOST', 'localhost')" not in concurrency_content:
@@ -79,7 +84,7 @@ def test_redis_defaults():
             return False
     
     # Test udi/redis_storage.py
-    redis_storage_path = "/home/runner/work/streamflow/streamflow/backend/udi/redis_storage.py"
+    redis_storage_path = BACKEND_DIR / "udi" / "redis_storage.py"
     with open(redis_storage_path, 'r') as f:
         redis_storage_content = f.read()
         if "redis_host = os.environ.get('REDIS_HOST', 'localhost')" not in redis_storage_content:
@@ -94,7 +99,7 @@ def test_dockerfile():
     """Test that Dockerfile includes required components."""
     print("\nTesting Dockerfile configuration...")
     
-    dockerfile_path = "/home/runner/work/streamflow/streamflow/Dockerfile"
+    dockerfile_path = REPO_ROOT / "Dockerfile"
     with open(dockerfile_path, 'r') as f:
         dockerfile_content = f.read()
     
@@ -120,7 +125,7 @@ def test_docker_compose():
     """Test that docker-compose.yml is configured for All-In-One."""
     print("\nTesting docker-compose.yml configuration...")
     
-    compose_path = "/home/runner/work/streamflow/streamflow/docker-compose.yml"
+    compose_path = REPO_ROOT / "docker-compose.yml"
     with open(compose_path, 'r') as f:
         compose_content = f.read()
     
@@ -146,7 +151,7 @@ def test_entrypoint():
     """Test that entrypoint.sh starts supervisor."""
     print("\nTesting entrypoint.sh configuration...")
     
-    entrypoint_path = "/home/runner/work/streamflow/streamflow/backend/entrypoint.sh"
+    entrypoint_path = BACKEND_DIR / "entrypoint.sh"
     with open(entrypoint_path, 'r') as f:
         entrypoint_content = f.read()
     
