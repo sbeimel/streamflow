@@ -70,8 +70,9 @@ def _extract_codec_from_line(line: str, codec_type: str) -> Optional[str]:
         Extracted codec name, or None if parsing fails
     """
     # Step 1: Extract the first token after 'Video:' or 'Audio:'
-    # This regex captures the first word (alphanumeric + underscore) after the codec type
-    pattern = rf'{codec_type}:\s*([a-zA-Z0-9_]+)'
+    # This regex captures the first word (alphanumeric + underscore + hyphen) after the codec type
+    # Supports codec names like 'h264', 'x264-high', 'wrapped_avframe', etc.
+    pattern = rf'{codec_type}:\s*([a-zA-Z0-9_-]+)'
     codec_match = re.search(pattern, line)
     
     if not codec_match:
@@ -104,7 +105,8 @@ def _extract_codec_from_line(line: str, codec_type: str) -> Optional[str]:
             for token in tokens:
                 token = token.strip()
                 # Skip empty tokens and hexadecimal codes (0x...)
-                if token and not token.startswith('0x') and re.match(r'^[a-zA-Z0-9_]+$', token):
+                # Support codec names with hyphens (e.g., x264-high)
+                if token and not token.startswith('0x') and re.match(r'^[a-zA-Z0-9_-]+$', token):
                     logger.debug(f"  → Extracted actual codec from parentheses: '{token}'")
                     return token
             

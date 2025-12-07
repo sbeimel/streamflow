@@ -99,6 +99,18 @@ class TestCodecExtractionRobustness(unittest.TestCase):
         result = _extract_codec_from_line(line, 'Video')
         self.assertEqual(result, 'vp9', "Should extract vp9 codec")
     
+    def test_hyphenated_codec_name(self):
+        """Test extraction of codec with hyphen in name."""
+        line = "Stream #0:0: Video: x264-high, yuv420p, 1920x1080, 30 fps"
+        result = _extract_codec_from_line(line, 'Video')
+        self.assertEqual(result, 'x264-high', "Should extract hyphenated codec name")
+    
+    def test_wrapped_hyphenated_codec(self):
+        """Test extraction of hyphenated codec from wrapper."""
+        line = "Stream #0:0: Video: wrapped_avframe (x264-high / 0x12345678), yuv420p"
+        result = _extract_codec_from_line(line, 'Video')
+        self.assertEqual(result, 'x264-high', "Should extract hyphenated codec from wrapper")
+    
     @patch('stream_check_utils.subprocess.run')
     def test_integration_with_multiple_wrapped_streams(self, mock_run):
         """Test integration with FFmpeg output containing multiple wrapped streams."""
