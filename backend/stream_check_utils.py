@@ -119,7 +119,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
     and bitrate. This reduces network overhead and processing time.
 
     Args:
-        url: Stream URL to analyze
+        url: Stream URL to analyze (will be validated and sanitized)
         duration: Duration in seconds to analyze the stream
         timeout: Base timeout in seconds (actual timeout includes duration + overhead)
         user_agent: User agent string to use for HTTP requests
@@ -134,7 +134,36 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         - status: "OK", "Timeout", or "Error"
         - elapsed_time: Time taken for the operation
     """
+    # Validate and sanitize URL to prevent command injection
+    if not url or not isinstance(url, str):
+        logger.error("Invalid URL: must be a non-empty string")
+        return {
+            'video_codec': 'N/A',
+            'audio_codec': 'N/A',
+            'resolution': '0x0',
+            'fps': 0,
+            'bitrate_kbps': None,
+            'status': 'Error',
+            'elapsed_time': 0
+        }
+    
+    # Basic URL validation - must start with http://, https://, or rtmp://
+    url_lower = url.lower()
+    if not (url_lower.startswith('http://') or url_lower.startswith('https://') or 
+            url_lower.startswith('rtmp://') or url_lower.startswith('rtmps://')):
+        logger.error(f"Invalid URL protocol: {url[:50]}... (must be http://, https://, rtmp://, or rtmps://)")
+        return {
+            'video_codec': 'N/A',
+            'audio_codec': 'N/A',
+            'resolution': '0x0',
+            'fps': 0,
+            'bitrate_kbps': None,
+            'status': 'Error',
+            'elapsed_time': 0
+        }
+    
     logger.debug(f"Analyzing stream with ffmpeg for {duration}s: {url[:50]}...")
+    # Use list arguments to pass URL safely to subprocess without shell interpretation
     command = [
         'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
         '-i', url, '-t', str(duration), '-f', 'null', '-'
