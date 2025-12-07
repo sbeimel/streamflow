@@ -19,15 +19,15 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
 - Tracks update history in changelog
 
 ### Intelligent Stream Quality Checking
-Multi-factor analysis of stream quality:
+Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Bitrate**: Average kbps measurement
 - **Resolution**: Width × height detection
 - **Frame Rate**: FPS analysis
 - **Video Codec**: H.265/H.264 identification
 - **Audio Codec**: Detection and validation
 - **Error Detection**: Decode errors, discontinuities, timeouts
-- **Interlacing**: Detection and penalty
-- **Dropped Frames**: Tracking and penalty
+- **Optimized Performance**: Single ffmpeg call instead of separate ffprobe+ffmpeg (reduced overhead)
+- **Parallel Checking**: Thread-based concurrent analysis with configurable worker pool
 
 ### Automatic Stream Reordering
 - Best quality streams automatically moved to top
@@ -64,16 +64,20 @@ Multi-factor analysis of stream quality:
 - Interlaced penalty: Lower score for interlaced content
 - Dropped frames penalty: Lower score for streams with frame drops
 
-### Sequential Checking
-- One channel at a time to avoid overload
-- Protects streaming providers from concurrent requests
+### Sequential and Parallel Checking
+- **Parallel Mode** (default): Concurrent stream checking with configurable worker pool (default: 10)
+  - Thread-based parallel execution
+  - Configurable global concurrency limit
+  - Stagger delay to prevent simultaneous starts
+- **Sequential Mode**: One stream at a time for minimal provider load
 - Queue-based processing
 - Real-time progress tracking
 
 ### Dead Stream Detection and Management
 Automatically identifies and manages non-functional streams:
 - **Detection**: Streams with resolution=0 or bitrate=0 are marked as dead
-- **Tagging**: Dead streams are prefixed with `[DEAD]` in Dispatcharr
+- **Changelog Tracking**: Dead streams show status "dead" in changelog (not score:0)
+- **Revival Tracking**: Revived streams show status "revived" in changelog
 - **Removal**: Dead streams are removed from channels during regular checks
 - **Revival Check**: During global actions, dead streams are re-checked for revival
 - **Matching Exclusion**: Dead streams are not assigned to channels during stream matching
@@ -107,6 +111,9 @@ Automatically identifies and manages non-functional streams:
   - Daily or monthly frequency
   - Precise time selection (hour and minute)
   - Day of month for monthly schedules
+- **Concurrent Stream Checking**: Configure maximum parallel workers (default: 10)
+  - Controls load on streaming providers
+  - Adjustable stagger delay between task dispatches
 - **Context-Aware Settings**: Only relevant options shown based on selected pipeline
 - **Update Intervals**: Configure M3U refresh frequency (for applicable pipelines)
 - **Stream Analysis Parameters**: FFmpeg duration, timeouts, retries
@@ -206,7 +213,8 @@ Automatically identifies and manages non-functional streams:
 - User notifications
 
 ### Performance
-- Sequential stream checking
+- Parallel stream checking with configurable worker pool
+- Optimized single ffmpeg call (instead of ffprobe + ffmpeg)
 - Efficient queue processing
 - Minimal API calls
 - Resource optimization
