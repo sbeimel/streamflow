@@ -68,9 +68,9 @@ Statistics: 18750000 bytes read
         
         result = get_stream_info_and_bitrate('http://example.com/test.m3u8', duration=30, timeout=30)
         
-        # Should extract 'avc1' from parentheses, not 'wrapped_avframe'
-        self.assertEqual(result['video_codec'], 'avc1', 
-                        "Should extract actual codec 'avc1' from parentheses, not 'wrapped_avframe'")
+        # Should extract 'avc1' from parentheses, not 'wrapped_avframe', then normalize to 'h264'
+        self.assertEqual(result['video_codec'], 'h264', 
+                        "Should extract actual codec from parentheses and normalize avc1 to h264")
         self.assertEqual(result['audio_codec'], 'aac', "Should extract audio codec 'aac'")
         self.assertEqual(result['resolution'], '1920x1080', "Should extract resolution")
         self.assertEqual(result['fps'], 25.0, "Should extract FPS")
