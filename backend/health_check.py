@@ -71,17 +71,17 @@ def check_celery_health(broker_url, max_retries=30):
     Returns:
         bool: True if Celery is healthy, False otherwise
     """
+    # Create Celery app once and reuse for all retry attempts
+    app = Celery('health_check', broker=broker_url)
+    
     for attempt in range(1, max_retries + 1):
         try:
-            # Create a temporary Celery app for inspection
-            app = Celery('health_check', broker=broker_url)
-            
             # Get active workers
             inspect = app.control.inspect(timeout=2.0)
             active = inspect.active()
             
-            # Check if active is not None and has workers
-            if active is not None and len(active) > 0:
+            # Check if active is not None and has workers (handles both None and empty dict)
+            if active:
                 logger.info(
                     f"✓ Celery worker is healthy with {len(active)} worker(s) "
                     f"(attempt {attempt}/{max_retries})"
