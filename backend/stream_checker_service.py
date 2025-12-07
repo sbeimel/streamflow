@@ -33,11 +33,13 @@ import queue
 
 from api_utils import (
     fetch_channel_streams,
-    fetch_data_from_url,
     update_channel_streams,
     _get_base_url,
     patch_request
 )
+
+# Import UDI for direct data access
+from udi import get_udi_manager
 
 # Import dead streams tracker
 from dead_streams_tracker import DeadStreamsTracker
@@ -48,7 +50,6 @@ try:
     CHANGELOG_AVAILABLE = True
 except ImportError:
     CHANGELOG_AVAILABLE = False
-    logger.warning("ChangelogManager not available. Stream check changelog will be disabled.")
 
 # Setup centralized logging
 from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
@@ -989,12 +990,13 @@ class StreamCheckerService:
         return cron_expression
     
     def _perform_global_action(self):
-        """Perform a complete global action: Update M3U, Match streams, and Check all channels.
+        """Perform a complete global action: Refresh UDI, Update M3U, Match streams, and Check all channels.
         
         This is the comprehensive global action that:
-        1. Reloads enabled M3U accounts
-        2. Matches new streams with regex patterns
-        3. Checks every channel from every stream (bypassing 2-hour immunity)
+        1. Refreshes UDI cache to ensure current data from Dispatcharr
+        2. Reloads enabled M3U accounts
+        3. Matches new streams with regex patterns
+        4. Checks every channel from every stream (bypassing 2-hour immunity)
         
         During this operation, regular automated updates, matching, and checking are paused.
         """
@@ -1006,10 +1008,23 @@ class StreamCheckerService:
             logger.info("Regular automation paused during global action")
             logger.info("=" * 80)
             
+            # Step 1: Refresh UDI cache to ensure we have current data from Dispatcharr
+            logger.info("Step 1/4: Refreshing UDI cache...")
+            try:
+                from udi import get_udi_manager
+                udi = get_udi_manager()
+                refresh_success = udi.refresh_all()
+                if refresh_success:
+                    logger.info("✓ UDI cache refreshed successfully")
+                else:
+                    logger.warning("⚠ UDI cache refresh had issues")
+            except Exception as e:
+                logger.error(f"✗ Failed to refresh UDI cache: {e}")
+            
             automation_manager = None
             
-            # Step 1: Update M3U playlists
-            logger.info("Step 1/3: Updating M3U playlists...")
+            # Step 2: Update M3U playlists
+            logger.info("Step 2/4: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
@@ -1021,8 +1036,8 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
-            # Step 2: Match and assign streams
-            logger.info("Step 2/3: Matching and assigning streams...")
+            # Step 3: Match and assign streams
+            logger.info("Step 3/4: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1035,8 +1050,8 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to match streams: {e}")
             
-            # Step 3: Check all channels (force check to bypass immunity)
-            logger.info("Step 3/3: Queueing all channels for checking...")
+            # Step 4: Check all channels (force check to bypass immunity)
+            logger.info("Step 4/4: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
             logger.info("=" * 80)
@@ -1057,15 +1072,10 @@ class StreamCheckerService:
             force_check: If True, marks channels for force checking which bypasses 2-hour immunity
         """
         try:
-            base_url = _get_base_url()
-            channels_data = fetch_data_from_url(f"{base_url}/api/channels/channels/")
+            udi = get_udi_manager()
+            channels = udi.get_channels()
             
-            if channels_data:
-                if isinstance(channels_data, dict) and 'results' in channels_data:
-                    channels = channels_data['results']
-                else:
-                    channels = channels_data
-                
+            if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
                 if force_check:
@@ -1162,8 +1172,9 @@ class StreamCheckerService:
         stream_url = f"{base_url}/api/channels/streams/{int(stream_id)}/"
         
         try:
-            # Fetch the existing stream data to get the current stream_stats
-            existing_stream_data = fetch_data_from_url(stream_url)
+            # Fetch the existing stream data from UDI
+            udi = get_udi_manager()
+            existing_stream_data = udi.get_stream_by_id(int(stream_id))
             if not existing_stream_data:
                 logger.warning(f"Could not fetch existing data for stream {stream_id}. Skipping stats update.")
                 return False
@@ -1202,7 +1213,7 @@ class StreamCheckerService:
         logger.info(f"=" * 80)
         
         try:
-            # Get channel information
+            # Get channel information from UDI
             logger.debug(f"Updating progress for channel {channel_id} initialization")
             self.progress.update(
                 channel_id=channel_id,
@@ -1211,14 +1222,15 @@ class StreamCheckerService:
                 total=0,
                 status='initializing',
                 step='Fetching channel info',
-                step_detail='Retrieving channel data from API'
+                step_detail='Retrieving channel data from UDI'
             )
             
+            udi = get_udi_manager()
             base_url = _get_base_url()
-            logger.debug(f"Fetching channel data from: {base_url}/api/channels/channels/{channel_id}/")
-            channel_data = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/")
+            logger.debug(f"Fetching channel data for channel {channel_id} from UDI")
+            channel_data = udi.get_channel_by_id(channel_id)
             if not channel_data:
-                logger.error(f"fetch_data_from_url returned None for channel {channel_id}")
+                logger.error(f"UDI returned None for channel {channel_id}")
                 raise Exception(f"Could not fetch channel {channel_id}")
             
             channel_name = channel_data.get('name', f'Channel {channel_id}')
@@ -1354,9 +1366,9 @@ class StreamCheckerService:
                 
                 logger.info(f"Stream {idx}/{total_streams}: {stream.get('name')} - Score: {score:.2f}")
             
-            # For already-checked streams, retrieve their cached data from API
+            # For already-checked streams, retrieve their cached data from UDI
             for stream in streams_already_checked:
-                stream_data = fetch_data_from_url(f"{base_url}/api/channels/streams/{stream['id']}/")
+                stream_data = udi.get_stream_by_id(stream['id'])
                 if stream_data:
                     stream_stats = stream_data.get('stream_stats', {})
                     # Handle None case explicitly
@@ -1492,7 +1504,9 @@ class StreamCheckerService:
                 step_detail='Confirming stream order was applied'
             )
             time.sleep(0.5)  # Brief delay to ensure API has processed the update
-            updated_channel_data = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/")
+            # Refresh this specific channel in UDI to get updated data after write
+            udi.refresh_channel_by_id(channel_id)
+            updated_channel_data = udi.get_channel_by_id(channel_id)
             if updated_channel_data:
                 updated_stream_ids = updated_channel_data.get('streams', [])
                 if updated_stream_ids == reordered_ids:
@@ -1666,10 +1680,22 @@ class StreamCheckerService:
         queue_status = self.check_queue.get_status()
         progress = self.progress.get()
         
+        # Stream checking mode is active when:
+        # - A global action is in progress, OR
+        # - An individual channel is being checked, OR
+        # - There are channels in the queue waiting to be checked
+        stream_checking_mode = (
+            self.global_action_in_progress or 
+            self.checking or 
+            queue_status.get('queue_size', 0) > 0 or
+            queue_status.get('in_progress', 0) > 0
+        )
+        
         return {
             'running': self.running,
             'checking': self.checking,
             'global_action_in_progress': self.global_action_in_progress,
+            'stream_checking_mode': stream_checking_mode,
             'enabled': self.config.get('enabled', True),
             'queue': queue_status,
             'progress': progress,
