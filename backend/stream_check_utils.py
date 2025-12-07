@@ -30,6 +30,18 @@ EARLY_EXIT_THRESHOLD = 0.8  # Consider ffmpeg exited early if elapsed < 80% of e
 MAX_ERROR_LINES_TO_LOG = 5  # Maximum number of error lines to log from ffmpeg output
 MAX_DEBUG_LINES_TO_LOG = 10  # Maximum number of debug lines to log from ffmpeg output
 
+# FourCC to common codec name mapping
+FOURCC_TO_CODEC = {
+    'avc1': 'h264',
+    'avc3': 'h264',
+    'h264': 'h264',
+    'hvc1': 'hevc',
+    'hev1': 'hevc',
+    'hevc': 'hevc',
+    'vp09': 'vp9',
+    'vp08': 'vp8',
+}
+
 
 def _sanitize_codec_name(codec: str) -> str:
     """
@@ -64,18 +76,7 @@ def _sanitize_codec_name(codec: str) -> str:
         return 'N/A'
     
     # Normalize FourCC codes to common codec names
-    fourcc_to_codec = {
-        'avc1': 'h264',
-        'avc3': 'h264',
-        'h264': 'h264',
-        'hvc1': 'hevc',
-        'hev1': 'hevc',
-        'hevc': 'hevc',
-        'vp09': 'vp9',
-        'vp08': 'vp8',
-    }
-    
-    normalized = fourcc_to_codec.get(codec_lower, codec)
+    normalized = FOURCC_TO_CODEC.get(codec_lower, codec)
     if normalized != codec:
         logger.debug(f"  → Normalized codec {codec} -> {normalized}")
     
@@ -260,10 +261,11 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     codec_match = re.search(r'Video:\s*(\w+)', line)
                     if codec_match:
                         primary_codec = codec_match.group(1)
+                        primary_codec_lower = primary_codec.lower()
                         
                         # For wrapped codecs (e.g., "wrapped_avframe"), extract the actual codec from parentheses
                         # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
-                        if 'wrapped' in primary_codec.lower():
+                        if 'wrapped' in primary_codec_lower:
                             # Search for parentheses after "Video:" to avoid matching stream metadata like "(und)"
                             video_pos = line.find('Video:')
                             if video_pos >= 0:

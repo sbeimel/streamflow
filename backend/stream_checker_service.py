@@ -1379,7 +1379,7 @@ class StreamCheckerService:
                             logger.info(f"Stream {stream_id} REVIVED: {stream_name}")
                     elif is_dead and was_dead:
                         logger.debug(f"Stream {stream_id} remains dead (already marked)")
-                        # Still add to dead_stream_ids for proper tracking
+                        # Add to dead_stream_ids so the stream removal logic (line 1455) will filter it out
                         dead_stream_ids.add(stream_id)
                     
                     # Calculate score
