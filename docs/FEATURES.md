@@ -23,11 +23,15 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Bitrate**: Average kbps measurement
 - **Resolution**: Width × height detection
 - **Frame Rate**: FPS analysis
-- **Video Codec**: H.265/H.264 identification
+- **Video Codec**: H.265/H.264 identification with automatic sanitization
+  - Filters out invalid codec names (e.g., "wrapped_avframe", "unknown")
+  - Extracts actual codec from hardware-accelerated streams
 - **Audio Codec**: Detection and validation
 - **Error Detection**: Decode errors, discontinuities, timeouts
 - **Optimized Performance**: Single ffmpeg call instead of separate ffprobe+ffmpeg (reduced overhead)
 - **Parallel Checking**: Thread-based concurrent analysis with configurable worker pool
+  - Proper pipeline: gather stats in parallel → when ALL checks finish → push info to Dispatcharr
+  - Prevents race conditions during concurrent operations
 
 ### Automatic Stream Reordering
 - Best quality streams automatically moved to top
@@ -69,6 +73,8 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
   - Thread-based parallel execution
   - Configurable global concurrency limit
   - Stagger delay to prevent simultaneous starts
+  - Robust pipeline: all stats gathered in parallel, then pushed to Dispatcharr after ALL checks complete
+  - Prevents race conditions with dead stream removal
 - **Sequential Mode**: One stream at a time for minimal provider load
 - Queue-based processing
 - Real-time progress tracking
