@@ -40,7 +40,84 @@ FOURCC_TO_CODEC = {
     'hevc': 'hevc',
     'vp09': 'vp9',
     'vp08': 'vp8',
+    'mp4a': 'aac',  # AAC audio in MP4 container
 }
+
+
+def _extract_codec_from_line(line: str, codec_type: str) -> Optional[str]:
+    """
+    Extract codec from FFmpeg output line with robust handling of wrapped codecs.
+    
+    This implements Dispatcharr's robust codec extraction logic:
+    1. Takes the first non-empty token after 'Video:' or 'Audio:'
+    2. If the token is a generic wrapper (wrapped_avframe, unknown, etc.):
+       - Looks inside the parentheses immediately following the codec
+       - Extracts the first codec string inside parentheses
+       - Ignores hexadecimal/fourcc codes like '0x31637661'
+    3. Returns the extracted codec or None if not found
+    
+    Examples:
+        "Video: wrapped_avframe (avc1 / 0x31637661), yuv420p" -> "avc1"
+        "Video: h264, yuv420p, 1920x1080" -> "h264"
+        "Audio: wrapped_avframe (aac)" -> "aac"
+        "Audio: aac, 48000 Hz, stereo" -> "aac"
+    
+    Args:
+        line: FFmpeg output line containing stream information
+        codec_type: Either 'Video' or 'Audio'
+        
+    Returns:
+        Extracted codec name, or None if parsing fails
+    """
+    # Step 1: Extract the first token after 'Video:' or 'Audio:'
+    # This regex captures the first word (alphanumeric + underscore) after the codec type
+    pattern = rf'{codec_type}:\s*([a-zA-Z0-9_]+)'
+    codec_match = re.search(pattern, line)
+    
+    if not codec_match:
+        return None
+    
+    codec = codec_match.group(1).strip()
+    logger.debug(f"  → Initial codec extraction: '{codec}'")
+    
+    # Step 2: Check if the codec is a generic wrapper
+    # These wrappers indicate we should look for the actual codec in parentheses
+    wrapper_codecs = {'wrapped_avframe', 'unknown', 'none', 'null'}
+    
+    if codec.lower() in wrapper_codecs:
+        logger.debug(f"  → Detected wrapper codec '{codec}', looking for actual codec in parentheses")
+        
+        # Step 3: Look for codec in parentheses immediately after the wrapper
+        # Pattern: finds content within parentheses after the wrapper codec
+        # Example: "wrapped_avframe (avc1 / 0x31637661)" -> captures "avc1 / 0x31637661"
+        paren_pattern = rf'{re.escape(codec)}\s*\(([^)]+)\)'
+        paren_match = re.search(paren_pattern, line, re.IGNORECASE)
+        
+        if paren_match:
+            paren_content = paren_match.group(1).strip()
+            logger.debug(f"  → Found parentheses content: '{paren_content}'")
+            
+            # Step 4: Extract the first codec token from parentheses, ignoring hex codes
+            # Split by common delimiters (/, comma, space) and take first valid token
+            tokens = re.split(r'[/,\s]+', paren_content)
+            
+            for token in tokens:
+                token = token.strip()
+                # Skip empty tokens and hexadecimal codes (0x...)
+                if token and not token.startswith('0x') and re.match(r'^[a-zA-Z0-9_]+$', token):
+                    logger.debug(f"  → Extracted actual codec from parentheses: '{token}'")
+                    return token
+            
+            # If no valid codec found in parentheses, the wrapper is invalid
+            logger.debug(f"  → No valid codec found in parentheses")
+            return None
+        else:
+            # Wrapper codec without parentheses is invalid
+            logger.debug(f"  → No parentheses found after wrapper codec")
+            return None
+    
+    # Step 5: Return the codec as-is if it's not a wrapper
+    return codec
 
 
 def _sanitize_codec_name(codec: str) -> str:
@@ -251,18 +328,26 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         progress_bitrate = None
         
         # Parse ffmpeg output to extract all information
+        # Only process lines that represent true input stream mappings (start with "Stream #")
+        # to avoid false matches from output or progress messages
         for line in output.splitlines():
             # Extract video codec, resolution, and FPS from Stream mapping line
             # Example: "Stream #0:0: Video: h264, yuv420p, 1920x1080, 25 fps"
             # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
+            # Only process lines that start with "Stream #" to ensure we're parsing input stream info
             if 'Stream #' in line and 'Video:' in line:
                 try:
-                    # Replace codec parsing logic
-                    codec_match = re.search(r'Video:\s*([a-zA-Z0-9_]+)', line)
-                    video_codec = codec_match.group(1) if codec_match else None
+                    # Use robust codec extraction that handles wrapped codecs
+                    # This will look inside parentheses if codec is a wrapper like 'wrapped_avframe'
+                    video_codec = _extract_codec_from_line(line, 'Video')
                     if video_codec:
-                        result_data['video_codec'] = video_codec
-                        logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
+                        # Sanitize and normalize the extracted codec
+                        video_codec = _sanitize_codec_name(video_codec)
+                        # Only update if we got a valid codec (not N/A)
+                        # This prevents overwriting a detected codec with N/A
+                        if video_codec != 'N/A':
+                            result_data['video_codec'] = video_codec
+                            logger.debug(f"  → Final video codec: {result_data['video_codec']}")
                     
                     # Extract resolution
                     res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
@@ -281,14 +366,20 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             
             # Extract audio codec
             # Example: "Stream #0:1: Audio: aac, 48000 Hz, stereo"
+            # Example with wrapped codec: "Stream #0:1(und): Audio: wrapped_avframe (aac)"
+            # Only process lines that start with "Stream #" to ensure we're parsing input stream info
             if 'Stream #' in line and 'Audio:' in line:
                 try:
-                    codec_match = re.search(r'Audio:\s*(\w+)', line)
-                    if codec_match:
-                        codec = codec_match.group(1)
-                        codec = _sanitize_codec_name(codec)
-                        result_data['audio_codec'] = codec
-                        logger.debug(f"  → Detected audio codec: {result_data['audio_codec']}")
+                    # Use robust codec extraction that handles wrapped codecs
+                    audio_codec = _extract_codec_from_line(line, 'Audio')
+                    if audio_codec:
+                        # Sanitize and normalize the extracted codec
+                        audio_codec = _sanitize_codec_name(audio_codec)
+                        # Only update if we got a valid codec (not N/A)
+                        # This prevents overwriting a detected codec with N/A
+                        if audio_codec != 'N/A':
+                            result_data['audio_codec'] = audio_codec
+                            logger.debug(f"  → Final audio codec: {result_data['audio_codec']}")
                 except (ValueError, AttributeError) as e:
                     logger.debug(f"  → Error parsing audio stream line: {e}")
             
