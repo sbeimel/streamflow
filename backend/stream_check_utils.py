@@ -30,6 +30,18 @@ EARLY_EXIT_THRESHOLD = 0.8  # Consider ffmpeg exited early if elapsed < 80% of e
 MAX_ERROR_LINES_TO_LOG = 5  # Maximum number of error lines to log from ffmpeg output
 MAX_DEBUG_LINES_TO_LOG = 10  # Maximum number of debug lines to log from ffmpeg output
 
+# FourCC to common codec name mapping
+FOURCC_TO_CODEC = {
+    'avc1': 'h264',
+    'avc3': 'h264',
+    'h264': 'h264',
+    'hvc1': 'hevc',
+    'hev1': 'hevc',
+    'hevc': 'hevc',
+    'vp09': 'vp9',
+    'vp08': 'vp8',
+}
+
 
 def _sanitize_codec_name(codec: str) -> str:
     """
@@ -38,6 +50,8 @@ def _sanitize_codec_name(codec: str) -> str:
     ffmpeg sometimes outputs codec names like 'wrapped_avframe' when it cannot
     properly identify the codec (e.g., for hardware-accelerated streams). This
     function filters out such values and returns 'N/A' for invalid codecs.
+    
+    Also normalizes FourCC codes to common codec names (e.g., avc1 -> h264).
     
     Args:
         codec: The raw codec name extracted from ffmpeg output
@@ -61,7 +75,12 @@ def _sanitize_codec_name(codec: str) -> str:
         logger.debug(f"  → Filtered out invalid codec: {codec}")
         return 'N/A'
     
-    return codec
+    # Normalize FourCC codes to common codec names
+    normalized = FOURCC_TO_CODEC.get(codec_lower, codec)
+    if normalized != codec:
+        logger.debug(f"  → Normalized codec {codec} -> {normalized}")
+    
+    return normalized
 
 
 def check_ffmpeg_installed() -> bool:
@@ -238,22 +257,30 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
             if 'Stream #' in line and 'Video:' in line:
                 try:
-                    # Extract codec - try to get actual codec from parentheses first
-                    # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
-                    parenthesis_codec_match = re.search(r'Video:\s*\w+\s*\(([a-zA-Z0-9]+)', line)
-                    if parenthesis_codec_match:
-                        codec = parenthesis_codec_match.group(1)
-                        codec = _sanitize_codec_name(codec)
-                        if codec != 'N/A':
-                            result_data['video_codec'] = codec
-                            logger.debug(f"  → Detected video codec from parentheses: {result_data['video_codec']}")
-                    
-                    # Fallback: extract first word after "Video:"
-                    if result_data['video_codec'] == 'N/A':
-                        codec_match = re.search(r'Video:\s*(\w+)', line)
-                        if codec_match:
-                            codec = codec_match.group(1)
-                            codec = _sanitize_codec_name(codec)
+                    # Extract codec - first get the primary codec name
+                    codec_match = re.search(r'Video:\s*(\w+)', line)
+                    if codec_match:
+                        primary_codec = codec_match.group(1)
+                        primary_codec_lower = primary_codec.lower()
+                        
+                        # For wrapped codecs (e.g., "wrapped_avframe"), extract the actual codec from parentheses
+                        # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
+                        if 'wrapped' in primary_codec_lower:
+                            # Search for parentheses after "Video:" to avoid matching stream metadata like "(und)"
+                            video_pos = line.find('Video:')
+                            if video_pos >= 0:
+                                after_video = line[video_pos:]
+                                parenthesis_codec_match = re.search(r'\(([a-zA-Z0-9]+)', after_video)
+                                if parenthesis_codec_match:
+                                    codec = parenthesis_codec_match.group(1)
+                                    codec = _sanitize_codec_name(codec)
+                                    if codec != 'N/A':
+                                        result_data['video_codec'] = codec
+                                        logger.debug(f"  → Detected video codec from wrapped parentheses: {result_data['video_codec']}")
+                        
+                        # For normal codecs, use the primary codec name (ignoring profile in parentheses)
+                        if result_data['video_codec'] == 'N/A':
+                            codec = _sanitize_codec_name(primary_codec)
                             result_data['video_codec'] = codec
                             logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
                     
