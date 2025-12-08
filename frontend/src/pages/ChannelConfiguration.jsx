@@ -77,7 +77,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
       <CardContent className="p-0">
         <div className="flex items-center gap-3 p-3">
           {/* Channel Logo */}
-          <div className="w-12 h-12 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+          <div className="w-30 h-15 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
             {logoUrl ? (
               <img src={logoUrl} alt={channel.name} className="w-full h-full object-cover" />
             ) : (
@@ -109,7 +109,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Avg Bitrate:</span>
-                    <span className="font-medium">{stats.average_bitrate > 0 ? `${(stats.average_bitrate / 1000).toFixed(0)} Kbps` : 'N/A'}</span>
+                    <span className="font-medium">{stats.average_bitrate > 0 ? `${stats.average_bitrate} Kbps` : 'N/A'}</span>
                   </div>
                 </>
               ) : (
