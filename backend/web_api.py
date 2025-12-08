@@ -212,6 +212,12 @@ def get_channels():
 def get_channel_stats(channel_id):
     """Get channel statistics including stream count, dead streams, resolution, and bitrate."""
     try:
+        # Convert channel_id to int for comparison
+        try:
+            channel_id_int = int(channel_id)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid channel ID: must be a valid integer"}), 400
+        
         udi = get_udi_manager()
         channels = udi.get_channels()
         
@@ -220,7 +226,7 @@ def get_channel_stats(channel_id):
         
         # Find the specific channel - convert to dict for O(1) lookup
         channels_dict = {ch['id']: ch for ch in channels}
-        channel = channels_dict.get(channel_id)
+        channel = channels_dict.get(channel_id_int)
         
         if not channel:
             return jsonify({"error": "Channel not found"}), 404
@@ -266,7 +272,7 @@ def get_channel_stats(channel_id):
             avg_bitrate = int(sum(bitrates) / len(bitrates))
         
         return jsonify({
-            "channel_id": channel_id,
+            "channel_id": channel_id_int,
             "channel_name": channel.get('name', ''),
             "logo_id": channel.get('logo_id'),
             "total_streams": total_streams,
