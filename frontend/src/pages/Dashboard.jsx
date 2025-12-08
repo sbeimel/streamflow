@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
+import { Badge } from '@/components/ui/badge.jsx'
+import { Progress } from '@/components/ui/progress.jsx'
+import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
+import { Label } from '@/components/ui/label.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamAPI, streamCheckerAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Search, Activity } from 'lucide-react'
+import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -108,6 +112,9 @@ export default function Dashboard() {
 
   const isAutomationRunning = status?.is_running || false
   const isStreamCheckerRunning = streamCheckerStatus?.is_running || false
+  const queueProgress = streamCheckerStatus?.queue_size > 0 
+    ? ((streamCheckerStatus?.total_processed || 0) / (streamCheckerStatus?.queue_size + streamCheckerStatus?.total_processed || 1)) * 100
+    : 0
 
   return (
     <div className="space-y-6">
@@ -117,6 +124,17 @@ export default function Dashboard() {
           Monitor and control your stream automation
         </p>
       </div>
+
+      {/* Active Operations Alert */}
+      {(isStreamCheckerRunning && streamCheckerStatus?.queue_size > 0) && (
+        <Alert>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <AlertDescription>
+            Stream checker is processing {streamCheckerStatus.queue_size} streams...
+            <Progress value={queueProgress} className="mt-2 h-2" />
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Status Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -128,14 +146,21 @@ export default function Dashboard() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {isAutomationRunning ? (
-                <span className="text-green-500">Running</span>
-              ) : (
-                <span className="text-gray-500">Stopped</span>
-              )}
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-bold">
+                {isAutomationRunning ? (
+                  <Badge variant="default" className="bg-green-500">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Running
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary">
+                    Stopped
+                  </Badge>
+                )}
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground mt-2">
               Background automation service
             </p>
           </CardContent>
@@ -149,14 +174,21 @@ export default function Dashboard() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {isStreamCheckerRunning ? (
-                <span className="text-green-500">Active</span>
-              ) : (
-                <span className="text-gray-500">Idle</span>
-              )}
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-bold">
+                {isStreamCheckerRunning ? (
+                  <Badge variant="default" className="bg-green-500">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Active
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary">
+                    Idle
+                  </Badge>
+                )}
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground mt-2">
               Quality checking service
             </p>
           </CardContent>
@@ -192,7 +224,13 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {streamCheckerStatus?.config?.pipeline_mode || 'N/A'}
+              {streamCheckerStatus?.config?.pipeline_mode ? (
+                <Badge variant="outline">
+                  {streamCheckerStatus.config.pipeline_mode.replace(/_/g, ' ')}
+                </Badge>
+              ) : (
+                'N/A'
+              )}
             </div>
             <p className="text-xs text-muted-foreground">
               Current automation level
@@ -245,23 +283,29 @@ export default function Dashboard() {
             <CardTitle>Automation Configuration</CardTitle>
           </CardHeader>
           <CardContent>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
+            <dl className="space-y-3 text-sm">
+              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Enabled Features:</dt>
-                <dd className="font-medium">
-                  {status?.config?.enabled_features?.length || 0}
+                <dd>
+                  <Badge variant="outline">
+                    {status?.config?.enabled_features?.length || 0}
+                  </Badge>
                 </dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Update Interval:</dt>
-                <dd className="font-medium">
-                  {status?.config?.playlist_update_interval || 'N/A'}s
+                <dd>
+                  <Badge variant="secondary">
+                    {status?.config?.playlist_update_interval || 'N/A'}s
+                  </Badge>
                 </dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">M3U Accounts:</dt>
-                <dd className="font-medium">
-                  {status?.config?.enabled_m3u_accounts?.length || 0}
+                <dd>
+                  <Badge variant="outline">
+                    {status?.config?.enabled_m3u_accounts?.length || 0}
+                  </Badge>
                 </dd>
               </div>
             </dl>
@@ -273,25 +317,37 @@ export default function Dashboard() {
             <CardTitle>Stream Checker Status</CardTitle>
           </CardHeader>
           <CardContent>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
+            <dl className="space-y-3 text-sm">
+              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Queue Size:</dt>
-                <dd className="font-medium">
-                  {streamCheckerStatus?.queue_size || 0}
+                <dd>
+                  <Badge variant={streamCheckerStatus?.queue_size > 0 ? "default" : "secondary"}>
+                    {streamCheckerStatus?.queue_size || 0}
+                  </Badge>
                 </dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Active Workers:</dt>
-                <dd className="font-medium">
-                  {streamCheckerStatus?.active_workers || 0}
+                <dd>
+                  <Badge variant={streamCheckerStatus?.active_workers > 0 ? "default" : "secondary"}>
+                    {streamCheckerStatus?.active_workers || 0}
+                  </Badge>
                 </dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Total Processed:</dt>
-                <dd className="font-medium">
-                  {streamCheckerStatus?.total_processed || 0}
+                <dd>
+                  <Badge variant="outline">
+                    {streamCheckerStatus?.total_processed || 0}
+                  </Badge>
                 </dd>
               </div>
+              {streamCheckerStatus?.queue_size > 0 && (
+                <div className="pt-2">
+                  <Label className="text-xs text-muted-foreground mb-2 block">Processing Progress</Label>
+                  <Progress value={queueProgress} className="h-2" />
+                </div>
+              )}
             </dl>
           </CardContent>
         </Card>
