@@ -72,6 +72,12 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Parallel Mode** (default): Concurrent stream checking with configurable worker pool (default: 10)
   - Thread-based parallel execution
   - Configurable global concurrency limit
+  - **Per-Account Stream Limits**: Respects maximum concurrent streams for each M3U account
+    - Smart scheduler ensures account limits are never exceeded
+    - Multiple accounts can check streams in parallel
+    - Example: Account A (limit: 1), Account B (limit: 2) with streams A1, A2, B1, B2, B3
+      - Concurrently checks: A1, B1, B2 (3 total, respecting limits)
+      - When A1 completes, A2 starts; when B1/B2 completes, B3 starts
   - Stagger delay to prevent simultaneous starts
   - Robust pipeline: all stats gathered in parallel, then pushed to Dispatcharr after ALL checks complete
   - Prevents race conditions with dead stream removal
