@@ -15,6 +15,15 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
+    // Try to load stats from localStorage first
+    const cachedStats = localStorage.getItem(`channel_stats_${channel.id}`)
+    if (cachedStats) {
+      try {
+        setStats(JSON.parse(cachedStats))
+      } catch (e) {
+        console.error('Failed to parse cached stats:', e)
+      }
+    }
     loadStats()
   }, [channel.id])
 
@@ -23,6 +32,8 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
       setLoadingStats(true)
       const response = await channelsAPI.getChannelStats(channel.id)
       setStats(response.data)
+      // Cache stats in localStorage
+      localStorage.setItem(`channel_stats_${channel.id}`, JSON.stringify(response.data))
     } catch (err) {
       console.error('Failed to load channel stats:', err)
     } finally {
@@ -30,10 +41,17 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
     }
   }
 
+  // Cache channel logo URL if available
+  useEffect(() => {
+    if (channel.logo_url) {
+      localStorage.setItem(`channel_logo_${channel.id}`, channel.logo_url)
+    }
+  }, [channel.logo_url, channel.id])
+
   const channelPatterns = patterns[channel.id]
 
   return (
-    <Card className="w-full">
+    <Card className="w-full max-w-4xl">
       <CardContent className="p-0">
         <div className="flex items-center gap-4 p-4">
           {/* Channel Logo */}
@@ -57,15 +75,15 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
                 <>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Streams:</span>
-                    <span className="font-medium">{stats.total_streams}</span>
+                    <span className="font-medium">{stats.total_streams || 0}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Dead:</span>
-                    <span className="font-medium text-destructive">{stats.dead_streams}</span>
+                    <span className="font-medium text-destructive">{stats.dead_streams || 0}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Resolution:</span>
-                    <span className="font-medium">{stats.most_common_resolution}</span>
+                    <span className="font-medium">{stats.most_common_resolution || 'Unknown'}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Avg Bitrate:</span>
@@ -73,7 +91,24 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
                   </div>
                 </>
               ) : (
-                <span className="text-muted-foreground">No stats available</span>
+                <>
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">Streams:</span>
+                    <span className="font-medium text-muted-foreground">--</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">Dead:</span>
+                    <span className="font-medium text-muted-foreground">--</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">Resolution:</span>
+                    <span className="font-medium text-muted-foreground">--</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">Avg Bitrate:</span>
+                    <span className="font-medium text-muted-foreground">--</span>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -221,7 +256,7 @@ export default function ChannelConfiguration() {
         </p>
       </div>
 
-      <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-1 2xl:grid-cols-1">
         {channels.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center">

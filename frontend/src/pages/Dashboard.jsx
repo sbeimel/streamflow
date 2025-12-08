@@ -116,6 +116,10 @@ export default function Dashboard() {
     ? ((streamCheckerStatus?.total_processed || 0) / (streamCheckerStatus?.queue_size + streamCheckerStatus?.total_processed || 1)) * 100
     : 0
 
+  // Determine if actions should be disabled based on stream checker activity
+  const isProcessing = isStreamCheckerRunning && streamCheckerStatus?.queue_size > 0
+  const shouldDisableActions = isProcessing || actionLoading !== ''
+
   return (
     <div className="space-y-6">
       <div>
@@ -126,12 +130,17 @@ export default function Dashboard() {
       </div>
 
       {/* Active Operations Alert */}
-      {(isStreamCheckerRunning && streamCheckerStatus?.queue_size > 0) && (
-        <Alert>
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <AlertDescription>
-            Stream checker is processing {streamCheckerStatus.queue_size} streams...
+      {isProcessing && (
+        <Alert className="border-blue-500 bg-blue-50 dark:bg-blue-950">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+          <AlertDescription className="text-blue-900 dark:text-blue-100">
+            <div className="font-medium mb-1">Stream checker is actively processing</div>
+            <div className="text-sm">
+              Processing {streamCheckerStatus.queue_size} streams... 
+              {streamCheckerStatus.total_processed > 0 && ` (${streamCheckerStatus.total_processed} completed)`}
+            </div>
             <Progress value={queueProgress} className="mt-2 h-2" />
+            <div className="text-xs mt-1 text-muted-foreground">Quick actions are temporarily disabled</div>
           </AlertDescription>
         </Alert>
       )}
@@ -250,7 +259,7 @@ export default function Dashboard() {
         <CardContent className="flex flex-wrap gap-4">
           <Button
             onClick={handleRefreshPlaylist}
-            disabled={actionLoading === 'playlist'}
+            disabled={shouldDisableActions}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
             {actionLoading === 'playlist' ? 'Refreshing...' : 'Refresh Playlist'}
@@ -258,7 +267,7 @@ export default function Dashboard() {
 
           <Button
             onClick={handleDiscoverStreams}
-            disabled={actionLoading === 'discover'}
+            disabled={shouldDisableActions}
             variant="outline"
           >
             <Search className="mr-2 h-4 w-4" />
@@ -267,7 +276,7 @@ export default function Dashboard() {
 
           <Button
             onClick={handleTriggerGlobalAction}
-            disabled={actionLoading === 'global'}
+            disabled={shouldDisableActions}
             variant="outline"
           >
             <PlayCircle className="mr-2 h-4 w-4" />
