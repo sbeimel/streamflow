@@ -248,8 +248,9 @@ class SmartStreamScheduler:
                     futures[future] = stream
                     logger.debug(f"Submitted stream {stream['id']} for checking")
             
-            # Process completed tasks as they finish
-            for future in futures:
+            # Process completed tasks as they finish (in completion order for better parallelism)
+            from concurrent.futures import as_completed
+            for future in as_completed(futures):
                 stream = futures[future]
                 try:
                     # Wait for completion

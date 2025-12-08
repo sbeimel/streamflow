@@ -254,9 +254,12 @@ class TestSmartStreamScheduler(unittest.TestCase):
         max_account_concurrent = {1: 0, 2: 0}
         lock = threading.Lock()
         
+        # Map stream IDs to account IDs
+        stream_to_account = {1: 1, 2: 1, 3: 2, 4: 2, 5: 2}
+        
         def mock_check(**kwargs):
-            account_id = kwargs.get('stream_name', '').split()[1][0]  # 'A' or 'B'
-            account_id = 1 if account_id == 'A' else 2
+            stream_id = kwargs.get('stream_id')
+            account_id = stream_to_account.get(stream_id, 1)
             
             with lock:
                 current_concurrent[0] += 1
