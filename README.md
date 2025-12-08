@@ -24,6 +24,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 
 - **5 Pipeline Modes**: Choose the automation level that fits your needs (from continuous checking to scheduled-only)
 - **Parallel Stream Checking**: Thread-based parallel stream analysis with configurable worker pool
+- **Per-Account Stream Limits**: Intelligent concurrent stream limiting respects M3U provider limits while maximizing parallelism
 - **Automated M3U Playlist Management**: Refresh playlists every 5 minutes (configurable)
 - **Stream Quality Checking**: Analyze streams for bitrate, resolution, FPS, codec quality, and errors
 - **Automatic Stream Reordering**: Best quality streams moved to the top
@@ -84,6 +85,8 @@ docs/
 - [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
 - [API Documentation](docs/API.md) - REST API endpoints and usage
 - [Features](docs/FEATURES.md) - Detailed feature descriptions
+- [Concurrent Stream Limits](docs/CONCURRENT_STREAM_LIMITS.md) - Per-account stream limiting
+- [Pipeline System](docs/PIPELINE_SYSTEM.md) - Automation pipeline modes
 - [Debug Mode Guide](docs/DEBUG_MODE.md) - Troubleshooting with enhanced logging
 
 ## Requirements
