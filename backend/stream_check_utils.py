@@ -348,6 +348,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                 in_input_section = False
                 logger.debug(f"  → Entered Output section (will skip stream parsing): {line.strip()}")
                 continue
+            
             # Extract video codec, resolution, and FPS from Input stream lines only
             # Example: "Stream #0:0: Video: h264, yuv420p, 1920x1080, 25 fps"
             # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
