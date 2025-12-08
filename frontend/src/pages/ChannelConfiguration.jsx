@@ -73,7 +73,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
 
   return (
-    <Card className="w-full max-w-4xl">
+    <Card className="w-full">
       <CardContent className="p-0">
         <div className="flex items-center gap-3 p-3">
           {/* Channel Logo */}

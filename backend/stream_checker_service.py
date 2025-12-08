@@ -2159,8 +2159,8 @@ class StreamCheckerService:
                     if logo_id:
                         try:
                             logo = udi.get_logo_by_id(logo_id)
-                            if logo:
-                                logo_url = logo.get('cache_url') or logo.get('url', '')
+                            if logo and logo.get('cache_url'):
+                                logo_url = logo.get('cache_url')
                         except Exception as e:
                             logger.debug(f"Could not fetch logo for channel {channel_id}: {e}")
                     
