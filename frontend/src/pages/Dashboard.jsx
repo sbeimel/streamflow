@@ -5,20 +5,27 @@ import { Badge } from '@/components/ui/badge.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Label } from '@/components/ui/label.jsx'
+import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamAPI, streamCheckerAPI } from '@/services/api.js'
+import { automationAPI, streamAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
 import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
   const [streamCheckerStatus, setStreamCheckerStatus] = useState(null)
+  const [playlists, setPlaylists] = useState([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState('')
+  const [togglingPlaylist, setTogglingPlaylist] = useState(null)
   const { toast } = useToast()
 
   useEffect(() => {
     loadStatus()
-    const interval = setInterval(loadStatus, 30000)
+    loadPlaylists()
+    const interval = setInterval(() => {
+      loadStatus()
+      loadPlaylists()
+    }, 30000)
     return () => clearInterval(interval)
   }, [])
 
@@ -39,6 +46,15 @@ export default function Dashboard() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadPlaylists = async () => {
+    try {
+      const response = await m3uAPI.getAccounts()
+      setPlaylists(response.data)
+    } catch (err) {
+      console.error('Failed to load playlists:', err)
     }
   }
 
@@ -102,6 +118,58 @@ export default function Dashboard() {
     }
   }
 
+  const handleTogglePlaylist = async (playlistId, currentlyEnabled) => {
+    try {
+      setTogglingPlaylist(playlistId)
+      
+      // Get current enabled accounts from status
+      const currentEnabledAccounts = status?.config?.enabled_m3u_accounts || []
+      let newEnabledAccounts
+      
+      if (currentlyEnabled) {
+        // Disable: add to enabled list (if empty list = all enabled, we need to list all others)
+        if (currentEnabledAccounts.length === 0) {
+          // All currently enabled, so enable all except this one
+          newEnabledAccounts = playlists
+            .filter(p => p.id !== playlistId)
+            .map(p => p.id)
+        } else {
+          // Remove from enabled list
+          newEnabledAccounts = currentEnabledAccounts.filter(id => id !== playlistId)
+        }
+      } else {
+        // Enable: remove from enabled list or add all others if currently disabled
+        if (currentEnabledAccounts.length === 0) {
+          // All currently enabled, so this shouldn't happen
+          newEnabledAccounts = []
+        } else {
+          newEnabledAccounts = [...currentEnabledAccounts, playlistId]
+          // If all are now enabled, set to empty array
+          if (newEnabledAccounts.length === playlists.length) {
+            newEnabledAccounts = []
+          }
+        }
+      }
+      
+      await automationAPI.updateConfig({ enabled_m3u_accounts: newEnabledAccounts })
+      
+      toast({
+        title: "Success",
+        description: `Playlist ${currentlyEnabled ? 'disabled' : 'enabled'} successfully`
+      })
+      
+      await loadStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to toggle playlist",
+        variant: "destructive"
+      })
+    } finally {
+      setTogglingPlaylist(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -111,13 +179,15 @@ export default function Dashboard() {
   }
 
   const isAutomationRunning = status?.running || false
-  const isStreamCheckerRunning = streamCheckerStatus?.is_running || false
-  const queueProgress = streamCheckerStatus?.queue_size > 0 
-    ? ((streamCheckerStatus?.total_processed || 0) / (streamCheckerStatus?.queue_size + streamCheckerStatus?.total_processed || 1)) * 100
+  const isStreamCheckerRunning = streamCheckerStatus?.running || false
+  const queueSize = streamCheckerStatus?.queue?.queue_size || 0
+  const totalProcessed = streamCheckerStatus?.queue?.total_completed || 0
+  const queueProgress = queueSize > 0 
+    ? (totalProcessed / (queueSize + totalProcessed || 1)) * 100
     : 0
 
   // Determine if actions should be disabled based on stream checker activity
-  const isProcessing = isStreamCheckerRunning && streamCheckerStatus?.queue_size > 0
+  const isProcessing = streamCheckerStatus?.stream_checking_mode || false
   const shouldDisableActions = isProcessing || actionLoading !== ''
 
   return (
@@ -136,8 +206,8 @@ export default function Dashboard() {
           <AlertDescription className="text-blue-900 dark:text-blue-100">
             <div className="font-medium mb-1">Stream checker is actively processing</div>
             <div className="text-sm">
-              Processing {streamCheckerStatus.queue_size} streams... 
-              {streamCheckerStatus.total_processed > 0 && ` (${streamCheckerStatus.total_processed} completed)`}
+              Processing {queueSize} streams... 
+              {totalProcessed > 0 && ` (${totalProcessed} completed)`}
             </div>
             <Progress value={queueProgress} className="mt-2 h-2" />
             <div className="text-xs mt-1 text-muted-foreground">Quick actions are temporarily disabled</div>
@@ -185,10 +255,15 @@ export default function Dashboard() {
           <CardContent>
             <div className="flex items-center gap-2">
               <div className="text-2xl font-bold">
-                {isStreamCheckerRunning ? (
+                {streamCheckerStatus?.global_action_in_progress ? (
+                  <Badge variant="default" className="bg-blue-500">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Global Check
+                  </Badge>
+                ) : streamCheckerStatus?.checking || (streamCheckerStatus?.queue?.in_progress > 0) ? (
                   <Badge variant="default" className="bg-green-500">
                     <CheckCircle2 className="h-3 w-3 mr-1" />
-                    Active
+                    Normal Check
                   </Badge>
                 ) : (
                   <Badge variant="secondary">
@@ -294,18 +369,10 @@ export default function Dashboard() {
           <CardContent>
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between items-center">
-                <dt className="text-muted-foreground">Enabled Features:</dt>
-                <dd>
-                  <Badge variant="outline">
-                    {status?.config?.enabled_features?.length || 0}
-                  </Badge>
-                </dd>
-              </div>
-              <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Update Interval:</dt>
                 <dd>
                   <Badge variant="secondary">
-                    {status?.config?.playlist_update_interval || 'N/A'}s
+                    {status?.config?.playlist_update_interval ? `${status.config.playlist_update_interval}s` : 'N/A'}
                   </Badge>
                 </dd>
               </div>
@@ -313,7 +380,7 @@ export default function Dashboard() {
                 <dt className="text-muted-foreground">M3U Accounts:</dt>
                 <dd>
                   <Badge variant="outline">
-                    {status?.config?.enabled_m3u_accounts?.length || 0}
+                    {status?.config?.m3u_accounts?.length || 0}
                   </Badge>
                 </dd>
               </div>
@@ -330,16 +397,16 @@ export default function Dashboard() {
               <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Queue Size:</dt>
                 <dd>
-                  <Badge variant={streamCheckerStatus?.queue_size > 0 ? "default" : "secondary"}>
-                    {streamCheckerStatus?.queue_size || 0}
+                  <Badge variant={queueSize > 0 ? "default" : "secondary"}>
+                    {queueSize}
                   </Badge>
                 </dd>
               </div>
               <div className="flex justify-between items-center">
                 <dt className="text-muted-foreground">Active Workers:</dt>
                 <dd>
-                  <Badge variant={streamCheckerStatus?.active_workers > 0 ? "default" : "secondary"}>
-                    {streamCheckerStatus?.active_workers || 0}
+                  <Badge variant={(streamCheckerStatus?.parallel?.max_workers || 0) > 0 ? "default" : "secondary"}>
+                    {streamCheckerStatus?.parallel?.max_workers || 0}
                   </Badge>
                 </dd>
               </div>
@@ -347,11 +414,11 @@ export default function Dashboard() {
                 <dt className="text-muted-foreground">Total Processed:</dt>
                 <dd>
                   <Badge variant="outline">
-                    {streamCheckerStatus?.total_processed || 0}
+                    {totalProcessed}
                   </Badge>
                 </dd>
               </div>
-              {streamCheckerStatus?.queue_size > 0 && (
+              {queueSize > 0 && (
                 <div className="pt-2">
                   <Label className="text-xs text-muted-foreground mb-2 block">Processing Progress</Label>
                   <Progress value={queueProgress} className="h-2" />
@@ -361,6 +428,51 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Available Playlists */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Available Playlists</CardTitle>
+          <CardDescription>
+            Enable or disable M3U playlists for stream management
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {playlists.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No playlists available</p>
+          ) : (
+            <div className="space-y-3">
+              {playlists.map((playlist) => {
+                const enabledAccounts = status?.config?.enabled_m3u_accounts || []
+                const isEnabled = enabledAccounts.length === 0 || enabledAccounts.includes(playlist.id)
+                
+                return (
+                  <div key={playlist.id} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium">{playlist.name}</h4>
+                        <Badge variant={isEnabled ? "default" : "secondary"}>
+                          {isEnabled ? "Enabled" : "Disabled"}
+                        </Badge>
+                      </div>
+                      {playlist.url && (
+                        <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
+                          {playlist.url}
+                        </p>
+                      )}
+                    </div>
+                    <Switch
+                      checked={isEnabled}
+                      onCheckedChange={() => handleTogglePlaylist(playlist.id, isEnabled)}
+                      disabled={togglingPlaylist === playlist.id}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
