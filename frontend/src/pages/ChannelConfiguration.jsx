@@ -77,9 +77,9 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
       <CardContent className="p-0">
         <div className="flex items-center gap-3 p-3">
           {/* Channel Logo */}
-          <div className="w-30 h-15 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+          <div className="w-24 h-12 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
             {logoUrl ? (
-              <img src={logoUrl} alt={channel.name} className="w-full h-full object-cover" />
+              <img src={logoUrl} alt={channel.name} className="w-full h-full object-contain" />
             ) : (
               <span className="text-2xl font-bold text-muted-foreground">
                 {channel.name?.charAt(0) || '?'}
@@ -253,15 +253,28 @@ export default function ChannelConfiguration() {
   const handleCheckChannel = async (channelId) => {
     try {
       setCheckingChannel(channelId)
-      await streamCheckerAPI.checkChannel(channelId)
-      toast({
-        title: "Success",
-        description: "Channel queued for checking"
-      })
+      const response = await streamCheckerAPI.checkSingleChannel(channelId)
+      
+      if (response.data.success) {
+        const stats = response.data.stats
+        toast({
+          title: "Channel Check Complete",
+          description: `Checked ${stats.total_streams} streams. Dead: ${stats.dead_streams}. Avg Resolution: ${stats.avg_resolution}, Avg Bitrate: ${stats.avg_bitrate}`,
+        })
+        // Reload the channel data to show updated stats
+        loadData()
+      } else {
+        toast({
+          title: "Check Failed",
+          description: response.data.error || "Failed to check channel",
+          variant: "destructive"
+        })
+      }
     } catch (err) {
+      console.error('Error checking channel:', err)
       toast({
         title: "Error",
-        description: "Failed to queue channel for checking",
+        description: "Failed to check channel",
         variant: "destructive"
       })
     } finally {

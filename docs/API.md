@@ -120,7 +120,52 @@ Content-Type: application/json
   "channel_id": 123
 }
 ```
-Immediately checks a specific channel.
+Queues a specific channel for checking with high priority.
+
+**Response:**
+```json
+{
+  "message": "Channel 123 queued for immediate checking"
+}
+```
+
+### Check Single Channel (Synchronous)
+```
+POST /api/stream-checker/check-single-channel
+Content-Type: application/json
+
+{
+  "channel_id": 123
+}
+```
+Immediately checks a specific channel synchronously and returns detailed results.
+
+**Response:**
+```json
+{
+  "success": true,
+  "channel_id": 123,
+  "channel_name": "Example Channel",
+  "stats": {
+    "total_streams": 15,
+    "dead_streams": 2,
+    "avg_resolution": "1920x1080",
+    "avg_bitrate": "5000 kbps",
+    "stream_details": [
+      {
+        "stream_id": 1001,
+        "stream_name": "Stream 1",
+        "resolution": "1920x1080",
+        "bitrate": "6000 kbps",
+        "video_codec": "h264",
+        "fps": "30.0"
+      }
+    ]
+  }
+}
+```
+
+**Note:** This endpoint performs the check immediately and waits for completion, while `/check-channel` queues the check and returns immediately.
 
 ### Mark Updated
 ```
@@ -300,21 +345,62 @@ Tests a regex pattern against available streams.
 
 ### Get Changelog
 ```
-GET /api/changelog
+GET /api/changelog?days=7
 ```
-Returns activity history.
+Returns activity history with structured entries.
 
 **Query Parameters:**
-- `start_date` - Filter by start date (ISO format)
-- `end_date` - Filter by end date (ISO format)
-- `page` - Page number
-- `per_page` - Results per page
+- `days` - Number of days to retrieve (default: 7, options: 1, 7, 30, 90)
 
-### Clear Changelog
+**Response:**
+```json
+[
+  {
+    "timestamp": "2024-01-15T10:30:00.000Z",
+    "action": "single_channel_check",
+    "details": {
+      "channel_id": 123,
+      "channel_name": "Example Channel",
+      "total_streams": 15,
+      "dead_streams": 2,
+      "avg_resolution": "1920x1080",
+      "avg_bitrate": "5000 kbps"
+    },
+    "subentries": [
+      {
+        "group": "check",
+        "items": [
+          {
+            "type": "check",
+            "channel_id": 123,
+            "channel_name": "Example Channel",
+            "stats": {
+              "total_streams": 15,
+              "dead_streams": 2,
+              "avg_resolution": "1920x1080",
+              "avg_bitrate": "5000 kbps",
+              "stream_details": [...]
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
 ```
-POST /api/changelog/clear
-```
-Clears the activity history.
+
+**Action Types:**
+- `playlist_update_match` - Playlist update with stream matching and channel checks
+- `global_check` - Scheduled global check of all channels
+- `single_channel_check` - Individual channel check
+- `playlist_refresh` - M3U playlist refresh (legacy)
+- `streams_assigned` - Stream assignment to channels (legacy)
+
+**Subentry Groups:**
+- `update_match` - Streams added to channels during playlist updates
+- `check` - Channel check results with statistics
+
+**Note:** The changelog endpoint merges entries from both the automation manager and stream checker, sorted by timestamp (newest first).
 
 ## Health Check
 

@@ -2065,6 +2065,115 @@ class StreamCheckerService:
         """Manually queue multiple channels for checking."""
         return self.check_queue.add_channels(channel_ids, priority)
     
+    def check_single_channel(self, channel_id: int) -> Dict:
+        """Check a single channel immediately and return results.
+        
+        This performs a synchronous check of a single channel and logs to changelog.
+        
+        Args:
+            channel_id: ID of the channel to check
+            
+        Returns:
+            Dict with check results and statistics
+        """
+        try:
+            logger.info(f"Starting single channel check for channel {channel_id}")
+            
+            # Get channel info from UDI
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(channel_id)
+            if not channel:
+                error_msg = f"Channel {channel_id} not found"
+                logger.error(error_msg)
+                return {'success': False, 'error': error_msg}
+            
+            channel_name = channel.get('name', f'Channel {channel_id}')
+            
+            # Perform the check
+            self._check_channel(channel_id)
+            
+            # Gather statistics after check
+            streams = fetch_channel_streams(channel_id)
+            total_streams = len(streams)
+            dead_count = 0
+            resolutions = []
+            bitrates = []
+            
+            for stream in streams:
+                stats = stream.get('stream_stats', {})
+                if stats:
+                    resolution = stats.get('resolution')
+                    if resolution and isinstance(resolution, str):
+                        resolutions.append(resolution)
+                    
+                    bitrate = stats.get('bitrate')
+                    if bitrate:
+                        try:
+                            bitrates.append(float(bitrate))
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Check if stream is dead
+                stream_url = stream.get('url')
+                if stream_url and self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                    dead_count += 1
+            
+            # Calculate averages
+            avg_resolution = 'N/A'
+            if resolutions:
+                # Count resolutions and get most common
+                from collections import Counter
+                resolution_counts = Counter(resolutions)
+                avg_resolution = resolution_counts.most_common(1)[0][0]
+            
+            avg_bitrate = 'N/A'
+            if bitrates:
+                avg_bitrate = f"{sum(bitrates) / len(bitrates):.0f} kbps"
+            
+            check_stats = {
+                'total_streams': total_streams,
+                'dead_streams': dead_count,
+                'avg_resolution': avg_resolution,
+                'avg_bitrate': avg_bitrate,
+                'stream_details': []
+            }
+            
+            # Add top stream details
+            for stream in streams[:10]:  # Top 10 streams
+                stats = stream.get('stream_stats', {})
+                check_stats['stream_details'].append({
+                    'stream_id': stream.get('id'),
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'resolution': stats.get('resolution', 'N/A'),
+                    'bitrate': stats.get('bitrate', 'N/A'),
+                    'video_codec': stats.get('video_codec', 'N/A'),
+                    'fps': stats.get('fps', 'N/A')
+                })
+            
+            # Add changelog entry
+            if self.changelog:
+                try:
+                    self.changelog.add_single_channel_check_entry(
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        check_stats=check_stats
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to add changelog entry: {e}")
+            
+            logger.info(f"✓ Single channel check completed for {channel_name}")
+            
+            return {
+                'success': True,
+                'channel_id': channel_id,
+                'channel_name': channel_name,
+                'stats': check_stats
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking single channel {channel_id}: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+    
     def clear_queue(self):
         """Clear the checking queue."""
         self.check_queue.clear()

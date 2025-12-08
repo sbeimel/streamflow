@@ -1261,6 +1261,29 @@ def check_specific_channel():
         logger.error(f"Error checking specific channel: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/stream-checker/check-single-channel', methods=['POST'])
+def check_single_channel_now():
+    """Immediately check a single channel synchronously and return results."""
+    try:
+        data = request.get_json()
+        if not data or 'channel_id' not in data:
+            return jsonify({"error": "channel_id required"}), 400
+        
+        channel_id = data['channel_id']
+        service = get_stream_checker_service()
+        
+        # Perform synchronous check
+        result = service.check_single_channel(channel_id)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 500
+    
+    except Exception as e:
+        logger.error(f"Error checking single channel: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/stream-checker/mark-updated', methods=['POST'])
 def mark_channels_updated():
     """Mark channels as updated (triggered by M3U refresh)."""

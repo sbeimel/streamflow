@@ -122,20 +122,39 @@ Automatically identifies and manages non-functional streams:
 
 ### Channel Configuration
 - **Horizontal Channel Cards**: Modern card-based layout with expandable sections
-  - Channel logo display
+  - Channel logo display (wider than taller for better visibility)
   - Channel name and metadata
   - Real-time statistics:
     - Total stream count
     - Dead stream count
     - Most common resolution
     - Average bitrate (Kbps)
-  - Quick actions: Edit Regex, Check Channel
+  - Quick actions: Edit Regex, **Check Channel**
+- **Single Channel Check**: Immediately check a specific channel's streams
+  - Synchronous checking with detailed feedback
+  - Shows results: total streams, dead streams, avg resolution, avg bitrate
+  - Updates channel stats after completion
+  - Creates changelog entry for tracking
 - **Expandable Regex Editor**: Toggle pattern list within each card
   - View all configured patterns for the channel
   - Add new patterns inline
   - Delete patterns individually
 - **Individual Channel Checking**: Queue single channels for immediate quality checking
 - **Live Statistics**: Auto-loading channel stats from backend API
+
+### Changelog Page
+- **Activity History**: View all system events and stream operations
+- **Structured Entries**: Three main action types:
+  - **Playlist Update & Match**: Shows streams added and channels checked
+  - **Global Check**: Displays all channels checked during scheduled global actions
+  - **Single Channel Check**: Individual channel check results
+- **Global Statistics**: Summary stats for each action (total streams, dead streams, avg resolution, avg bitrate)
+- **Collapsible Subentries**: Expandable dropdown blocks for detailed information
+  - **Update & Match** group: Lists streams added to each channel
+  - **Check** group: Shows per-channel statistics and scores
+- **Time Filtering**: View entries from last 24 hours, 7 days, 30 days, or 90 days
+- **Color-Coded Badges**: Visual indicators for different action types
+- **Stream Details**: Top streams with resolution, bitrate, codec, and FPS information
 
 ### Configuration Page (unified)
 - **Pipeline Selection**: Choose from 5 automation modes with visual cards and hints

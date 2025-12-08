@@ -18,7 +18,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
 from api_utils import (
@@ -67,8 +67,15 @@ class ChangelogManager:
                 logger.warning(f"Could not load {self.changelog_file}, creating new changelog")
         return []
     
-    def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None):
-        """Add a new changelog entry."""
+    def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None, subentries: Optional[List[Dict[str, Any]]] = None):
+        """Add a new changelog entry.
+        
+        Args:
+            action: Type of action (e.g., 'playlist_update_match', 'global_check', 'single_channel_check')
+            details: Main details of the action including global stats
+            timestamp: Optional timestamp (defaults to now)
+            subentries: Optional list of subentry groups (e.g., updates, checks)
+        """
         if timestamp is None:
             timestamp = datetime.now().isoformat()
         
@@ -77,6 +84,10 @@ class ChangelogManager:
             "action": action,
             "details": details
         }
+        
+        # Add subentries if provided
+        if subentries:
+            entry["subentries"] = subentries
         
         self.changelog.append(entry)
         self._save_changelog()
@@ -109,10 +120,111 @@ class ChangelogManager:
         
         return recent
     
+    def add_playlist_update_entry(self, channels_updated: Dict[int, Dict], global_stats: Dict):
+        """Add a playlist update & match entry with subentries.
+        
+        Args:
+            channels_updated: Dict mapping channel_id to update info (streams added, stats)
+            global_stats: Global statistics (total streams added, dead streams, avg resolution, avg bitrate)
+        """
+        # Create subentries for streams matched per channel
+        update_subentries = []
+        for channel_id, info in channels_updated.items():
+            if info.get('streams_added'):
+                update_subentries.append({
+                    'type': 'update_match',
+                    'channel_id': channel_id,
+                    'channel_name': info.get('channel_name', f'Channel {channel_id}'),
+                    'streams': info.get('streams_added', [])
+                })
+        
+        # Create subentries for channel checks
+        check_subentries = []
+        for channel_id, info in channels_updated.items():
+            if info.get('check_stats'):
+                check_subentries.append({
+                    'type': 'check',
+                    'channel_id': channel_id,
+                    'channel_name': info.get('channel_name', f'Channel {channel_id}'),
+                    'stats': info.get('check_stats', {})
+                })
+        
+        subentries = []
+        if update_subentries:
+            subentries.append({'group': 'update_match', 'items': update_subentries})
+        if check_subentries:
+            subentries.append({'group': 'check', 'items': check_subentries})
+        
+        self.add_entry(
+            action='playlist_update_match',
+            details=global_stats,
+            subentries=subentries
+        )
+    
+    def add_global_check_entry(self, channels_checked: Dict[int, Dict], global_stats: Dict):
+        """Add a global check entry with subentries.
+        
+        Args:
+            channels_checked: Dict mapping channel_id to check stats
+            global_stats: Global statistics across all channels
+        """
+        check_subentries = []
+        for channel_id, stats in channels_checked.items():
+            check_subentries.append({
+                'type': 'check',
+                'channel_id': channel_id,
+                'channel_name': stats.get('channel_name', f'Channel {channel_id}'),
+                'stats': stats
+            })
+        
+        subentries = [{'group': 'check', 'items': check_subentries}] if check_subentries else []
+        
+        self.add_entry(
+            action='global_check',
+            details=global_stats,
+            subentries=subentries
+        )
+    
+    def add_single_channel_check_entry(self, channel_id: int, channel_name: str, check_stats: Dict):
+        """Add a single channel check entry.
+        
+        Args:
+            channel_id: ID of the channel checked
+            channel_name: Name of the channel
+            check_stats: Statistics from the channel check
+        """
+        check_subentries = [{
+            'type': 'check',
+            'channel_id': channel_id,
+            'channel_name': channel_name,
+            'stats': check_stats
+        }]
+        
+        subentries = [{'group': 'check', 'items': check_subentries}]
+        
+        self.add_entry(
+            action='single_channel_check',
+            details={
+                'channel_id': channel_id,
+                'channel_name': channel_name,
+                'total_streams': check_stats.get('total_streams', 0),
+                'dead_streams': check_stats.get('dead_streams', 0),
+                'avg_resolution': check_stats.get('avg_resolution', 'N/A'),
+                'avg_bitrate': check_stats.get('avg_bitrate', 'N/A')
+            },
+            subentries=subentries
+        )
+    
     def _has_channel_updates(self, entry: Dict) -> bool:
         """Check if a changelog entry contains meaningful channel/stream updates."""
         details = entry.get('details', {})
         action = entry.get('action', '')
+        
+        # For new action types, check if they have subentries
+        if action in ['playlist_update_match', 'global_check', 'single_channel_check']:
+            subentries = entry.get('subentries', [])
+            # Include if there are subentries with items
+            return any(group.get('items') for group in subentries)
         
         # For playlist_refresh, only include if there were actual changes
         if action == 'playlist_refresh':
