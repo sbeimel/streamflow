@@ -95,13 +95,23 @@ export default function Scheduling() {
       return
     }
 
+    const minutesBeforeValue = parseInt(minutesBefore)
+    if (isNaN(minutesBeforeValue) || minutesBeforeValue < 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid number of minutes (0 or greater)",
+        variant: "destructive"
+      })
+      return
+    }
+
     try {
       const eventData = {
         channel_id: selectedChannel.id,
         program_start_time: selectedProgram.start_time,
         program_end_time: selectedProgram.end_time,
         program_title: selectedProgram.title,
-        minutes_before: parseInt(minutesBefore) || 0
+        minutes_before: minutesBeforeValue
       }
 
       await schedulingAPI.createEvent(eventData)
@@ -128,10 +138,6 @@ export default function Scheduling() {
   }
 
   const handleDeleteEvent = async (eventId) => {
-    if (!confirm('Are you sure you want to delete this scheduled event?')) {
-      return
-    }
-
     try {
       await schedulingAPI.deleteEvent(eventId)
       toast({
@@ -429,7 +435,11 @@ export default function Scheduling() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDeleteEvent(event.id)}
+                          onClick={() => {
+                            if (window.confirm('Are you sure you want to delete this scheduled event?')) {
+                              handleDeleteEvent(event.id)
+                            }
+                          }}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
