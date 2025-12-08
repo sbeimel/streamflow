@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
@@ -227,6 +227,7 @@ export default function ChannelConfiguration() {
   const [newPattern, setNewPattern] = useState('')
   const [testingPattern, setTestingPattern] = useState(false)
   const [testResults, setTestResults] = useState(null)
+  const testRequestIdRef = useRef(0)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -303,6 +304,9 @@ export default function ChannelConfiguration() {
   const handleTestPattern = useCallback(async () => {
     if (!newPattern.trim() || !editingChannelId) return
     
+    // Increment request ID to track this request
+    const requestId = ++testRequestIdRef.current
+    
     try {
       setTestingPattern(true)
       const channel = channels.find(ch => ch.id === editingChannelId)
@@ -314,6 +318,9 @@ export default function ChannelConfiguration() {
         }],
         max_matches: 50
       })
+      
+      // Only update state if this is still the latest request
+      if (requestId !== testRequestIdRef.current) return
       
       // Extract results for this channel
       const result = response.data.results?.[0]
@@ -327,6 +334,9 @@ export default function ChannelConfiguration() {
         setTestResults({ valid: true, matches: [], match_count: 0 })
       }
     } catch (err) {
+      // Only update state if this is still the latest request
+      if (requestId !== testRequestIdRef.current) return
+      
       // Check if it's a validation error
       if (err.response?.data?.error) {
         setTestResults({
@@ -341,19 +351,28 @@ export default function ChannelConfiguration() {
         })
       }
     } finally {
-      setTestingPattern(false)
+      // Only update loading state if this is still the latest request
+      if (requestId === testRequestIdRef.current) {
+        setTestingPattern(false)
+      }
     }
   }, [newPattern, editingChannelId, channels, toast])
 
   // Test pattern on every change with debouncing
   useEffect(() => {
-    if (newPattern && editingChannelId && dialogOpen) {
-      const timer = setTimeout(() => {
-        handleTestPattern()
-      }, 500) // 500ms debounce
-      return () => clearTimeout(timer)
+    if (!newPattern || !editingChannelId || !dialogOpen) {
+      setTestResults(null)
+      return
     }
-  }, [newPattern, editingChannelId, dialogOpen, handleTestPattern])
+
+    const timer = setTimeout(() => {
+      handleTestPattern()
+    }, 500) // 500ms debounce
+    
+    return () => clearTimeout(timer)
+    // Only depend on the actual values, not the function
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newPattern, editingChannelId, dialogOpen])
 
   const handleSavePattern = async () => {
     if (!newPattern.trim() || !editingChannelId) {
