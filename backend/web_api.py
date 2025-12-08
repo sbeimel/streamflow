@@ -218,8 +218,10 @@ def get_channel_stats(channel_id):
         if channels is None:
             return jsonify({"error": "Failed to fetch channels"}), 500
         
-        # Find the specific channel
-        channel = next((ch for ch in channels if ch['id'] == channel_id), None)
+        # Find the specific channel - convert to dict for O(1) lookup
+        channels_dict = {ch['id']: ch for ch in channels}
+        channel = channels_dict.get(channel_id)
+        
         if not channel:
             return jsonify({"error": "Channel not found"}), 404
         
