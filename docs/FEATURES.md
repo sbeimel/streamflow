@@ -19,15 +19,22 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
 - Tracks update history in changelog
 
 ### Intelligent Stream Quality Checking
-Multi-factor analysis of stream quality:
+Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Bitrate**: Average kbps measurement
 - **Resolution**: Width × height detection
 - **Frame Rate**: FPS analysis
-- **Video Codec**: H.265/H.264 identification
+- **Video Codec**: H.265/H.264 identification with automatic sanitization
+  - Filters out invalid codec names (e.g., "wrapped_avframe", "unknown")
+  - Extracts actual codec from hardware-accelerated streams
 - **Audio Codec**: Detection and validation
+  - Parses **input stream codecs** only (e.g., "aac", "ac3", "mp3", "eac3")
+  - Avoids decoded output formats (e.g., "pcm_s16le")
+  - Supports multiple audio streams and language tracks
 - **Error Detection**: Decode errors, discontinuities, timeouts
-- **Interlacing**: Detection and penalty
-- **Dropped Frames**: Tracking and penalty
+- **Optimized Performance**: Single ffmpeg call instead of separate ffprobe+ffmpeg (reduced overhead)
+- **Parallel Checking**: Thread-based concurrent analysis with configurable worker pool
+  - Proper pipeline: gather stats in parallel → when ALL checks finish → push info to Dispatcharr
+  - Prevents race conditions during concurrent operations
 
 ### Automatic Stream Reordering
 - Best quality streams automatically moved to top
@@ -64,16 +71,28 @@ Multi-factor analysis of stream quality:
 - Interlaced penalty: Lower score for interlaced content
 - Dropped frames penalty: Lower score for streams with frame drops
 
-### Sequential Checking
-- One channel at a time to avoid overload
-- Protects streaming providers from concurrent requests
+### Sequential and Parallel Checking
+- **Parallel Mode** (default): Concurrent stream checking with configurable worker pool (default: 10)
+  - Thread-based parallel execution
+  - Configurable global concurrency limit
+  - **Per-Account Stream Limits**: Respects maximum concurrent streams for each M3U account
+    - Smart scheduler ensures account limits are never exceeded
+    - Multiple accounts can check streams in parallel
+    - Example: Account A (limit: 1), Account B (limit: 2) with streams A1, A2, B1, B2, B3
+      - Concurrently checks: A1, B1, B2 (3 total, respecting limits)
+      - When A1 completes, A2 starts; when B1/B2 completes, B3 starts
+  - Stagger delay to prevent simultaneous starts
+  - Robust pipeline: all stats gathered in parallel, then pushed to Dispatcharr after ALL checks complete
+  - Prevents race conditions with dead stream removal
+- **Sequential Mode**: One stream at a time for minimal provider load
 - Queue-based processing
 - Real-time progress tracking
 
 ### Dead Stream Detection and Management
 Automatically identifies and manages non-functional streams:
 - **Detection**: Streams with resolution=0 or bitrate=0 are marked as dead
-- **Tagging**: Dead streams are prefixed with `[DEAD]` in Dispatcharr
+- **Changelog Tracking**: Dead streams show status "dead" in changelog (not score:0)
+- **Revival Tracking**: Revived streams show status "revived" in changelog
 - **Removal**: Dead streams are removed from channels during regular checks
 - **Revival Check**: During global actions, dead streams are re-checked for revival
 - **Matching Exclusion**: Dead streams are not assigned to channels during stream matching
@@ -107,6 +126,9 @@ Automatically identifies and manages non-functional streams:
   - Daily or monthly frequency
   - Precise time selection (hour and minute)
   - Day of month for monthly schedules
+- **Concurrent Stream Checking**: Configure maximum parallel workers (default: 10)
+  - Controls load on streaming providers
+  - Adjustable stagger delay between task dispatches
 - **Context-Aware Settings**: Only relevant options shown based on selected pipeline
 - **Update Intervals**: Configure M3U refresh frequency (for applicable pipelines)
 - **Stream Analysis Parameters**: FFmpeg duration, timeouts, retries
@@ -206,7 +228,8 @@ Automatically identifies and manages non-functional streams:
 - User notifications
 
 ### Performance
-- Sequential stream checking
+- Parallel stream checking with configurable worker pool
+- Optimized single ffmpeg call (instead of ffprobe + ffmpeg)
 - Efficient queue processing
 - Minimal API calls
 - Resource optimization

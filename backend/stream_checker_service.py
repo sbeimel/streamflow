@@ -16,8 +16,7 @@ Features:
 
 The service runs continuously in the background, monitoring for channel
 updates and maintaining a queue of channels that need checking. It
-integrates with the dispatcharr-stream-sorter.py module for actual
-stream analysis.
+integrates with the stream_check_utils.py module for stream analysis.
 """
 
 import json
@@ -77,7 +76,6 @@ class StreamCheckConfig:
         },
         'stream_analysis': {
             'ffmpeg_duration': 30,  # seconds to analyze each stream
-            'idet_frames': 500,  # frames to check for interlacing
             'timeout': 30,  # timeout for operations
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
@@ -85,21 +83,23 @@ class StreamCheckConfig:
         },
         'scoring': {
             'weights': {
-                'bitrate': 0.30,
-                'resolution': 0.25,
+                'bitrate': 0.40,
+                'resolution': 0.35,
                 'fps': 0.15,
-                'codec': 0.10,
-                'errors': 0.20
+                'codec': 0.10
             },
             'min_score': 0.0,  # minimum score to keep stream
-            'prefer_h265': True,  # prefer h265 over h264
-            'penalize_interlaced': True,
-            'penalize_dropped_frames': True
+            'prefer_h265': True  # prefer h265 over h264
         },
         'queue': {
             'max_size': 1000,
             'check_on_update': True,  # check channels when they receive M3U updates
             'max_channels_per_run': 50  # limit channels per check cycle
+        },
+        'concurrent_streams': {
+            'global_limit': 10,  # Maximum concurrent stream checks globally (0 = unlimited)
+            'enabled': True,  # Enable concurrent checking via Celery
+            'stagger_delay': 1.0  # Delay in seconds between dispatching tasks to prevent simultaneous starts
         }
     }
     
@@ -1201,15 +1201,400 @@ class StreamCheckerService:
             return False
     
     def _check_channel(self, channel_id: int):
-        """Check and reorder streams for a specific channel."""
+        """Check and reorder streams for a specific channel.
+        
+        Routes to either concurrent or sequential checking based on configuration.
+        """
+        concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
+        
+        if concurrent_enabled:
+            return self._check_channel_concurrent(channel_id)
+        else:
+            return self._check_channel_sequential(channel_id)
+    
+    def _check_channel_concurrent(self, channel_id: int):
+        """Check and reorder streams for a specific channel using parallel thread pool."""
         import time as time_module
+        from stream_check_utils import analyze_stream
+        from concurrent_stream_limiter import get_smart_scheduler, get_account_limiter, initialize_account_limits
+        
         start_time = time_module.time()
-        log_function_call(logger, "_check_channel", channel_id=channel_id)
+        log_function_call(logger, "_check_channel_concurrent", channel_id=channel_id)
         
         log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
         self.checking = True
         logger.info(f"=" * 80)
-        logger.info(f"Checking channel {channel_id}")
+        logger.info(f"Checking channel {channel_id} (parallel mode)")
+        logger.info(f"=" * 80)
+        
+        try:
+            # Get channel information from UDI
+            logger.debug(f"Updating progress for channel {channel_id} initialization")
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name='Loading...',
+                current=0,
+                total=0,
+                status='initializing',
+                step='Fetching channel info',
+                step_detail='Retrieving channel data from UDI'
+            )
+            
+            udi = get_udi_manager()
+            base_url = _get_base_url()
+            logger.debug(f"Fetching channel data for channel {channel_id} from UDI")
+            channel_data = udi.get_channel_by_id(channel_id)
+            if not channel_data:
+                logger.error(f"UDI returned None for channel {channel_id}")
+                raise Exception(f"Could not fetch channel {channel_id}")
+            
+            channel_name = channel_data.get('name', f'Channel {channel_id}')
+            
+            # Get streams for this channel
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=0,
+                total=0,
+                status='initializing',
+                step='Fetching streams',
+                step_detail=f'Loading streams for {channel_name}'
+            )
+            
+            streams = fetch_channel_streams(channel_id)
+            if not streams or len(streams) == 0:
+                logger.info(f"No streams found for channel {channel_name}")
+                self.check_queue.mark_completed(channel_id)
+                self.update_tracker.mark_channel_checked(channel_id)
+                return
+            
+            logger.info(f"Found {len(streams)} streams for channel {channel_name}")
+            
+            # Check if this is a force check (bypasses 2-hour immunity)
+            force_check = self.update_tracker.should_force_check(channel_id)
+            
+            # Get list of already checked streams to avoid re-analyzing
+            checked_stream_ids = self.update_tracker.get_checked_stream_ids(channel_id)
+            current_stream_ids = [s['id'] for s in streams]
+            
+            # Identify which streams need analysis (new or unchecked)
+            if force_check:
+                streams_to_check = streams
+                streams_already_checked = []
+                logger.info(f"Force check enabled: analyzing all {len(streams)} streams (bypassing 2-hour immunity)")
+                self.update_tracker.clear_force_check(channel_id)
+            else:
+                streams_to_check = [s for s in streams if s['id'] not in checked_stream_ids]
+                streams_already_checked = [s for s in streams if s['id'] in checked_stream_ids]
+                
+                if streams_to_check:
+                    logger.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
+                else:
+                    logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
+            
+            # Get configuration for analysis
+            analysis_params = self.config.get('stream_analysis', {})
+            global_limit = self.config.get('concurrent_streams.global_limit', 10)
+            stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
+            
+            # Initialize account limits from UDI
+            accounts = udi.get_m3u_accounts()
+            if accounts:
+                initialize_account_limits(accounts)
+                logger.debug(f"Initialized concurrent stream limits for {len(accounts)} M3U accounts")
+            
+            # Initialize smart scheduler with account-aware limiting
+            smart_scheduler = get_smart_scheduler(global_limit=global_limit)
+            
+            # Prepare for concurrent execution
+            analyzed_streams = []
+            dead_stream_ids = set()  # Use set for O(1) lookups
+            revived_stream_ids = []
+            total_streams = len(streams_to_check)
+            completed_count = [0]  # Use list for mutable closure
+            
+            # Progress callback for parallel checker
+            def progress_callback(completed, total, result):
+                completed_count[0] = completed
+                stream_name = result.get('stream_name', 'Unknown')
+                
+                # DO NOT update stream stats here - wait until all checks complete
+                # This prevents race conditions with concurrent checks
+                
+                # Update progress
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=completed,
+                    total=total,
+                    current_stream=stream_name,
+                    status='analyzing',
+                    step='Analyzing streams with account limits',
+                    step_detail=f'Completed {completed}/{total}'
+                )
+            
+            if streams_to_check:
+                logger.info(f"Starting smart parallel analysis of {total_streams} streams with {global_limit} global workers")
+                
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=0,
+                    total=total_streams,
+                    status='analyzing',
+                    step='Analyzing streams with account limits',
+                    step_detail=f'Using smart scheduler with per-account limits'
+                )
+                
+                # Check streams in parallel with account-aware limits
+                results = smart_scheduler.check_streams_with_limits(
+                    streams=streams_to_check,
+                    check_function=analyze_stream,
+                    progress_callback=progress_callback,
+                    stagger_delay=stagger_delay,
+                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
+                    timeout=analysis_params.get('timeout', 30),
+                    retries=analysis_params.get('retries', 1),
+                    retry_delay=analysis_params.get('retry_delay', 10),
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                )
+                
+                # Process results - ALL checks are complete at this point
+                # This is the correct place to update stats and track dead streams
+                for analyzed in results:
+                    # Update stream stats on Dispatcharr with ffmpeg-extracted data
+                    # Now that all parallel checks are complete, we can safely push the info
+                    self._update_stream_stats(analyzed)
+                    
+                    # Check if stream is dead
+                    is_dead = self._is_stream_dead(analyzed)
+                    stream_id = analyzed.get('stream_id')
+                    stream_url = analyzed.get('stream_url', '')
+                    stream_name = analyzed.get('stream_name', 'Unknown')
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                    
+                    if is_dead and not was_dead:
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name):
+                            dead_stream_ids.add(stream_id)
+                            logger.warning(f"Stream {stream_id} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark stream {stream_id} as dead in tracker")
+                    elif not is_dead and was_dead:
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream_id)
+                            logger.info(f"Stream {stream_id} REVIVED: {stream_name}")
+                    elif is_dead and was_dead:
+                        logger.debug(f"Stream {stream_id} remains dead (already marked)")
+                        # Add to dead_stream_ids so the stream removal logic (line 1455) will filter it out
+                        dead_stream_ids.add(stream_id)
+                    
+                    # Calculate score
+                    score = self._calculate_stream_score(analyzed)
+                    analyzed['score'] = score
+                    analyzed['channel_id'] = channel_id
+                    analyzed['channel_name'] = channel_name
+                    analyzed_streams.append(analyzed)
+                
+                logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
+            
+            # Process already-checked streams (use cached data)
+            for stream in streams_already_checked:
+                stream_data = udi.get_stream_by_id(stream['id'])
+                if stream_data:
+                    stream_stats = stream_data.get('stream_stats', {})
+                    if stream_stats is None:
+                        stream_stats = {}
+                    if isinstance(stream_stats, str):
+                        try:
+                            stream_stats = json.loads(stream_stats)
+                            if stream_stats is None:
+                                stream_stats = {}
+                        except json.JSONDecodeError:
+                            stream_stats = {}
+                    
+                    analyzed = {
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'stream_id': stream['id'],
+                        'stream_name': stream.get('name', 'Unknown'),
+                        'stream_url': stream.get('url', ''),
+                        'resolution': stream_stats.get('resolution', '0x0'),
+                        'fps': stream_stats.get('source_fps', 0),
+                        'video_codec': stream_stats.get('video_codec', 'N/A'),
+                        'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                        'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                        'status': 'OK'
+                    }
+                    
+                    # Check if cached stream is dead
+                    stream_url = stream.get('url', '')
+                    stream_name = stream.get('name', 'Unknown')
+                    is_dead = self._is_stream_dead(analyzed)
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                    
+                    # Handle dead/alive state transitions (same logic as newly-checked streams)
+                    if is_dead and not was_dead:
+                        # Newly detected as dead
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                            dead_stream_ids.add(stream['id'])
+                            logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as dead in tracker")
+                    elif not is_dead and was_dead:
+                        # Stream was revived!
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream['id'])
+                            logger.info(f"Cached stream {stream['id']} REVIVED: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as alive")
+                    elif is_dead and was_dead:
+                        # Stream remains dead (already marked)
+                        logger.debug(f"Cached stream {stream['id']} remains dead (already marked)")
+                        dead_stream_ids.add(stream['id'])
+                    
+                    score = self._calculate_stream_score(analyzed)
+                    analyzed['score'] = score
+                    analyzed_streams.append(analyzed)
+            
+            # Sort streams by score (highest first)
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='processing',
+                step='Calculating scores',
+                step_detail='Sorting streams by quality score'
+            )
+            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Remove dead streams from the channel
+            # Dead streams are checked during all channel checks (normal and global)
+            # If they're still dead, they're removed; if revived, they remain
+            if dead_stream_ids:
+                logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+            
+            if revived_stream_ids:
+                logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
+            
+            # Update channel with reordered streams
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='updating',
+                step='Reordering streams',
+                step_detail='Applying new stream order to channel'
+            )
+            reordered_ids = [s['stream_id'] for s in analyzed_streams]
+            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
+            
+            # Verify the update
+            self.progress.update(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                current=len(streams),
+                total=len(streams),
+                status='verifying',
+                step='Verifying update',
+                step_detail='Confirming stream order was applied'
+            )
+            time_module.sleep(0.5)
+            udi.refresh_channel_by_id(channel_id)
+            
+            logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
+            
+            # Add changelog entry
+            if self.changelog:
+                try:
+                    stream_stats = []
+                    for analyzed in analyzed_streams[:10]:  # Limit to first 10
+                        stream_id = analyzed.get('stream_id')
+                        is_dead = stream_id in dead_stream_ids
+                        is_revived = stream_id in revived_stream_ids
+                        
+                        stream_stat = {
+                            'stream_id': stream_id,
+                            'stream_name': analyzed.get('stream_name'),
+                            'resolution': analyzed.get('resolution'),
+                            'fps': analyzed.get('fps'),
+                            'video_codec': analyzed.get('video_codec'),
+                            'bitrate_kbps': analyzed.get('bitrate_kbps'),
+                        }
+                        
+                        # Mark dead streams as "dead" instead of showing score:0
+                        if is_dead:
+                            stream_stat['status'] = 'dead'
+                        elif is_revived:
+                            stream_stat['status'] = 'revived'
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        else:
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        
+                        stream_stats.append({k: v for k, v in stream_stat.items() if v not in [None, "N/A"]})
+                    
+                    self.changelog.add_entry('stream_check', {
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'total_streams': len(streams),
+                        'streams_analyzed': len(analyzed_streams),
+                        'dead_streams_detected': len(dead_stream_ids),
+                        'streams_revived': len(revived_stream_ids),
+                        'success': True,
+                        'parallel_mode': True,
+                        'stream_stats': stream_stats
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to add changelog entry: {e}")
+            
+            # Mark as completed
+            self.check_queue.mark_completed(channel_id)
+            self.update_tracker.mark_channel_checked(
+                channel_id, 
+                stream_count=len(streams),
+                checked_stream_ids=current_stream_ids
+            )
+            
+        except Exception as e:
+            logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
+            self.check_queue.mark_failed(channel_id, str(e))
+            
+            if self.changelog:
+                try:
+                    try:
+                        channel_name = channel_data.get('name', f'Channel {channel_id}')
+                    except:
+                        channel_name = f'Channel {channel_id}'
+                    
+                    self.changelog.add_entry('stream_check', {
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'success': False,
+                        'parallel_mode': True,
+                        'error': str(e)
+                    })
+                except Exception as changelog_error:
+                    logger.warning(f"Failed to add changelog entry: {changelog_error}")
+        
+        finally:
+            self.checking = False
+            self.progress.clear()
+            log_function_return(logger, "_check_channel_concurrent")
+
+    
+    def _check_channel_sequential(self, channel_id: int):
+        """Check and reorder streams for a specific channel using sequential checking."""
+        import time as time_module
+        start_time = time_module.time()
+        log_function_call(logger, "_check_channel_sequential", channel_id=channel_id)
+        
+        log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
+        self.checking = True
+        logger.info(f"=" * 80)
+        logger.info(f"Checking channel {channel_id} (sequential mode)")
         logger.info(f"=" * 80)
         
         try:
@@ -1279,25 +1664,12 @@ class StreamCheckerService:
                 else:
                     logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
             
-            # Import stream analysis functions from dispatcharr-stream-sorter
-            # Note: The file has a dash in the name, so we need to import it specially
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(
-                "stream_sorter", 
-                Path(__file__).parent / "dispatcharr-stream-sorter.py"
-            )
-            stream_sorter = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(stream_sorter)
-            
-            load_sorter_config = stream_sorter.load_config
-            _analyze_stream_task = stream_sorter._analyze_stream_task
-            
-            # Load sorter configuration
-            sorter_config = load_sorter_config()
+            # Import stream analysis functions from stream_check_utils
+            from stream_check_utils import analyze_stream
             
             # Analyze new/unchecked streams
             analyzed_streams = []
-            dead_stream_ids = []
+            dead_stream_ids = set()  # Use set for O(1) lookups
             revived_stream_ids = []
             total_streams = len(streams_to_check)
             
@@ -1313,25 +1685,16 @@ class StreamCheckerService:
                     step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})'
                 )
                 
-                # Prepare stream row for analysis
-                stream_row = {
-                    'channel_id': channel_id,
-                    'channel_name': channel_name,
-                    'stream_id': stream['id'],
-                    'stream_name': stream.get('name', 'Unknown'),
-                    'stream_url': stream.get('url', '')
-                }
-                
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
-                analyzed = _analyze_stream_task(
-                    stream_row,
+                analyzed = analyze_stream(
+                    stream_url=stream.get('url', ''),
+                    stream_id=stream['id'],
+                    stream_name=stream.get('name', 'Unknown'),
                     ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
-                    idet_frames=analysis_params.get('idet_frames', 500),
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    config=sorter_config,
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
                 )
                 
@@ -1347,7 +1710,7 @@ class StreamCheckerService:
                 if is_dead and not was_dead:
                     # Mark as dead in tracker
                     if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
-                        dead_stream_ids.append(stream['id'])
+                        dead_stream_ids.add(stream['id'])
                         logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
                     else:
                         logger.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
@@ -1358,6 +1721,9 @@ class StreamCheckerService:
                         logger.info(f"Stream {stream['id']} REVIVED: {stream_name}")
                     else:
                         logger.error(f"Failed to mark stream {stream['id']} as alive")
+                elif is_dead and was_dead:
+                    # Stream remains dead
+                    dead_stream_ids.add(stream['id'])
                 
                 # Calculate score
                 score = self._calculate_stream_score(analyzed)
@@ -1399,26 +1765,31 @@ class StreamCheckerService:
                         'status': 'OK'  # Assume OK for previously checked streams
                     }
                     
-                    # Check if this cached stream is dead and add to dead_stream_ids
+                    # Check if this cached stream is dead and handle state transitions
                     stream_url = stream.get('url', '')
                     stream_name = stream.get('name', 'Unknown')
                     is_dead = self._is_stream_dead(analyzed)
                     was_dead = self.dead_streams_tracker.is_dead(stream_url)
                     
-                    # If stream is dead (either was already marked or is detected as dead), track it
-                    if is_dead or was_dead:
-                        # Only add to dead_stream_ids if either:
-                        # 1. Stream was already marked (safe to remove)
-                        # 2. Stream is newly detected as dead AND marking succeeds
-                        if was_dead:
-                            dead_stream_ids.append(stream['id'])
-                        elif not was_dead:
-                            # If it wasn't marked but is dead, mark it now
-                            if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
-                                dead_stream_ids.append(stream['id'])
-                                logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
-                            else:
-                                logger.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
+                    # Handle dead/alive state transitions (same logic as newly-checked streams)
+                    if is_dead and not was_dead:
+                        # Newly detected as dead
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                            dead_stream_ids.add(stream['id'])
+                            logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
+                    elif not is_dead and was_dead:
+                        # Stream was revived!
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream['id'])
+                            logger.info(f"Cached stream {stream['id']} REVIVED: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as alive")
+                    elif is_dead and was_dead:
+                        # Stream remains dead (already marked)
+                        logger.debug(f"Cached stream {stream['id']} remains dead (already marked)")
+                        dead_stream_ids.add(stream['id'])
                     
                     # Recalculate score from cached data
                     score = self._calculate_stream_score(analyzed)
@@ -1428,22 +1799,15 @@ class StreamCheckerService:
                 else:
                     # If we can't fetch cached data, analyze this stream
                     logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
-                    stream_row = {
-                        'channel_id': channel_id,
-                        'channel_name': channel_name,
-                        'stream_id': stream['id'],
-                        'stream_name': stream.get('name', 'Unknown'),
-                        'stream_url': stream.get('url', '')
-                    }
                     analysis_params = self.config.get('stream_analysis', {})
-                    analyzed = _analyze_stream_task(
-                        stream_row,
+                    analyzed = analyze_stream(
+                        stream_url=stream.get('url', ''),
+                        stream_id=stream['id'],
+                        stream_name=stream.get('name', 'Unknown'),
                         ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
-                        idet_frames=analysis_params.get('idet_frames', 500),
                         timeout=analysis_params.get('timeout', 30),
                         retries=analysis_params.get('retries', 1),
                         retry_delay=analysis_params.get('retry_delay', 10),
-                        config=sorter_config,
                         user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
                     )
                     self._update_stream_stats(analyzed)
@@ -1463,9 +1827,10 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel (unless it's a force check/global check)
-            # During global checks, we want to give dead streams a chance to be revived
-            if dead_stream_ids and not force_check:
+            # Remove dead streams from the channel
+            # Dead streams are checked during all channel checks (normal and global)
+            # If they're still dead, they're removed; if revived, they remain
+            if dead_stream_ids:
                 logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
                 # Log which streams are being removed
                 for stream_id in dead_stream_ids:
@@ -1473,8 +1838,6 @@ class StreamCheckerService:
                     if dead_stream:
                         logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
                 analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
-            elif dead_stream_ids and force_check:
-                logger.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -1490,8 +1853,8 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s['stream_id'] for s in analyzed_streams]
-            # Allow dead streams during force_check (global checks) to give them a second chance
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=force_check)
+            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
             
             # Verify the update was applied correctly
             self.progress.update(
@@ -1524,18 +1887,33 @@ class StreamCheckerService:
                 try:
                     # Prepare stream stats summary for changelog
                     stream_stats = []
-                    for analyzed in analyzed_streams:
+                    for analyzed in analyzed_streams[:10]:  # Limit to top 10
+                        stream_id = analyzed.get('stream_id')
+                        is_dead = stream_id in dead_stream_ids
+                        is_revived = stream_id in revived_stream_ids
+                        
                         stream_stat = {
-                            'stream_id': analyzed.get('stream_id'),
+                            'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
-                            'score': round(analyzed.get('score', 0), 2),
                             'resolution': analyzed.get('resolution'),
                             'fps': analyzed.get('fps'),
                             'video_codec': analyzed.get('video_codec'),
                             'audio_codec': analyzed.get('audio_codec'),
                             'bitrate_kbps': analyzed.get('bitrate_kbps'),
-                            'status': analyzed.get('status')
                         }
+                        
+                        # Mark dead streams as "dead" instead of showing score:0
+                        if is_dead:
+                            stream_stat['status'] = 'dead'
+                        elif is_revived:
+                            stream_stat['status'] = 'revived'
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        else:
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                            # Include original status from analysis if present
+                            if 'status' in analyzed:
+                                stream_stat['analysis_status'] = analyzed.get('status')
+                        
                         # Clean up N/A values for cleaner output
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
                         stream_stats.append(stream_stat)
@@ -1546,7 +1924,7 @@ class StreamCheckerService:
                         'channel_name': channel_name,
                         'total_streams': len(streams),
                         'streams_analyzed': len(analyzed_streams),
-                        'dead_streams_detected': len(dead_stream_ids) if not force_check else 0,
+                        'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
                         'success': True,
                         'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
@@ -1605,7 +1983,7 @@ class StreamCheckerService:
         bitrate = stream_data.get('bitrate_kbps', 0)
         if isinstance(bitrate, (int, float)) and bitrate > 0:
             bitrate_score = min(bitrate / 8000, 1.0)
-            score += bitrate_score * weights.get('bitrate', 0.30)
+            score += bitrate_score * weights.get('bitrate', 0.40)
         
         # Resolution score (0-1)
         resolution = stream_data.get('resolution', 'N/A')
@@ -1624,7 +2002,7 @@ class StreamCheckerService:
                     resolution_score = 0.3
             except (ValueError, AttributeError):
                 pass
-        score += resolution_score * weights.get('resolution', 0.25)
+        score += resolution_score * weights.get('resolution', 0.35)
         
         # FPS score (0-1)
         fps = stream_data.get('fps', 0)
@@ -1643,35 +2021,6 @@ class StreamCheckerService:
             elif codec != 'n/a':
                 codec_score = 0.5
         score += codec_score * weights.get('codec', 0.10)
-        
-        # Error penalty (0-1, inverted - fewer errors = higher score)
-        error_score = 1.0
-        if stream_data.get('status') != 'OK':
-            error_score -= 0.5
-        if stream_data.get('err_decode', False):
-            error_score -= 0.2
-        if stream_data.get('err_discontinuity', False):
-            error_score -= 0.2
-        if stream_data.get('err_timeout', False):
-            error_score -= 0.3
-        
-        # Interlaced penalty
-        if self.config.get('scoring.penalize_interlaced', True):
-            interlaced = stream_data.get('interlaced_status', 'N/A')
-            if 'interlaced' in str(interlaced).lower():
-                error_score -= 0.1
-        
-        # Dropped frames penalty
-        if self.config.get('scoring.penalize_dropped_frames', True):
-            dropped = stream_data.get('frames_dropped', 0)
-            decoded = stream_data.get('frames_decoded', 0)
-            if isinstance(dropped, (int, float)) and isinstance(decoded, (int, float)) and decoded > 0:
-                drop_rate = dropped / decoded
-                if drop_rate > 0.01:  # More than 1% dropped
-                    error_score -= min(drop_rate * 5, 0.3)  # Up to 0.3 penalty
-        
-        error_score = max(error_score, 0.0)
-        score += error_score * weights.get('errors', 0.20)
         
         return round(score, 2)
     

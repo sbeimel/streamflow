@@ -37,8 +37,10 @@ from logging_config import setup_logging, log_function_call, log_function_return
 
 logger = setup_logging(__name__)
 
-# Configuration directory - persisted via Docker volume
+# Configuration constants
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
+CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
+CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
@@ -849,6 +851,17 @@ def get_stream_checker_status():
     try:
         service = get_stream_checker_service()
         status = service.get_status()
+        
+        # Add parallel checking information
+        concurrent_enabled = service.config.get(CONCURRENT_STREAMS_ENABLED_KEY, True)
+        global_limit = service.config.get(CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY, 10)
+        
+        status['parallel'] = {
+            'enabled': concurrent_enabled,
+            'max_workers': global_limit,
+            'mode': 'parallel' if concurrent_enabled else 'sequential'
+        }
+        
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting stream checker status: {e}")
