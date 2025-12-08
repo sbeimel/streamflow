@@ -38,23 +38,19 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
 
   // Fetch logo when logo_id is available
   useEffect(() => {
-    const loadLogo = async () => {
+    const loadLogo = () => {
       // Try cached logo first from localStorage
       const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
       if (cachedLogo) {
         setLogoUrl(cachedLogo)
       }
       
-      // Fetch fresh logo if logo_id is available using the cached endpoint
+      // Set logo URL if logo_id is available using the cached endpoint
+      // This endpoint will serve cached logos or download them on first request
       if (channel.logo_id) {
-        try {
-          // Use the cached endpoint which downloads and serves the logo locally
-          const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
-          setLogoUrl(logoUrl)
-          localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, logoUrl)
-        } catch (err) {
-          console.error('Failed to load logo:', err)
-        }
+        const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
+        setLogoUrl(logoUrl)
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, logoUrl)
       }
     }
     loadLogo()

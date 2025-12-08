@@ -347,10 +347,11 @@ def get_channel_logo_cached(logo_id):
         # Validate logo_id is a positive integer
         try:
             logo_id_int = int(logo_id)
-            if logo_id_int <= 0:
-                return jsonify({"error": "Invalid logo ID: must be a positive integer"}), 400
         except (ValueError, TypeError):
             return jsonify({"error": "Invalid logo ID: must be a valid integer"}), 400
+        
+        if logo_id_int <= 0:
+            return jsonify({"error": "Invalid logo ID: must be a positive integer"}), 400
         
         # Create logos cache directory if it doesn't exist
         logos_cache_dir = CONFIG_DIR / 'logos_cache'
