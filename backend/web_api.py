@@ -270,8 +270,8 @@ def get_channel_stats(channel_id):
             
             if stream_stats and isinstance(stream_stats, dict):
                 resolution = stream_stats.get('resolution', 'Unknown')
-                # Try both 'bitrate' and 'bitrate_kbps' field names for compatibility
-                bitrate = stream_stats.get('bitrate_kbps') or stream_stats.get('bitrate')
+                # Try 'ffmpeg_output_bitrate', 'bitrate_kbps', or 'bitrate' field names for compatibility
+                bitrate = stream_stats.get('ffmpeg_output_bitrate') or stream_stats.get('bitrate_kbps') or stream_stats.get('bitrate')
             
             if resolution != 'Unknown':
                 resolutions[resolution] = resolutions.get(resolution, 0) + 1

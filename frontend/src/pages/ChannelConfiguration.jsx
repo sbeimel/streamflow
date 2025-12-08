@@ -104,7 +104,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                     <span className="font-medium text-destructive">{stats.dead_streams ?? 0}</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="text-muted-foreground">Resolution:</span>
+                    <span className="text-muted-foreground">Avg.Resolution:</span>
                     <span className="font-medium">{stats.most_common_resolution || 'Unknown'}</span>
                   </div>
                   <div className="flex items-center gap-1">
@@ -123,7 +123,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                     <span className="font-medium text-muted-foreground">--</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="text-muted-foreground">Resolution:</span>
+                    <span className="text-muted-foreground">Avg.Resolution:</span>
                     <span className="font-medium text-muted-foreground">--</span>
                   </div>
                   <div className="flex items-center gap-1">
