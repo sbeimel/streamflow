@@ -226,7 +226,7 @@ export default function Dashboard() {
             <div className="text-2xl font-bold">
               {streamCheckerStatus?.config?.pipeline_mode ? (
                 <Badge variant="outline">
-                  {streamCheckerStatus.config.pipeline_mode.replace('_', ' ')}
+                  {streamCheckerStatus.config.pipeline_mode.replace(/_/g, ' ')}
                 </Badge>
               ) : (
                 'N/A'

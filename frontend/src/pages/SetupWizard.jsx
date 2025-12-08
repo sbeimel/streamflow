@@ -37,6 +37,14 @@ const STEPS = [
   },
 ]
 
+const PIPELINE_MODES = [
+  { value: 'pipeline_1', label: 'Pipeline 1 - Continuous' },
+  { value: 'pipeline_1_5', label: 'Pipeline 1.5 - Continuous + Scheduled' },
+  { value: 'pipeline_2', label: 'Pipeline 2 - Update Only' },
+  { value: 'pipeline_2_5', label: 'Pipeline 2.5 - Update + Scheduled' },
+  { value: 'pipeline_3', label: 'Pipeline 3 - Scheduled Only' },
+]
+
 export default function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
   const [activeStep, setActiveStep] = useState(0)
   const [setupStatus, setSetupStatus] = useState(initialSetupStatus)
@@ -226,7 +234,10 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       const [channelsResponse, patternsResponse, m3uResponse] = await Promise.all([
         channelsAPI.getChannels(),
         regexAPI.getPatterns(),
-        m3uAPI.getAccounts().catch(() => ({ data: [] }))
+        m3uAPI.getAccounts().catch(err => {
+          console.warn('Failed to load M3U accounts:', err)
+          return { data: [] }
+        })
       ])
       
       setChannels(channelsResponse.data)
@@ -650,11 +661,11 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pipeline_1">Pipeline 1 - Continuous</SelectItem>
-                    <SelectItem value="pipeline_1_5">Pipeline 1.5 - Continuous + Scheduled</SelectItem>
-                    <SelectItem value="pipeline_2">Pipeline 2 - Update Only</SelectItem>
-                    <SelectItem value="pipeline_2_5">Pipeline 2.5 - Update + Scheduled</SelectItem>
-                    <SelectItem value="pipeline_3">Pipeline 3 - Scheduled Only</SelectItem>
+                    {PIPELINE_MODES.map(mode => (
+                      <SelectItem key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
