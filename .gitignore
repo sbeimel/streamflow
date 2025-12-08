@@ -223,3 +223,8 @@ __marimo__/
 
 # UDI data files (runtime data)
 backend/data/udi/
+
+.vscode
+node_modules
+package-lock.json
+package.json
