@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamAPI, streamCheckerAPI } from '@/services/api'
+import { automationAPI, streamAPI, streamCheckerAPI } from '@/services/api.js'
 import { PlayCircle, RefreshCw, Search, Activity } from 'lucide-react'
 
 export default function Dashboard() {

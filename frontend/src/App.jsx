@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate } from 'react-router-dom'
 import { Sidebar } from '@/components/layout/Sidebar.jsx'
 import { Toaster } from '@/components/ui/toaster.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { api } from '@/services/api'
+import { api } from '@/services/api.js'
 
 // Page imports
 import Dashboard from '@/pages/Dashboard'
