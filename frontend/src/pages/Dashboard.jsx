@@ -123,28 +123,30 @@ export default function Dashboard() {
       setTogglingPlaylist(playlistId)
       
       // Get current enabled accounts from status
+      // Note: empty array means all accounts are enabled
       const currentEnabledAccounts = status?.config?.enabled_m3u_accounts || []
       let newEnabledAccounts
       
-      if (currentlyEnabled) {
-        // Disable: add to enabled list (if empty list = all enabled, we need to list all others)
-        if (currentEnabledAccounts.length === 0) {
-          // All currently enabled, so enable all except this one
+      if (currentEnabledAccounts.length === 0) {
+        // Currently all are enabled (empty array)
+        if (currentlyEnabled) {
+          // Disable this playlist: create list of all other playlists
           newEnabledAccounts = playlists
             .filter(p => p.id !== playlistId)
             .map(p => p.id)
         } else {
-          // Remove from enabled list
-          newEnabledAccounts = currentEnabledAccounts.filter(id => id !== playlistId)
+          // This shouldn't happen when all are enabled
+          newEnabledAccounts = []
         }
       } else {
-        // Enable: remove from enabled list or add all others if currently disabled
-        if (currentEnabledAccounts.length === 0) {
-          // All currently enabled, so this shouldn't happen
-          newEnabledAccounts = []
+        // Some playlists are explicitly enabled
+        if (currentlyEnabled) {
+          // Disable this playlist: remove it from the enabled list
+          newEnabledAccounts = currentEnabledAccounts.filter(id => id !== playlistId)
         } else {
+          // Enable this playlist: add it to the enabled list
           newEnabledAccounts = [...currentEnabledAccounts, playlistId]
-          // If all are now enabled, set to empty array
+          // If all are now enabled, use empty array to indicate "all enabled"
           if (newEnabledAccounts.length === playlists.length) {
             newEnabledAccounts = []
           }
@@ -380,7 +382,7 @@ export default function Dashboard() {
                 <dt className="text-muted-foreground">M3U Accounts:</dt>
                 <dd>
                   <Badge variant="outline">
-                    {status?.config?.m3u_accounts?.length || 0}
+                    {playlists.length}
                   </Badge>
                 </dd>
               </div>
