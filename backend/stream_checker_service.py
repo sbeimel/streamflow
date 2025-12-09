@@ -1378,6 +1378,9 @@ class StreamCheckerService:
                                 "streams_analyzed": entry.get('streams_analyzed', 0),
                                 "dead_streams": entry.get('dead_streams_detected', 0),
                                 "streams_revived": entry.get('streams_revived', 0),
+                                "avg_resolution": entry.get('avg_resolution', 'N/A'),
+                                "avg_bitrate": entry.get('avg_bitrate', 'N/A'),
+                                "avg_fps": entry.get('avg_fps', 'N/A'),
                                 "stream_details": entry.get('stream_stats', [])
                             }
                         }
@@ -1728,6 +1731,42 @@ class StreamCheckerService:
                         if logo:
                             logo_url = logo.get('cache_url') or logo.get('url')
                     
+                    # Calculate channel-level averages from analyzed streams
+                    resolutions_for_avg = []
+                    bitrates_for_avg = []
+                    fps_for_avg = []
+                    
+                    for analyzed in analyzed_streams:
+                        # Skip dead streams from averages
+                        if analyzed.get('stream_id') not in dead_stream_ids:
+                            resolution = analyzed.get('resolution')
+                            if resolution and resolution != 'N/A' and resolution != '0x0':
+                                resolutions_for_avg.append(resolution)
+                            
+                            bitrate = analyzed.get('bitrate_kbps')
+                            if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
+                                bitrates_for_avg.append(bitrate)
+                            
+                            fps = analyzed.get('fps')
+                            if fps and isinstance(fps, (int, float)) and fps > 0:
+                                fps_for_avg.append(fps)
+                    
+                    # Calculate averages
+                    avg_resolution = 'N/A'
+                    if resolutions_for_avg:
+                        from collections import Counter
+                        resolution_counts = Counter(resolutions_for_avg)
+                        avg_resolution = resolution_counts.most_common(1)[0][0]
+                    
+                    avg_bitrate = 'N/A'
+                    if bitrates_for_avg:
+                        avg_bitrate_kbps = sum(bitrates_for_avg) / len(bitrates_for_avg)
+                        avg_bitrate = format_bitrate(avg_bitrate_kbps)
+                    
+                    avg_fps = 'N/A'
+                    if fps_for_avg:
+                        avg_fps = f"{sum(fps_for_avg) / len(fps_for_avg):.1f} fps"
+                    
                     stream_stats = []
                     for analyzed in analyzed_streams[:10]:  # Limit to first 10
                         stream_id = analyzed.get('stream_id')
@@ -1763,6 +1802,9 @@ class StreamCheckerService:
                         'streams_analyzed': len(analyzed_streams),
                         'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
+                        'avg_resolution': avg_resolution,
+                        'avg_bitrate': avg_bitrate,
+                        'avg_fps': avg_fps,
                         'success': True,
                         'stream_stats': stream_stats
                     })
@@ -2109,6 +2151,42 @@ class StreamCheckerService:
             # Add changelog entry with stream stats
             if self.changelog:
                 try:
+                    # Calculate channel-level averages from analyzed streams
+                    resolutions_for_avg = []
+                    bitrates_for_avg = []
+                    fps_for_avg = []
+                    
+                    for analyzed in analyzed_streams:
+                        # Skip dead streams from averages
+                        if analyzed.get('stream_id') not in dead_stream_ids:
+                            resolution = analyzed.get('resolution')
+                            if resolution and resolution != 'N/A' and resolution != '0x0':
+                                resolutions_for_avg.append(resolution)
+                            
+                            bitrate = analyzed.get('bitrate_kbps')
+                            if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
+                                bitrates_for_avg.append(bitrate)
+                            
+                            fps = analyzed.get('fps')
+                            if fps and isinstance(fps, (int, float)) and fps > 0:
+                                fps_for_avg.append(fps)
+                    
+                    # Calculate averages
+                    avg_resolution = 'N/A'
+                    if resolutions_for_avg:
+                        from collections import Counter
+                        resolution_counts = Counter(resolutions_for_avg)
+                        avg_resolution = resolution_counts.most_common(1)[0][0]
+                    
+                    avg_bitrate = 'N/A'
+                    if bitrates_for_avg:
+                        avg_bitrate_kbps = sum(bitrates_for_avg) / len(bitrates_for_avg)
+                        avg_bitrate = format_bitrate(avg_bitrate_kbps)
+                    
+                    avg_fps = 'N/A'
+                    if fps_for_avg:
+                        avg_fps = f"{sum(fps_for_avg) / len(fps_for_avg):.1f} fps"
+                    
                     # Prepare stream stats summary for changelog
                     stream_stats = []
                     for analyzed in analyzed_streams[:10]:  # Limit to top 10
@@ -2159,6 +2237,9 @@ class StreamCheckerService:
                         'streams_analyzed': len(analyzed_streams),
                         'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
+                        'avg_resolution': avg_resolution,
+                        'avg_bitrate': avg_bitrate,
+                        'avg_fps': avg_fps,
                         'success': True,
                         'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
                     })
@@ -2394,14 +2475,14 @@ class StreamCheckerService:
                     if resolution and isinstance(resolution, str):
                         resolutions.append(resolution)
                     
-                    # Parse bitrate comprehensively
-                    bitrate = stats.get('bitrate')
+                    # Parse bitrate comprehensively - use correct field name
+                    bitrate = stats.get('ffmpeg_output_bitrate')
                     parsed_bitrate = parse_bitrate_value(bitrate)
                     if parsed_bitrate:
                         bitrates.append(parsed_bitrate)
                     
-                    # Parse FPS comprehensively
-                    fps = stats.get('fps')
+                    # Parse FPS comprehensively - use correct field name
+                    fps = stats.get('source_fps')
                     parsed_fps = parse_fps_value(fps)
                     if parsed_fps:
                         fps_values.append(parsed_fps)
@@ -2445,12 +2526,12 @@ class StreamCheckerService:
             for stream in streams[:10]:  # Top 10 streams
                 stats = stream.get('stream_stats', {})
                 
-                # Parse bitrate and FPS for display
-                bitrate_raw = stats.get('bitrate')
+                # Parse bitrate and FPS for display - use correct field names
+                bitrate_raw = stats.get('ffmpeg_output_bitrate')
                 parsed_bitrate = parse_bitrate_value(bitrate_raw)
                 bitrate_display = format_bitrate(parsed_bitrate)
                 
-                fps_raw = stats.get('fps')
+                fps_raw = stats.get('source_fps')
                 parsed_fps = parse_fps_value(fps_raw)
                 fps_display = f"{parsed_fps:.1f}" if parsed_fps else 'N/A'
                 
