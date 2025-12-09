@@ -299,6 +299,13 @@ class SchedulingService:
             minutes_before = event_data.get('minutes_before', 0)
             check_time = program_start - timedelta(minutes=minutes_before)
             
+            # Ensure check_time is timezone-aware for proper comparison
+            # Convert to UTC if not already timezone-aware
+            if check_time.tzinfo is None:
+                # Assume local time and convert to UTC
+                from datetime import timezone
+                check_time = check_time.replace(tzinfo=timezone.utc)
+            
             # Get channel logo info
             logo_id = channel.get('logo_id')
             logo_url = None
@@ -355,15 +362,16 @@ class SchedulingService:
         Returns:
             List of events where check_time is in the past or now
         """
-        now = datetime.now()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         due_events = []
         
         for event in self._scheduled_events:
             try:
                 check_time = datetime.fromisoformat(event['check_time'].replace('Z', '+00:00'))
-                # Remove timezone info for comparison if present
-                if check_time.tzinfo:
-                    check_time = check_time.replace(tzinfo=None)
+                # Ensure check_time is timezone-aware
+                if check_time.tzinfo is None:
+                    check_time = check_time.replace(tzinfo=timezone.utc)
                 if check_time <= now:
                     due_events.append(event)
             except (ValueError, KeyError) as e:
