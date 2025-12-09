@@ -124,7 +124,7 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                     <TableHead>Framerate</TableHead>
                     <TableHead>Bitrate</TableHead>
                     <TableHead>Codec</TableHead>
-                    {item.stats.stream_details.some(s => s.score !== undefined) && (
+                    {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
                       <TableHead>Score</TableHead>
                     )}
                   </TableRow>
@@ -137,8 +137,8 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                       <TableCell>{streamDetail.fps ? `${streamDetail.fps} fps` : 'N/A'}</TableCell>
                       <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.video_codec || 'N/A'}</TableCell>
-                      {item.stats.stream_details.some(s => s.score !== undefined) && (
-                        <TableCell>{streamDetail.score !== undefined ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
+                      {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
+                        <TableCell>{streamDetail.score !== undefined && streamDetail.score !== null ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
                       )}
                     </TableRow>
                   ))}
@@ -243,45 +243,59 @@ function ChangelogEntry({ entry }) {
       {/* Subentries */}
       {hasSubentries && (
         <CardContent className="pt-0">
+          {/* Wrap all subentries under a parent accordion showing the action reason */}
           <Accordion type="multiple" className="w-full">
-            {subentries.map((group, groupIndex) => {
-              const groupType = group.group
-              const items = group.items || []
-              const groupLabel = groupType === 'update_match' ? 'Added Streams' : 'Checked Streams'
-              const totalCount = items.reduce((sum, item) => {
-                if (groupType === 'update_match') {
-                  return sum + (item.streams?.length || 0)
-                } else {
-                  return sum + (item.stats?.total_streams || 0)
-                }
-              }, 0)
-              
-              return (
-                <AccordionItem key={groupIndex} value={`group-${groupIndex}`}>
-                  <AccordionTrigger className="hover:no-underline">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">
-                        {groupLabel}. {groupType === 'update_match' ? 'Added' : 'Checked'}: {totalCount} streams.
-                      </span>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    {/* Nested accordion for channels */}
-                    <Accordion type="multiple" className="w-full pl-4">
-                      {items.map((item, itemIndex) => (
-                        <ChannelItem 
-                          key={itemIndex}
-                          item={item}
-                          groupType={groupType}
-                          groupIndex={groupIndex}
-                          itemIndex={itemIndex}
-                        />
-                      ))}
-                    </Accordion>
-                  </AccordionContent>
-                </AccordionItem>
-              )
-            })}
+            <AccordionItem value="main-reason">
+              <AccordionTrigger className="hover:no-underline font-semibold">
+                <div className="flex items-center gap-2">
+                  {getActionIcon(action)}
+                  <span>{getActionLabel(action)} Details</span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                {/* Nested accordion for groups (update_match, check) */}
+                <Accordion type="multiple" className="w-full pl-4">
+                  {subentries.map((group, groupIndex) => {
+                    const groupType = group.group
+                    const items = group.items || []
+                    const groupLabel = groupType === 'update_match' ? 'Added Streams' : 'Checked Streams'
+                    const totalCount = items.reduce((sum, item) => {
+                      if (groupType === 'update_match') {
+                        return sum + (item.streams?.length || 0)
+                      } else {
+                        return sum + (item.stats?.total_streams || 0)
+                      }
+                    }, 0)
+                    
+                    return (
+                      <AccordionItem key={groupIndex} value={`group-${groupIndex}`}>
+                        <AccordionTrigger className="hover:no-underline">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">
+                              {groupLabel}. {groupType === 'update_match' ? 'Added' : 'Checked'}: {totalCount} streams.
+                            </span>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          {/* Nested accordion for channels */}
+                          <Accordion type="multiple" className="w-full pl-4">
+                            {items.map((item, itemIndex) => (
+                              <ChannelItem 
+                                key={itemIndex}
+                                item={item}
+                                groupType={groupType}
+                                groupIndex={groupIndex}
+                                itemIndex={itemIndex}
+                              />
+                            ))}
+                          </Accordion>
+                        </AccordionContent>
+                      </AccordionItem>
+                    )
+                  })}
+                </Accordion>
+              </AccordionContent>
+            </AccordionItem>
           </Accordion>
         </CardContent>
       )}
