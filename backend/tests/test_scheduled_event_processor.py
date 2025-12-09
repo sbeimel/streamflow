@@ -136,8 +136,7 @@ class TestScheduledEventProcessor(unittest.TestCase):
                 
                 try:
                     # Verify wake event is not set initially
-                    from web_api import scheduled_event_processor_wake as processor_wake_event
-                    self.assertFalse(processor_wake_event.is_set(), "Wake event should not be set initially")
+                    self.assertFalse(scheduled_event_processor_wake.is_set(), "Wake event should not be set initially")
                     
                     # Create a new event (this should set the wake event)
                     service = get_scheduling_service()
@@ -166,7 +165,7 @@ class TestScheduledEventProcessor(unittest.TestCase):
                         event = service.create_scheduled_event(event_data)
                         
                         # Manually trigger the wake as the API endpoint does
-                        processor_wake_event.set()
+                        scheduled_event_processor_wake.set()
                         
                         # Verify wake event was set
                         # Note: The event might be cleared quickly, so we just verify it worked
@@ -192,16 +191,15 @@ class TestScheduledEventProcessor(unittest.TestCase):
                 self.assertTrue(success, "Processor should start successfully")
                 
                 # Verify thread is alive
-                from web_api import scheduled_event_processor_thread as thread
-                self.assertIsNotNone(thread, "Thread should exist")
-                self.assertTrue(thread.is_alive(), "Thread should be alive")
+                self.assertIsNotNone(scheduled_event_processor_thread, "Thread should exist")
+                self.assertTrue(scheduled_event_processor_thread.is_alive(), "Thread should be alive")
                 
                 # Stop the processor
                 success = stop_scheduled_event_processor()
                 self.assertTrue(success, "Processor should stop successfully")
                 
                 # Verify thread is stopped
-                self.assertFalse(thread.is_alive(), "Thread should be stopped")
+                self.assertFalse(scheduled_event_processor_thread.is_alive(), "Thread should be stopped")
 
 
 if __name__ == '__main__':
