@@ -136,8 +136,8 @@ class TestScheduledEventProcessor(unittest.TestCase):
                 
                 try:
                     # Verify wake event is not set initially
-                    from web_api import scheduled_event_processor_wake as wake_event
-                    self.assertFalse(wake_event.is_set(), "Wake event should not be set initially")
+                    from web_api import scheduled_event_processor_wake as processor_wake_event
+                    self.assertFalse(processor_wake_event.is_set(), "Wake event should not be set initially")
                     
                     # Create a new event (this should set the wake event)
                     service = get_scheduling_service()
@@ -166,7 +166,7 @@ class TestScheduledEventProcessor(unittest.TestCase):
                         event = service.create_scheduled_event(event_data)
                         
                         # Manually trigger the wake as the API endpoint does
-                        wake_event.set()
+                        processor_wake_event.set()
                         
                         # Verify wake event was set
                         # Note: The event might be cleared quickly, so we just verify it worked

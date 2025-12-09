@@ -59,7 +59,7 @@ automation_manager = None
 regex_matcher = None
 scheduled_event_processor_thread = None
 scheduled_event_processor_running = False
-scheduled_event_processor_wake = None  # Event to wake up the processor early
+scheduled_event_processor_wake = None  # threading.Event to wake up the processor early
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -125,12 +125,13 @@ def scheduled_event_processor():
         try:
             # Wait for wake event or timeout (similar to _scheduler_loop pattern)
             # This allows the processor to be woken up early if needed
-            if scheduled_event_processor_wake:
+            if scheduled_event_processor_wake is None:
+                # This should not happen during normal operation
+                logger.error("Wake event is None! This indicates a programming error. Using fallback sleep.")
+                time.sleep(check_interval)
+            else:
                 scheduled_event_processor_wake.wait(timeout=check_interval)
                 scheduled_event_processor_wake.clear()
-            else:
-                # Fallback to sleep if wake event is not initialized
-                time.sleep(check_interval)
             
             # Check for due events
             service = get_scheduling_service()
