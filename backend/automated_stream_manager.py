@@ -595,40 +595,9 @@ class AutomatedStreamManager:
                 except Exception as cleanup_error:
                     logger.error(f"Error during dead streams cleanup: {cleanup_error}")
             
-            # Mark channels for stream quality checking ONLY if streams were added or removed
-            # This prevents unnecessary marking of all channels on every refresh
-            if len(added_streams) > 0 or len(removed_streams) > 0:
-                try:
-                    # Get all channels from UDI
-                    udi = get_udi_manager()
-                    channels = udi.get_channels()
-                    
-                    if channels:
-                        # Mark all channels for checking with stream counts for 2-hour immunity
-                        channel_ids = []
-                        stream_counts = {}
-                        for ch in channels:
-                            if isinstance(ch, dict) and 'id' in ch:
-                                ch_id = ch['id']
-                                channel_ids.append(ch_id)
-                                # Get stream count if available
-                                if 'streams' in ch and isinstance(ch['streams'], list):
-                                    stream_counts[ch_id] = len(ch['streams'])
-                        
-                        # Try to get stream checker service and mark channels
-                        try:
-                            from stream_checker_service import get_stream_checker_service
-                            stream_checker = get_stream_checker_service()
-                            stream_checker.update_tracker.mark_channels_updated(channel_ids, stream_counts=stream_counts)
-                            logger.info(f"Marked {len(channel_ids)} channels for stream quality checking")
-                            # Trigger immediate check instead of waiting for scheduled interval
-                            stream_checker.trigger_check_updated_channels()
-                        except Exception as sc_error:
-                            logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
-                except Exception as ch_error:
-                    logger.debug(f"Could not mark channels for stream checking: {ch_error}")
-            else:
-                logger.info("No stream changes detected, skipping channel marking")
+            # Note: Channel marking for stream quality checking is handled in discover_and_assign_streams()
+            # after streams are actually assigned to specific channels. This prevents marking all channels
+            # when we only know that *some* streams changed in the playlist, not which channels are affected.
             
             return True
             
