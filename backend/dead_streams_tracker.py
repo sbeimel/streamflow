@@ -134,6 +134,43 @@ class DeadStreamsTracker:
         with self.lock:
             return self.dead_streams.copy()
     
+    def remove_dead_streams_for_channel(self, channel_stream_urls: set) -> int:
+        """Remove dead streams for a specific channel from tracking.
+        
+        This is used during single channel checks to clear all dead streams
+        for the channel before refreshing the playlist and rematching.
+        
+        Args:
+            channel_stream_urls: Set of URLs for streams in the channel
+            
+        Returns:
+            int: Number of dead streams removed from tracking
+        """
+        removed_count = 0
+        try:
+            with self.lock:
+                # Find dead streams that belong to this channel
+                dead_urls_to_remove = []
+                for dead_url in self.dead_streams.keys():
+                    if dead_url in channel_stream_urls:
+                        dead_urls_to_remove.append(dead_url)
+                
+                # Remove them from tracking
+                for url in dead_urls_to_remove:
+                    stream_info = self.dead_streams.pop(url)
+                    removed_count += 1
+                    logger.info(f"🗑️ Removed dead stream from channel tracking: {stream_info.get('stream_name', 'Unknown')} (URL: {url})")
+                
+                # Save if we removed any
+                if removed_count > 0:
+                    self._save_dead_streams()
+                    logger.info(f"Removed {removed_count} dead stream(s) for channel before refresh")
+            
+            return removed_count
+        except Exception as e:
+            logger.error(f"❌ Error removing dead streams for channel: {e}")
+            return 0
+    
     def cleanup_removed_streams(self, current_stream_urls: set) -> int:
         """Remove dead streams that are no longer in the playlist.
         
