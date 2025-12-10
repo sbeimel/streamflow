@@ -79,8 +79,8 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         service.dead_streams_tracker.mark_as_dead('http://example.com/stream2', 2, 'Stream 2')
         
         # Verify they are marked as dead
-        assert service.dead_streams_tracker.is_dead('http://example.com/stream1')
-        assert service.dead_streams_tracker.is_dead('http://example.com/stream2')
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/stream1'))
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/stream2'))
         
         # Mock _check_channel to avoid actual checking
         service._check_channel = Mock(return_value={'dead_streams_count': 0, 'revived_streams_count': 0})
@@ -89,17 +89,17 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         result = service.check_single_channel(channel_id=16)
         
         # Verify the result
-        assert result['success'], "Check should succeed"
+        self.assertTrue(result['success'], "Check should succeed")
         
         # The key assertion: dead streams should have been removed from tracker
         # before playlist refresh and rematching
-        assert not service.dead_streams_tracker.is_dead('http://example.com/stream1'), \
-            "Stream 1 should have been removed from dead tracker before refresh"
-        assert not service.dead_streams_tracker.is_dead('http://example.com/stream2'), \
-            "Stream 2 should have been removed from dead tracker before refresh"
+        self.assertFalse(service.dead_streams_tracker.is_dead('http://example.com/stream1'),
+            "Stream 1 should have been removed from dead tracker before refresh")
+        self.assertFalse(service.dead_streams_tracker.is_dead('http://example.com/stream2'),
+            "Stream 2 should have been removed from dead tracker before refresh")
         
         # Verify that playlist refresh was called (after dead stream removal)
-        assert mock_refresh.called, "Playlist refresh should be called"
+        self.assertTrue(mock_refresh.called, "Playlist refresh should be called")
         
         # Verify that stream matching was called (after dead stream removal)
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
@@ -163,9 +163,9 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         service.dead_streams_tracker.mark_as_dead('http://example.com/ch88/stream1', 88, 'CH88 Stream 1')
         
         # Verify all are marked as dead
-        assert service.dead_streams_tracker.is_dead('http://example.com/ch16/stream1')
-        assert service.dead_streams_tracker.is_dead('http://example.com/ch99/stream1')
-        assert service.dead_streams_tracker.is_dead('http://example.com/ch88/stream1')
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/ch16/stream1'))
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/ch99/stream1'))
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/ch88/stream1'))
         
         # Mock _check_channel
         service._check_channel = Mock(return_value={'dead_streams_count': 0, 'revived_streams_count': 0})
@@ -174,17 +174,17 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         result = service.check_single_channel(channel_id=16)
         
         # Verify the result
-        assert result['success']
+        self.assertTrue(result['success'])
         
         # Channel 16's dead stream should be removed
-        assert not service.dead_streams_tracker.is_dead('http://example.com/ch16/stream1'), \
-            "Channel 16's dead stream should have been removed"
+        self.assertFalse(service.dead_streams_tracker.is_dead('http://example.com/ch16/stream1'),
+            "Channel 16's dead stream should have been removed")
         
         # Other channels' dead streams should remain
-        assert service.dead_streams_tracker.is_dead('http://example.com/ch99/stream1'), \
-            "Channel 99's dead stream should remain (not affected)"
-        assert service.dead_streams_tracker.is_dead('http://example.com/ch88/stream1'), \
-            "Channel 88's dead stream should remain (not affected)"
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/ch99/stream1'),
+            "Channel 99's dead stream should remain (not affected)")
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/ch88/stream1'),
+            "Channel 88's dead stream should remain (not affected)")
     
     @patch('stream_checker_service.StreamCheckConfig')
     @patch('stream_checker_service.get_udi_manager')
@@ -239,7 +239,7 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         result = service.check_single_channel(channel_id=16)
         
         # Verify the result
-        assert result['success'], "Check should succeed even with no dead streams to remove"
+        self.assertTrue(result['success'], "Check should succeed even with no dead streams to remove")
         
         # All other steps should still execute normally
         mock_refresh.assert_called()

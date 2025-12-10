@@ -92,8 +92,8 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
         )
         
         # Verify it's marked as dead before the check
-        assert service.dead_streams_tracker.is_dead('http://example.com/dazn-f1-4k'), \
-            "Stream should be marked as dead before check"
+        self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/dazn-f1-4k'),
+            "Stream should be marked as dead before check")
         
         # Mock _check_channel to return successful results
         service._check_channel = Mock(return_value={
@@ -111,31 +111,31 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
         # ========================================
         
         # 1. Check should succeed
-        assert result['success'], "Check should succeed"
+        self.assertTrue(result['success'], "Check should succeed")
         
         # 2. Dead stream should have been removed from tracker BEFORE playlist refresh
         # This is the key fix - it's removed early so it can be re-added during refresh
-        assert not service.dead_streams_tracker.is_dead('http://example.com/dazn-f1-4k'), \
-            "Dead stream should have been removed from tracker before refresh"
+        self.assertFalse(service.dead_streams_tracker.is_dead('http://example.com/dazn-f1-4k'),
+            "Dead stream should have been removed from tracker before refresh")
         
         # 3. Verify the correct sequence of operations:
         
         # a) Playlist refresh was called (Step 3, after dead stream removal)
-        assert mock_refresh.called, "Playlist refresh should have been called"
+        self.assertTrue(mock_refresh.called, "Playlist refresh should have been called")
         mock_refresh.assert_called_with(account_id=1)
         
         # b) Stream matching was called with force=True (Step 4)
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
         call_kwargs = mock_automation_instance.discover_and_assign_streams.call_args[1]
-        assert call_kwargs.get('force') is True, \
-            "Stream matching should be forced"
+        self.assertTrue(call_kwargs.get('force'),
+            "Stream matching should be forced")
         
         # c) Force check was performed (Step 5)
         service._check_channel.assert_called_once_with(16)
         
         # 4. Verify final stats reflect the revived stream
-        assert result['stats']['total_streams'] == 3, \
-            "Should have 3 streams after refresh (including revived 4K stream)"
+        self.assertEqual(result['stats']['total_streams'], 3,
+            "Should have 3 streams after refresh (including revived 4K stream)")
         
         print("\n✅ Integration test PASSED!")
         print("=" * 60)
