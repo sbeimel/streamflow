@@ -147,19 +147,22 @@ def format_fps(fps: Optional[float]) -> str:
 def normalize_resolution(resolution: Any) -> str:
     """Normalize resolution to standard format.
     
+    This function preserves "0x0" and other technically valid but dead resolutions
+    for dead stream detection. Use this for display purposes after dead stream check.
+    
     Args:
         resolution: Resolution in various formats (str, None, etc.)
         
     Returns:
-        Normalized resolution string like "1920x1080" or "N/A"
+        Normalized resolution string like "1920x1080", "0x0", or "N/A"
     """
     if not resolution or resolution in ['Unknown', 'N/A', None]:
         return 'N/A'
     
-    # Already a string in correct format
+    # Already a string in correct format (including "0x0" for dead stream detection)
     if isinstance(resolution, str):
-        # Check if it's a valid resolution format (e.g., "1920x1080")
-        if 'x' in resolution and resolution != '0x0':
+        # Check if it's a valid resolution format (e.g., "1920x1080" or "0x0")
+        if 'x' in resolution:
             return resolution
     
     return 'N/A'
