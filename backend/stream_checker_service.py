@@ -2377,77 +2377,35 @@ class StreamCheckerService:
             # Get the count of dead streams that were removed during the check
             dead_count = check_result.get('dead_streams_count', 0)
             
-            # Gather statistics after check
+            # Gather statistics after check using centralized utility
             streams = fetch_channel_streams(channel_id)
             total_streams = len(streams)
-            resolutions = []
-            bitrates = []
-            fps_values = []
             
-            for stream in streams:
-                stats = stream.get('stream_stats', {})
-                if stats:
-                    resolution = stats.get('resolution')
-                    if resolution and isinstance(resolution, str):
-                        resolutions.append(resolution)
-                    
-                    # Parse bitrate comprehensively - use correct field name
-                    bitrate = stats.get('ffmpeg_output_bitrate')
-                    parsed_bitrate = parse_bitrate_value(bitrate)
-                    if parsed_bitrate:
-                        bitrates.append(parsed_bitrate)
-                    
-                    # Parse FPS comprehensively - use correct field name
-                    fps = stats.get('source_fps')
-                    parsed_fps = parse_fps_value(fps)
-                    if parsed_fps:
-                        fps_values.append(parsed_fps)
-            
-            # Calculate averages
-            avg_resolution = 'N/A'
-            if resolutions:
-                # Count resolutions and get most common
-                resolution_counts = Counter(resolutions)
-                avg_resolution = resolution_counts.most_common(1)[0][0]
-            
-            avg_bitrate = 'N/A'
-            if bitrates:
-                avg_bitrate_kbps = sum(bitrates) / len(bitrates)
-                avg_bitrate = format_bitrate(avg_bitrate_kbps)
-            
-            avg_fps = 'N/A'
-            if fps_values:
-                avg_fps = f"{sum(fps_values) / len(fps_values):.1f} fps"
+            # Calculate channel averages using centralized function
+            channel_averages = calculate_channel_averages(streams, dead_stream_ids=set())
             
             check_stats = {
                 'total_streams': total_streams,
                 'dead_streams': dead_count,
-                'avg_resolution': avg_resolution,
-                'avg_bitrate': avg_bitrate,
-                'avg_fps': avg_fps,
+                'avg_resolution': channel_averages['avg_resolution'],
+                'avg_bitrate': channel_averages['avg_bitrate'],
+                'avg_fps': channel_averages['avg_fps'],
                 'stream_details': []
             }
             
-            # Add top stream details
+            # Add top stream details using centralized extraction
             for stream in streams[:10]:  # Top 10 streams
-                stats = stream.get('stream_stats', {})
-                
-                # Parse bitrate and FPS for display - use correct field names
-                bitrate_raw = stats.get('ffmpeg_output_bitrate')
-                parsed_bitrate = parse_bitrate_value(bitrate_raw)
-                bitrate_display = format_bitrate(parsed_bitrate)
-                
-                fps_raw = stats.get('source_fps')
-                parsed_fps = parse_fps_value(fps_raw)
-                fps_display = f"{parsed_fps:.1f}" if parsed_fps else 'N/A'
+                # Extract stats using centralized utility
+                extracted_stats = extract_stream_stats(stream)
+                formatted_stats = format_stream_stats_for_display(extracted_stats)
                 
                 check_stats['stream_details'].append({
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
-                    'resolution': stats.get('resolution', 'N/A'),
-                    'bitrate': bitrate_display,
-                    'video_codec': stats.get('video_codec', 'N/A'),
-                    'fps': fps_display,
+                    'resolution': formatted_stats['resolution'],
+                    'bitrate': formatted_stats['bitrate'],
+                    'video_codec': formatted_stats['video_codec'],
+                    'fps': formatted_stats['fps'],
                     'score': stream.get('score')
                 })
             
