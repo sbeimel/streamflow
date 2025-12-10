@@ -36,12 +36,13 @@ export default function StreamChecker() {
 
   useEffect(() => {
     loadData()
-    // Poll for updates every 2 seconds when checking is active
+    // Poll for updates - use shorter interval when checking is active
+    const pollInterval = (status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)) ? 2000 : 5000
     const interval = setInterval(() => {
       loadData()
-    }, 2000)
+    }, pollInterval)
     return () => clearInterval(interval)
-  }, [])
+  }, [status?.checking, status?.global_action_in_progress, status?.queue?.queue_size])
 
   const loadData = async () => {
     try {
@@ -125,17 +126,32 @@ export default function StreamChecker() {
   }
 
   const updateConfigValue = (path, value) => {
-    const newConfig = { ...editedConfig }
-    const keys = path.split('.')
-    let current = newConfig
-    for (let i = 0; i < keys.length - 1; i++) {
-      if (!current[keys[i]]) {
-        current[keys[i]] = {}
+    setEditedConfig(prevConfig => {
+      const newConfig = JSON.parse(JSON.stringify(prevConfig)) // Deep clone
+      const keys = path.split('.')
+      
+      // Validate keys to prevent prototype pollution
+      const safeKeys = keys.filter(key => 
+        key !== '__proto__' && 
+        key !== 'constructor' && 
+        key !== 'prototype'
+      )
+      
+      if (safeKeys.length === 0) {
+        return prevConfig // Return unchanged if all keys were filtered
       }
-      current = current[keys[i]]
-    }
-    current[keys[keys.length - 1]] = value
-    setEditedConfig(newConfig)
+      
+      let current = newConfig
+      for (let i = 0; i < safeKeys.length - 1; i++) {
+        const key = safeKeys[i]
+        if (!current[key] || typeof current[key] !== 'object' || Array.isArray(current[key])) {
+          current[key] = {}
+        }
+        current = current[key]
+      }
+      current[safeKeys[safeKeys.length - 1]] = value
+      return newConfig
+    })
   }
 
   if (loading) {
