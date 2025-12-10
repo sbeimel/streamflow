@@ -2435,8 +2435,10 @@ class StreamCheckerService:
         """Check a single channel immediately and return results.
         
         This performs a complete channel refresh similar to global check but for a single channel:
+        - Identifies M3U accounts used by the channel
+        - Removes all dead streams for the channel from dead stream tracker
         - Refreshes playlists for accounts associated with the channel
-        - Re-matches and assigns streams (including dead ones)
+        - Re-matches and assigns streams (including previously dead ones)
         - Force checks all streams (bypasses 2-hour immunity)
         - Revives streams that are now working
         - Removes streams that are still dead
@@ -2461,19 +2463,32 @@ class StreamCheckerService:
             
             channel_name = channel.get('name', f'Channel {channel_id}')
             
-            # Step 1: Get current streams to identify M3U accounts
-            logger.info(f"Step 1/4: Identifying M3U accounts for channel {channel_name}...")
+            # Step 1: Get current streams to identify M3U accounts and dead streams
+            logger.info(f"Step 1/5: Identifying M3U accounts for channel {channel_name}...")
             current_streams = fetch_channel_streams(channel_id)
             account_ids = set()
+            channel_stream_urls = set()
             if current_streams:
                 for stream in current_streams:
                     m3u_account = stream.get('m3u_account')
                     if m3u_account:
                         account_ids.add(m3u_account)
+                    stream_url = stream.get('url')
+                    if stream_url:
+                        channel_stream_urls.add(stream_url)
             
-            # Step 2: Refresh playlists for those accounts
+            # Step 2: Remove all dead streams for this channel from dead stream tracker
+            # This allows previously dead streams to be re-added during playlist refresh
+            logger.info(f"Step 2/5: Removing dead streams for channel {channel_name} from tracker...")
+            removed_count = self.dead_streams_tracker.remove_dead_streams_for_channel(channel_stream_urls)
+            if removed_count > 0:
+                logger.info(f"✓ Removed {removed_count} dead stream(s) from tracker before refresh")
+            else:
+                logger.info("✓ No dead streams to remove from tracker")
+            
+            # Step 3: Refresh playlists for those accounts
             if account_ids:
-                logger.info(f"Step 2/4: Refreshing playlists for {len(account_ids)} M3U account(s)...")
+                logger.info(f"Step 3/5: Refreshing playlists for {len(account_ids)} M3U account(s)...")
                 # Import here to allow better test mocking
                 from api_utils import refresh_m3u_playlists
                 for account_id in account_ids:
@@ -2485,10 +2500,10 @@ class StreamCheckerService:
                 udi.refresh_channels()
                 logger.info("✓ Playlists refreshed and UDI cache updated")
             else:
-                logger.info("Step 2/4: No M3U accounts found for this channel, skipping playlist refresh")
+                logger.info("Step 3/5: No M3U accounts found for this channel, skipping playlist refresh")
             
-            # Step 3: Re-match and assign streams for this specific channel
-            logger.info(f"Step 3/4: Re-matching streams for channel {channel_name}...")
+            # Step 4: Re-match and assign streams for this specific channel
+            logger.info(f"Step 4/5: Re-matching streams for channel {channel_name}...")
             try:
                 # Import here to allow better test mocking
                 from automated_stream_manager import AutomatedStreamManager
@@ -2503,8 +2518,8 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to match streams: {e}")
             
-            # Step 4: Mark channel for force check and perform the check
-            logger.info(f"Step 4/4: Force checking all streams for channel {channel_name}...")
+            # Step 5: Mark channel for force check and perform the check
+            logger.info(f"Step 5/5: Force checking all streams for channel {channel_name}...")
             self.update_tracker.mark_channel_for_force_check(channel_id)
             
             # Perform the check (this will now bypass immunity and check all streams)
