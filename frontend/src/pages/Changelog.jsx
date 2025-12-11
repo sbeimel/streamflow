@@ -213,6 +213,12 @@ function ChangelogEntry({ entry }) {
               <p className="text-lg font-semibold text-green-600">{details.streams_revived}</p>
             </div>
           )}
+          {details.duration && (
+            <div>
+              <p className="text-xs text-muted-foreground">Duration</p>
+              <p className="text-lg font-semibold">{details.duration}</p>
+            </div>
+          )}
           {details.avg_resolution && (
             <div>
               <p className="text-xs text-muted-foreground">Avg Resolution</p>
