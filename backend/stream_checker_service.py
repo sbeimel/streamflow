@@ -2302,7 +2302,7 @@ class StreamCheckerService:
         This performs a targeted channel refresh for a single channel:
         - Identifies M3U accounts used by the channel
         - Refreshes playlists for accounts associated with the channel
-        - Clears dead streams for THIS channel to give them a second chance (like global action)
+        - Clears dead streams for the specified channel to give them a second chance (like global action)
         - Re-matches and assigns streams (including previously dead ones)
         - Force checks all streams (bypasses 2-hour immunity)
         - Detects newly dead streams and marks them
