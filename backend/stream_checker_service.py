@@ -1515,7 +1515,7 @@ class StreamCheckerService:
                     was_dead = self.dead_streams_tracker.is_dead(stream_url)
                     
                     if is_dead and not was_dead:
-                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name):
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name, channel_id):
                             dead_stream_ids.add(stream_id)
                             logger.warning(f"Stream {stream_id} detected as DEAD: {stream_name}")
                         else:
@@ -1576,7 +1576,7 @@ class StreamCheckerService:
                     # Handle dead/alive state transitions (same logic as newly-checked streams)
                     if is_dead and not was_dead:
                         # Newly detected as dead
-                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
                             dead_stream_ids.add(stream['id'])
                             logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
                         else:
@@ -1907,7 +1907,7 @@ class StreamCheckerService:
                 
                 if is_dead and not was_dead:
                     # Mark as dead in tracker
-                    if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                    if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
                         dead_stream_ids.add(stream['id'])
                         logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
                     else:
@@ -1972,7 +1972,7 @@ class StreamCheckerService:
                     # Handle dead/alive state transitions (same logic as newly-checked streams)
                     if is_dead and not was_dead:
                         # Newly detected as dead
-                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
                             dead_stream_ids.add(stream['id'])
                             logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
                         else:
