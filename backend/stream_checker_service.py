@@ -2361,10 +2361,19 @@ class StreamCheckerService:
             # Step 3: Clear dead streams for this channel to give them a second chance
             logger.info(f"Step 3/5: Clearing dead streams for channel {channel_name} to give them a second chance...")
             try:
-                # Get stream URLs for this channel from current_streams
-                channel_stream_urls = [s.get('url') for s in current_streams if s.get('url')]
+                # Get all streams from UDI that belong to the M3U accounts used by this channel
+                # This includes streams that are no longer assigned to the channel but were previously dead
+                all_udi_streams = udi.get_streams(log_result=False)
+                channel_stream_urls = []
                 
-                # Clear only dead streams that belong to this channel
+                # Filter streams by M3U accounts used by this channel
+                for stream in all_udi_streams:
+                    stream_m3u_account = stream.get('m3u_account')
+                    stream_url = stream.get('url')
+                    if stream_m3u_account in account_ids and stream_url:
+                        channel_stream_urls.append(stream_url)
+                
+                # Clear only dead streams that belong to this channel's M3U accounts
                 cleared_count = 0
                 for stream_url in channel_stream_urls:
                     if self.dead_streams_tracker.is_dead(stream_url):

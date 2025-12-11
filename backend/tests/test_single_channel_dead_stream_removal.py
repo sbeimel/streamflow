@@ -61,9 +61,10 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         # Second call: get stats after check (after all steps complete)
         mock_fetch_streams.side_effect = [mock_streams, mock_streams]
         
-        # Mock UDI refresh methods
+        # Mock UDI refresh methods and get_streams for dead stream clearing
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams)
         
         # Mock AutomatedStreamManager
         mock_automation_instance = Mock()
@@ -145,8 +146,15 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         
         mock_fetch_streams.side_effect = [mock_streams_ch16, mock_streams_ch16]
         
+        # Mock all streams in UDI (including streams from other channels/accounts)
+        all_udi_streams = mock_streams_ch16 + [
+            {'id': 99, 'name': 'CH99 Stream 1', 'url': 'http://example.com/ch99/stream1', 'm3u_account': 99},
+            {'id': 88, 'name': 'CH88 Stream 1', 'url': 'http://example.com/ch88/stream1', 'm3u_account': 88}
+        ]
+        
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=all_udi_streams)
         
         mock_automation_instance = Mock()
         mock_automation_class.return_value = mock_automation_instance
@@ -222,6 +230,7 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams)
         
         mock_automation_instance = Mock()
         mock_automation_class.return_value = mock_automation_instance
