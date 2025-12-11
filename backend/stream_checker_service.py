@@ -1263,6 +1263,23 @@ class StreamCheckerService:
                 return
             
             try:
+                # Calculate duration
+                start_dt = datetime.fromisoformat(self.batch_start_time)
+                end_dt = datetime.now()
+                duration_seconds = int((end_dt - start_dt).total_seconds())
+                
+                # Format duration as human-readable string
+                if duration_seconds < 60:
+                    duration_str = f"{duration_seconds}s"
+                elif duration_seconds < 3600:
+                    minutes = duration_seconds // 60
+                    seconds = duration_seconds % 60
+                    duration_str = f"{minutes}m {seconds}s"
+                else:
+                    hours = duration_seconds // 3600
+                    minutes = (duration_seconds % 3600) // 60
+                    duration_str = f"{hours}h {minutes}m"
+                
                 # Calculate aggregate stats
                 total_channels = len(self.batch_changelog_entries)
                 total_streams = sum(entry.get('total_streams', 0) for entry in self.batch_changelog_entries)
@@ -1305,13 +1322,15 @@ class StreamCheckerService:
                         'total_streams': total_streams,
                         'streams_analyzed': streams_analyzed,
                         'dead_streams': dead_streams,
-                        'streams_revived': streams_revived
+                        'streams_revived': streams_revived,
+                        'duration': duration_str,
+                        'duration_seconds': duration_seconds
                     },
                     timestamp=self.batch_start_time,
                     subentries=subentries
                 )
                 
-                logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed")
+                logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed in {duration_str}")
                 
             except Exception as e:
                 logger.error(f"Failed to finalize batch changelog: {e}", exc_info=True)
@@ -1712,10 +1731,15 @@ class StreamCheckerService:
             
             # Mark as completed
             self.check_queue.mark_completed(channel_id)
+            # Update current_stream_ids to exclude dead streams that were removed
+            # This prevents dead stream IDs from being saved in checked_stream_ids
+            # which would cause them to be skipped by 2-hour immunity even after revival
+            # Note: Using list comprehension instead of set operations to preserve order
+            final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
             self.update_tracker.mark_channel_checked(
                 channel_id, 
                 stream_count=len(streams),
-                checked_stream_ids=current_stream_ids
+                checked_stream_ids=final_stream_ids
             )
             
             # Return statistics for callers that need them
@@ -2152,10 +2176,15 @@ class StreamCheckerService:
             
             # Mark as completed with stream count and checked stream IDs
             self.check_queue.mark_completed(channel_id)
+            # Update current_stream_ids to exclude dead streams that were removed
+            # This prevents dead stream IDs from being saved in checked_stream_ids
+            # which would cause them to be skipped by 2-hour immunity even after revival
+            # Note: Using list comprehension instead of set operations to preserve order
+            final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
             self.update_tracker.mark_channel_checked(
                 channel_id, 
                 stream_count=len(streams),
-                checked_stream_ids=current_stream_ids
+                checked_stream_ids=final_stream_ids
             )
             
             # Return statistics for callers that need them
@@ -2319,6 +2348,9 @@ class StreamCheckerService:
         Returns:
             Dict with check results and statistics
         """
+        import time as time_module
+        start_time = time_module.time()
+        
         try:
             logger.info(f"Starting single channel check for channel {channel_id}")
             
@@ -2477,6 +2509,26 @@ class StreamCheckerService:
                     'score': score
                 })
             
+            # Calculate duration
+            end_time = time_module.time()
+            duration_seconds = int(end_time - start_time)
+            
+            # Format duration as human-readable string
+            if duration_seconds < 60:
+                duration_str = f"{duration_seconds}s"
+            elif duration_seconds < 3600:
+                minutes = duration_seconds // 60
+                seconds = duration_seconds % 60
+                duration_str = f"{minutes}m {seconds}s"
+            else:
+                hours = duration_seconds // 3600
+                minutes = (duration_seconds % 3600) // 60
+                duration_str = f"{hours}h {minutes}m"
+            
+            # Add duration to check stats
+            check_stats['duration'] = duration_str
+            check_stats['duration_seconds'] = duration_seconds
+            
             # Add changelog entry
             if self.changelog:
                 try:
@@ -2501,7 +2553,7 @@ class StreamCheckerService:
                 except Exception as e:
                     logger.warning(f"Failed to add changelog entry: {e}")
             
-            logger.info(f"✓ Single channel check completed for {channel_name}")
+            logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
             
             return {
                 'success': True,
