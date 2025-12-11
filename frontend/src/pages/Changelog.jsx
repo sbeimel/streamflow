@@ -197,7 +197,7 @@ function ChangelogEntry({ entry }) {
           )}
           {details.streams_analyzed !== undefined && (
             <div>
-              <p className="text-xs text-muted-foreground">Streams Analyzed</p>
+              <p className="text-xs text-muted-foreground">Successful Checks</p>
               <p className="text-lg font-semibold">{details.streams_analyzed}</p>
             </div>
           )}
