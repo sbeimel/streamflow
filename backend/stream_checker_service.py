@@ -1734,6 +1734,7 @@ class StreamCheckerService:
             # Update current_stream_ids to exclude dead streams that were removed
             # This prevents dead stream IDs from being saved in checked_stream_ids
             # which would cause them to be skipped by 2-hour immunity even after revival
+            # Note: Using list comprehension instead of set operations to preserve order
             final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
             self.update_tracker.mark_channel_checked(
                 channel_id, 
@@ -2178,6 +2179,7 @@ class StreamCheckerService:
             # Update current_stream_ids to exclude dead streams that were removed
             # This prevents dead stream IDs from being saved in checked_stream_ids
             # which would cause them to be skipped by 2-hour immunity even after revival
+            # Note: Using list comprehension instead of set operations to preserve order
             final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
             self.update_tracker.mark_channel_checked(
                 channel_id, 

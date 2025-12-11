@@ -274,7 +274,7 @@ export default function AutomationSettings() {
       </Card>
 
       {/* No Active Pipeline Warning */}
-      {!pipelineMode && (
+      {(pipelineMode === null || pipelineMode === undefined || pipelineMode === '') && (
         <Alert variant="warning">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>No Active Pipeline</AlertTitle>
@@ -487,7 +487,7 @@ export default function AutomationSettings() {
               <div className="flex items-center space-x-2 pt-4">
                 <Switch
                   id="check_on_update"
-                  checked={streamCheckerConfig.queue?.check_on_update !== false}
+                  checked={streamCheckerConfig.queue?.check_on_update === true || streamCheckerConfig.queue?.check_on_update === undefined}
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('queue.check_on_update', checked)}
                 />
                 <Label htmlFor="check_on_update">Check Channels on M3U Update</Label>
@@ -507,7 +507,7 @@ export default function AutomationSettings() {
               <div className="flex items-center space-x-2">
                 <Switch
                   id="concurrent_enabled"
-                  checked={streamCheckerConfig.concurrent_streams?.enabled !== false}
+                  checked={streamCheckerConfig.concurrent_streams?.enabled === true || streamCheckerConfig.concurrent_streams?.enabled === undefined}
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('concurrent_streams.enabled', checked)}
                 />
                 <Label htmlFor="concurrent_enabled">Enable Concurrent Checking</Label>
