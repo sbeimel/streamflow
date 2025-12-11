@@ -427,6 +427,21 @@ export default function StreamChecker() {
                       Delay between retry attempts
                     </p>
                   </div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="user_agent">FFmpeg/FFprobe User Agent</Label>
+                    <Input
+                      id="user_agent"
+                      type="text"
+                      value={editedConfig?.stream_analysis?.user_agent || 'VLC/3.0.14'}
+                      onChange={(e) => updateConfigValue('stream_analysis.user_agent', e.target.value)}
+                      disabled={!configEditing}
+                      maxLength={200}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      User agent string for ffmpeg/ffprobe (for strict stream providers)
+                    </p>
+                  </div>
                 </div>
               </div>
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
@@ -313,6 +313,7 @@ export default function Changelog() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState(7)
+  const [actionFilter, setActionFilter] = useState('all')
   const { toast } = useToast()
 
   useEffect(() => {
@@ -336,6 +337,13 @@ export default function Changelog() {
     }
   }
 
+  // Filter entries based on action type (memoized to avoid re-computation on every render)
+  const filteredEntries = useMemo(() => {
+    return actionFilter === 'all' 
+      ? entries 
+      : entries.filter(entry => entry.action === actionFilter)
+  }, [entries, actionFilter])
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -346,16 +354,33 @@ export default function Changelog() {
           </p>
         </div>
         
-        <select
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          className="px-3 py-2 border rounded-md bg-background"
-        >
-          <option value={1}>Last 24 hours</option>
-          <option value={7}>Last 7 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-        </select>
+        <div className="flex gap-3">
+          <select
+            value={actionFilter}
+            onChange={(e) => setActionFilter(e.target.value)}
+            className="px-3 py-2 border rounded-md bg-background"
+          >
+            <option value="all">All Actions</option>
+            <option value="playlist_update_match">Playlist Update & Match</option>
+            <option value="global_check">Global Check</option>
+            <option value="single_channel_check">Single Channel Check</option>
+            <option value="batch_stream_check">Batch Stream Check</option>
+            <option value="playlist_refresh">Playlist Refresh</option>
+            <option value="streams_assigned">Streams Assigned</option>
+            <option value="stream_check">Stream Check</option>
+          </select>
+          
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className="px-3 py-2 border rounded-md bg-background"
+          >
+            <option value={1}>Last 24 hours</option>
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -364,16 +389,20 @@ export default function Changelog() {
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </CardContent>
         </Card>
-      ) : entries.length === 0 ? (
+      ) : filteredEntries.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Activity className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">No changelog entries found for the selected period</p>
+            <p className="text-muted-foreground">
+              {actionFilter === 'all' 
+                ? 'No changelog entries found for the selected period' 
+                : `No ${getActionLabel(actionFilter)} entries found for the selected period`}
+            </p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {entries.map((entry, index) => (
+          {filteredEntries.map((entry, index) => (
             <ChangelogEntry key={index} entry={entry} />
           ))}
         </div>

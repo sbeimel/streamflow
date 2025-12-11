@@ -373,176 +373,53 @@ export default function AutomationSettings() {
         </Card>
       )}
 
-      {/* Stream Analysis Settings */}
+      {/* Queue Settings */}
       {pipelineMode && pipelineMode !== 'disabled' && (
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Stream Analysis Settings</CardTitle>
-              <CardDescription>
-                Configure stream quality checking parameters
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="ffmpeg_duration">FFmpeg Duration (seconds)</Label>
-                <Input
-                  id="ffmpeg_duration"
-                  type="number"
-                  min="5"
-                  max="120"
-                  value={streamCheckerConfig.stream_analysis?.ffmpeg_duration ?? 30}
-                  onChange={(e) => handleStreamCheckerConfigChange('stream_analysis.ffmpeg_duration', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Duration to analyze each stream</p>
-              </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Queue Settings</CardTitle>
+            <CardDescription>
+              Configure channel checking queue
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="max_queue_size">Maximum Queue Size</Label>
+              <Input
+                id="max_queue_size"
+                type="number"
+                min="10"
+                max="10000"
+                value={streamCheckerConfig.queue?.max_size ?? 1000}
+                onChange={(e) => handleStreamCheckerConfigChange('queue.max_size', parseInt(e.target.value))}
+              />
+              <p className="text-sm text-muted-foreground">Maximum number of channels in the checking queue</p>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="user_agent">FFmpeg/FFprobe User Agent</Label>
-                <Input
-                  id="user_agent"
-                  type="text"
-                  maxLength="200"
-                  value={streamCheckerConfig.stream_analysis?.user_agent ?? 'VLC/3.0.14'}
-                  onChange={(e) => handleStreamCheckerConfigChange('stream_analysis.user_agent', e.target.value)}
-                />
-                <p className="text-sm text-muted-foreground">User agent string for ffmpeg/ffprobe (for strict stream providers)</p>
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="max_channels_per_run">Max Channels Per Run</Label>
+              <Input
+                id="max_channels_per_run"
+                type="number"
+                min="1"
+                max="500"
+                value={streamCheckerConfig.queue?.max_channels_per_run ?? 50}
+                onChange={(e) => handleStreamCheckerConfigChange('queue.max_channels_per_run', parseInt(e.target.value))}
+              />
+              <p className="text-sm text-muted-foreground">Maximum channels to check in a single run</p>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="timeout">Timeout (seconds)</Label>
-                <Input
-                  id="timeout"
-                  type="number"
-                  min="10"
-                  max="300"
-                  value={streamCheckerConfig.stream_analysis?.timeout ?? 30}
-                  onChange={(e) => handleStreamCheckerConfigChange('stream_analysis.timeout', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Timeout for stream analysis operations</p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="retries">Retry Attempts</Label>
-                <Input
-                  id="retries"
-                  type="number"
-                  min="0"
-                  max="5"
-                  value={streamCheckerConfig.stream_analysis?.retries ?? 1}
-                  onChange={(e) => handleStreamCheckerConfigChange('stream_analysis.retries', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Number of retry attempts for failed checks</p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="retry_delay">Retry Delay (seconds)</Label>
-                <Input
-                  id="retry_delay"
-                  type="number"
-                  min="5"
-                  max="60"
-                  value={streamCheckerConfig.stream_analysis?.retry_delay ?? 10}
-                  onChange={(e) => handleStreamCheckerConfigChange('stream_analysis.retry_delay', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Delay between retry attempts</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Queue Settings</CardTitle>
-              <CardDescription>
-                Configure channel checking queue
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="max_queue_size">Maximum Queue Size</Label>
-                <Input
-                  id="max_queue_size"
-                  type="number"
-                  min="10"
-                  max="10000"
-                  value={streamCheckerConfig.queue?.max_size ?? 1000}
-                  onChange={(e) => handleStreamCheckerConfigChange('queue.max_size', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Maximum number of channels in the checking queue</p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="max_channels_per_run">Max Channels Per Run</Label>
-                <Input
-                  id="max_channels_per_run"
-                  type="number"
-                  min="1"
-                  max="500"
-                  value={streamCheckerConfig.queue?.max_channels_per_run ?? 50}
-                  onChange={(e) => handleStreamCheckerConfigChange('queue.max_channels_per_run', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Maximum channels to check in a single run</p>
-              </div>
-
-              <div className="flex items-center space-x-2 pt-4">
-                <Switch
-                  id="check_on_update"
-                  checked={streamCheckerConfig.queue?.check_on_update === true || streamCheckerConfig.queue?.check_on_update === undefined}
-                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('queue.check_on_update', checked)}
-                />
-                <Label htmlFor="check_on_update">Check Channels on M3U Update</Label>
-              </div>
-              <p className="text-sm text-muted-foreground">Automatically queue channels for checking when they receive M3U playlist updates.</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Concurrent Stream Checking</CardTitle>
-              <CardDescription>
-                Configure parallel stream analysis
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="concurrent_enabled"
-                  checked={streamCheckerConfig.concurrent_streams?.enabled === true || streamCheckerConfig.concurrent_streams?.enabled === undefined}
-                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('concurrent_streams.enabled', checked)}
-                />
-                <Label htmlFor="concurrent_enabled">Enable Concurrent Checking</Label>
-              </div>
-              <p className="text-sm text-muted-foreground">Use multiple workers to check streams in parallel for faster processing.</p>
-
-              <div className="space-y-2">
-                <Label htmlFor="global_limit">Global Concurrent Limit</Label>
-                <Input
-                  id="global_limit"
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={streamCheckerConfig.concurrent_streams?.global_limit ?? 10}
-                  onChange={(e) => handleStreamCheckerConfigChange('concurrent_streams.global_limit', parseInt(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Maximum concurrent stream checks across all workers (0 = unlimited). Lower values reduce load on streaming providers.</p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="stagger_delay">Stagger Delay (seconds)</Label>
-                <Input
-                  id="stagger_delay"
-                  type="number"
-                  min="0"
-                  max="10"
-                  step="0.1"
-                  value={streamCheckerConfig.concurrent_streams?.stagger_delay ?? 1.0}
-                  onChange={(e) => handleStreamCheckerConfigChange('concurrent_streams.stagger_delay', parseFloat(e.target.value))}
-                />
-                <p className="text-sm text-muted-foreground">Delay between starting each worker to prevent simultaneous stream connections. Recommended: 0.5-2 seconds.</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+            <div className="flex items-center space-x-2 pt-4">
+              <Switch
+                id="check_on_update"
+                checked={streamCheckerConfig.queue?.check_on_update === true || streamCheckerConfig.queue?.check_on_update === undefined}
+                onCheckedChange={(checked) => handleStreamCheckerConfigChange('queue.check_on_update', checked)}
+              />
+              <Label htmlFor="check_on_update">Check Channels on M3U Update</Label>
+            </div>
+            <p className="text-sm text-muted-foreground">Automatically queue channels for checking when they receive M3U playlist updates.</p>
+          </CardContent>
+        </Card>
       )}
 
       {/* Save Button */}

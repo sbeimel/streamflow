@@ -1405,7 +1405,10 @@ class StreamCheckerService:
                 logger.info(f"No streams found for channel {channel_name}")
                 self.check_queue.mark_completed(channel_id)
                 self.update_tracker.mark_channel_checked(channel_id)
-                return
+                return {
+                    'dead_streams_count': 0,
+                    'revived_streams_count': 0
+                }
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
             
@@ -1837,7 +1840,10 @@ class StreamCheckerService:
                 logger.info(f"No streams found for channel {channel_name}")
                 self.check_queue.mark_completed(channel_id)
                 self.update_tracker.mark_channel_checked(channel_id)
-                return
+                return {
+                    'dead_streams_count': 0,
+                    'revived_streams_count': 0
+                }
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
             
@@ -2373,6 +2379,20 @@ class StreamCheckerService:
                     m3u_account = stream.get('m3u_account')
                     if m3u_account:
                         account_ids.add(m3u_account)
+            
+            # Also check dead streams for this channel to find M3U accounts
+            # This fixes the bug where channels with all dead streams couldn't refresh their playlists
+            dead_streams = self.dead_streams_tracker.get_dead_streams_for_channel(channel_id)
+            for dead_url, dead_info in dead_streams.items():
+                # Try to get the stream from UDI to find its m3u_account
+                stream_id = dead_info.get('stream_id')
+                if stream_id:
+                    stream = udi.get_stream_by_id(stream_id)
+                    if stream:
+                        m3u_account = stream.get('m3u_account')
+                        if m3u_account:
+                            account_ids.add(m3u_account)
+                            logger.info(f"Found M3U account {m3u_account} from dead stream {dead_info.get('stream_name', 'Unknown')}")
             
             # Step 2: Refresh playlists for those accounts
             if account_ids:
