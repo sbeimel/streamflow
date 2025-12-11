@@ -77,6 +77,7 @@ class TestSingleChannelDeadCount(unittest.TestCase):
         # Mock UDI refresh methods
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams_before)
         
         # Mock AutomatedStreamManager
         mock_automation_instance = Mock()
@@ -151,6 +152,7 @@ class TestSingleChannelDeadCount(unittest.TestCase):
         
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams)
         
         mock_automation_instance = Mock()
         mock_automation_class.return_value = mock_automation_instance

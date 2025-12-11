@@ -58,6 +58,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         # Mock UDI refresh methods
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams)
         
         # Mock AutomatedStreamManager
         mock_automation_instance = Mock()
@@ -118,6 +119,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams)
         
         # Mock AutomatedStreamManager
         mock_automation_instance = Mock()
@@ -178,6 +180,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
+        mock_udi_instance.get_streams = Mock(return_value=mock_streams)
         
         # Mock AutomatedStreamManager instance
         mock_automation_instance = Mock()
