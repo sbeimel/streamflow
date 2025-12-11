@@ -185,6 +185,7 @@ export default function Dashboard() {
   const queueSize = streamCheckerStatus?.queue?.queue_size || 0
   const completed = streamCheckerStatus?.queue?.completed || 0
   const inProgress = streamCheckerStatus?.queue?.in_progress || 0
+  const totalProcessed = completed; // Define totalProcessed based on completed streams
   
   // Calculate progress for the current batch
   const batchTotal = completed + inProgress + queueSize
