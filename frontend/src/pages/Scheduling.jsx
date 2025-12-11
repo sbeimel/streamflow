@@ -223,6 +223,8 @@ export default function Scheduling() {
       return
     }
 
+    // Parse once and validate
+    const minutesBeforeValue = parseInt(ruleMinutesBefore)
     if (!validateMinutesBefore(ruleMinutesBefore)) {
       toast({
         title: "Validation Error",
@@ -231,8 +233,6 @@ export default function Scheduling() {
       })
       return
     }
-
-    const minutesBeforeValue = parseInt(ruleMinutesBefore)
 
     try {
       const ruleData = {

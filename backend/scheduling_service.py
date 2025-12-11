@@ -162,6 +162,8 @@ class SchedulingService:
         Returns:
             List of program dictionaries
         """
+        programs_copy = []  # Initialize to ensure it's always defined
+        
         with self._lock:
             # Check cache
             if not force_refresh and self._epg_cache and self._epg_cache_time:
@@ -231,8 +233,7 @@ class SchedulingService:
                 if self._epg_cache:
                     logger.warning("Returning stale cached EPG data due to fetch error")
                     programs_copy = self._epg_cache.copy()
-                else:
-                    programs_copy = []
+                # programs_copy is already initialized to [] at the start
         
         # Match outside the lock to avoid deadlock
         try:
