@@ -11,6 +11,7 @@ import re
 import uuid
 import requests
 import threading
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -551,7 +552,9 @@ class SchedulingService:
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
                 try:
-                    self.match_programs_to_rules()
+                    # Ensure EPG data is fetched before matching
+                    self.fetch_epg_grid()
+                    # Note: fetch_epg_grid already calls match_programs_to_rules at the end
                 except Exception as e:
                     logger.error(f"Error matching programs to rules in background: {e}", exc_info=True)
             
@@ -622,157 +625,195 @@ class SchedulingService:
         Returns:
             Dictionary with statistics about created/updated events
         """
+        # First, get a snapshot of the data we need without holding the lock for long
         with self._lock:
             if not self._auto_create_rules:
                 logger.debug("No auto-create rules to process")
                 return {'created': 0, 'updated': 0, 'skipped': 0}
             
-            created_count = 0
-            updated_count = 0
-            skipped_count = 0
+            # Make copies of the data we need to avoid holding lock during processing
+            rules_snapshot = self._auto_create_rules.copy()
+            epg_cache_snapshot = self._epg_cache.copy()
+        
+        # Now process outside the lock
+        created_count = 0
+        updated_count = 0
+        skipped_count = 0
+        
+        udi = get_udi_manager()
+        events_to_add = []
+        events_to_update = []
+        
+        # Pre-group programs by tvg_id for efficient lookup (performance optimization)
+        programs_by_tvg_id = defaultdict(list)
+        for program in epg_cache_snapshot:
+            if isinstance(program, dict):
+                tvg_id = program.get('tvg_id')
+                if tvg_id:
+                    programs_by_tvg_id[tvg_id].append(program)
+        
+        # Sort programs by start time for each channel
+        for tvg_id in programs_by_tvg_id:
+            programs_by_tvg_id[tvg_id].sort(key=lambda p: p.get('start_time', ''))
+        
+        for rule in rules_snapshot:
+            channel_id = rule.get('channel_id')
+            regex_pattern = rule.get('regex_pattern')
+            minutes_before = rule.get('minutes_before', 5)
+            tvg_id = rule.get('tvg_id')
             
-            udi = get_udi_manager()
+            if not tvg_id:
+                logger.warning(f"Rule {rule.get('id')} has no TVG ID, skipping")
+                continue
             
-            for rule in self._auto_create_rules:
-                channel_id = rule.get('channel_id')
-                regex_pattern = rule.get('regex_pattern')
-                minutes_before = rule.get('minutes_before', 5)
-                tvg_id = rule.get('tvg_id')
-                
-                if not tvg_id:
-                    logger.warning(f"Rule {rule.get('id')} has no TVG ID, skipping")
+            try:
+                pattern = re.compile(regex_pattern, re.IGNORECASE)
+            except re.error as e:
+                logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
+                continue
+            
+            # Get programs for this channel from the pre-grouped dictionary
+            programs = programs_by_tvg_id.get(tvg_id, [])
+            
+            for program in programs:
+                title = program.get('title', '')
+                if not pattern.search(title):
                     continue
+                
+                # Program matches! Check if we already have an event for it
+                program_start = program.get('start_time')
+                program_end = program.get('end_time')
+                
+                if not program_start or not program_end:
+                    logger.warning(f"Program missing start/end time: {title}")
+                    continue
+                
+                # Parse times
+                try:
+                    start_dt = datetime.fromisoformat(program_start.replace('Z', '+00:00'))
+                    end_dt = datetime.fromisoformat(program_end.replace('Z', '+00:00'))
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Invalid program times for {title}: {e}")
+                    continue
+                
+                # Ensure timezone aware
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=timezone.utc)
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+                
+                # Get the date of the program (for duplicate detection)
+                program_date = start_dt.date().isoformat()
+                
+                # Create new event data
+                check_time = start_dt - timedelta(minutes=minutes_before)
+                
+                # Get channel info for logo
+                channel = udi.get_channel_by_id(channel_id)
+                logo_id = channel.get('logo_id') if channel else None
+                logo_url = None
+                if logo_id:
+                    logo = udi.get_logo_by_id(logo_id)
+                    if logo:
+                        logo_url = logo.get('cache_url') or logo.get('url')
+                
+                event_data = {
+                    'id': str(uuid.uuid4()),
+                    'channel_id': channel_id,
+                    'channel_name': channel.get('name', '') if channel else '',
+                    'channel_logo_url': logo_url,
+                    'program_title': title,
+                    'program_start_time': program_start,
+                    'program_end_time': program_end,
+                    'minutes_before': minutes_before,
+                    'check_time': check_time.isoformat(),
+                    'tvg_id': tvg_id,
+                    'created_at': datetime.now().isoformat(),
+                    'auto_created': True,
+                    'auto_create_rule_id': rule.get('id'),
+                    'program_date': program_date  # For duplicate detection
+                }
+                
+                events_to_add.append(event_data)
+        
+        # Now acquire the lock briefly to update the scheduled events
+        with self._lock:
+            for event_data in events_to_add:
+                # Look for existing event with same channel, program date within detection window
+                program_date = event_data.pop('program_date')
+                channel_id = event_data['channel_id']
+                title = event_data['program_title']
+                program_start = event_data['program_start_time']
                 
                 try:
-                    pattern = re.compile(regex_pattern, re.IGNORECASE)
-                except re.error as e:
-                    logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
-                    continue
-                
-                # Get programs for this channel
-                programs = self.get_programs_by_channel(channel_id, tvg_id)
-                
-                for program in programs:
-                    title = program.get('title', '')
-                    if not pattern.search(title):
-                        continue
-                    
-                    # Program matches! Check if we already have an event for it
-                    program_start = program.get('start_time')
-                    program_end = program.get('end_time')
-                    
-                    if not program_start or not program_end:
-                        logger.warning(f"Program missing start/end time: {title}")
-                        continue
-                    
-                    # Parse times
-                    try:
-                        start_dt = datetime.fromisoformat(program_start.replace('Z', '+00:00'))
-                        end_dt = datetime.fromisoformat(program_end.replace('Z', '+00:00'))
-                    except (ValueError, AttributeError) as e:
-                        logger.warning(f"Invalid program times for {title}: {e}")
-                        continue
-                    
-                    # Ensure timezone aware
+                    start_dt = datetime.fromisoformat(program_start.replace('Z', '+00:00'))
                     if start_dt.tzinfo is None:
                         start_dt = start_dt.replace(tzinfo=timezone.utc)
-                    if end_dt.tzinfo is None:
-                        end_dt = end_dt.replace(tzinfo=timezone.utc)
+                except (ValueError, AttributeError):
+                    continue
+                
+                existing_event = None
+                for event in self._scheduled_events:
+                    if event.get('channel_id') != channel_id:
+                        continue
                     
-                    # Get the date of the program (for duplicate detection)
-                    program_date = start_dt.date().isoformat()
+                    event_start = event.get('program_start_time', '')
+                    try:
+                        event_start_dt = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                        if event_start_dt.tzinfo is None:
+                            event_start_dt = event_start_dt.replace(tzinfo=timezone.utc)
+                        event_date = event_start_dt.date().isoformat()
+                    except (ValueError, AttributeError):
+                        continue
                     
-                    # Look for existing event with same channel, program name base, and date
-                    # Use a fuzzy match on the program name to detect minor changes
-                    existing_event = None
-                    for event in self._scheduled_events:
-                        if event.get('channel_id') != channel_id:
-                            continue
-                        
-                        event_start = event.get('program_start_time', '')
-                        try:
-                            event_start_dt = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
-                            if event_start_dt.tzinfo is None:
-                                event_start_dt = event_start_dt.replace(tzinfo=timezone.utc)
-                            event_date = event_start_dt.date().isoformat()
-                        except (ValueError, AttributeError):
-                            continue
-                        
-                        # Check if same date and similar title (within duplicate detection window)
-                        if event_date == program_date:
-                            time_diff = abs((event_start_dt - start_dt).total_seconds())
-                            if time_diff < DUPLICATE_DETECTION_WINDOW_SECONDS:
-                                existing_event = event
-                                break
+                    # Check if same date and within duplicate detection window
+                    if event_date == program_date:
+                        time_diff = abs((event_start_dt - start_dt).total_seconds())
+                        if time_diff < DUPLICATE_DETECTION_WINDOW_SECONDS:
+                            existing_event = event
+                            break
+                
+                if existing_event:
+                    # Check if we need to update the event
+                    needs_update = False
+                    if existing_event.get('program_title') != title:
+                        logger.info(f"Updating event title: '{existing_event.get('program_title')}' -> '{title}'")
+                        existing_event['program_title'] = title
+                        needs_update = True
                     
-                    if existing_event:
-                        # Check if we need to update the event
-                        needs_update = False
-                        if existing_event.get('program_title') != title:
-                            logger.info(f"Updating event title: '{existing_event.get('program_title')}' -> '{title}'")
-                            existing_event['program_title'] = title
-                            needs_update = True
-                        
-                        if existing_event.get('program_start_time') != program_start:
-                            logger.info(f"Updating event time: {existing_event.get('program_start_time')} -> {program_start}")
-                            existing_event['program_start_time'] = program_start
-                            existing_event['program_end_time'] = program_end
-                            # Recalculate check time
-                            check_time = start_dt - timedelta(minutes=minutes_before)
-                            existing_event['check_time'] = check_time.isoformat()
-                            needs_update = True
-                        
-                        if needs_update:
-                            updated_count += 1
-                        else:
-                            skipped_count += 1
+                    if existing_event.get('program_start_time') != program_start:
+                        logger.info(f"Updating event time: {existing_event.get('program_start_time')} -> {program_start}")
+                        existing_event['program_start_time'] = event_data['program_start_time']
+                        existing_event['program_end_time'] = event_data['program_end_time']
+                        existing_event['check_time'] = event_data['check_time']
+                        needs_update = True
+                    
+                    if needs_update:
+                        updated_count += 1
                     else:
-                        # Create new event
-                        check_time = start_dt - timedelta(minutes=minutes_before)
-                        
-                        # Get channel info for logo
-                        channel = udi.get_channel_by_id(channel_id)
-                        logo_id = channel.get('logo_id') if channel else None
-                        logo_url = None
-                        if logo_id:
-                            logo = udi.get_logo_by_id(logo_id)
-                            if logo:
-                                logo_url = logo.get('cache_url') or logo.get('url')
-                        
-                        event = {
-                            'id': str(uuid.uuid4()),
-                            'channel_id': channel_id,
-                            'channel_name': channel.get('name', '') if channel else '',
-                            'channel_logo_url': logo_url,
-                            'program_title': title,
-                            'program_start_time': program_start,
-                            'program_end_time': program_end,
-                            'minutes_before': minutes_before,
-                            'check_time': check_time.isoformat(),
-                            'tvg_id': tvg_id,
-                            'created_at': datetime.now().isoformat(),
-                            'auto_created': True,  # Mark as auto-created
-                            'auto_create_rule_id': rule.get('id')
-                        }
-                        
-                        self._scheduled_events.append(event)
-                        created_count += 1
-                        logger.info(f"Auto-created event for '{title}' on channel {channel.get('name', channel_id)}")
+                        skipped_count += 1
+                else:
+                    # Add new event
+                    self._scheduled_events.append(event_data)
+                    created_count += 1
+                    channel_name = event_data.get('channel_name', channel_id)
+                    logger.info(f"Auto-created event for '{title}' on channel {channel_name}")
             
             # Save if we made changes
             if created_count > 0 or updated_count > 0:
                 self._save_scheduled_events()
-            
-            result = {
-                'created': created_count,
-                'updated': updated_count,
-                'skipped': skipped_count
-            }
-            
-            if created_count > 0 or updated_count > 0:
-                logger.info(f"Auto-create matching complete: {result}")
-            
-            return result
+        
+        # Return result outside the lock
+        result = {
+            'created': created_count,
+            'updated': updated_count,
+            'skipped': skipped_count
+        }
+        
+        if created_count > 0 or updated_count > 0:
+            logger.info(f"Auto-create matching complete: {result}")
+        
+        return result
 
 
 # Global singleton instance
