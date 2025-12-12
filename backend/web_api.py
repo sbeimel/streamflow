@@ -356,6 +356,20 @@ def health_check_stripped():
     """Health check endpoint for nginx proxy (stripped /api prefix)."""
     return health_check()
 
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """Get application version."""
+    try:
+        version_file = Path(__file__).parent / 'version.txt'
+        if version_file.exists():
+            version = version_file.read_text().strip()
+        else:
+            version = "dev-unknown"
+        return jsonify({"version": version})
+    except Exception as e:
+        logger.error(f"Failed to read version: {e}")
+        return jsonify({"version": "dev-unknown"})
+
 @app.route('/api/automation/status', methods=['GET'])
 def get_automation_status():
     """Get current automation status."""

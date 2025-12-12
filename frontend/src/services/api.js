@@ -124,3 +124,7 @@ export const schedulingAPI = {
   deleteAutoCreateRule: (ruleId) => api.delete(`/scheduling/auto-create-rules/${ruleId}`),
   testAutoCreateRule: (testData) => api.post('/scheduling/auto-create-rules/test', testData),
 };
+
+export const versionAPI = {
+  getVersion: () => api.get('/version'),
+};
