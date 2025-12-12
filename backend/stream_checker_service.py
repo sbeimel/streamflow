@@ -2425,7 +2425,7 @@ class StreamCheckerService:
             logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
             
             # Step 1: Get current streams to identify M3U accounts
-            logger.info(f"Step 1/4: Identifying M3U accounts for channel {channel_name}...")
+            logger.info(f"Step 1/5: Identifying M3U accounts for channel {channel_name}...")
             current_streams = fetch_channel_streams(channel_id)
             account_ids = set()
             if current_streams:
