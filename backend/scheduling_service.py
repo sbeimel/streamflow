@@ -26,9 +26,11 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 SCHEDULING_CONFIG_FILE = CONFIG_DIR / 'scheduling_config.json'
 SCHEDULED_EVENTS_FILE = CONFIG_DIR / 'scheduled_events.json'
 AUTO_CREATE_RULES_FILE = CONFIG_DIR / 'auto_create_rules.json'
+EXECUTED_EVENTS_FILE = CONFIG_DIR / 'executed_events.json'
 
 # Constants
 DUPLICATE_DETECTION_WINDOW_SECONDS = 300  # 5 minutes window for detecting duplicate events
+EXECUTED_EVENTS_RETENTION_DAYS = 7  # Keep executed events history for 7 days
 
 
 class SchedulingService:
@@ -44,6 +46,7 @@ class SchedulingService:
         self._config = self._load_config()
         self._scheduled_events = self._load_scheduled_events()
         self._auto_create_rules = self._load_auto_create_rules()
+        self._executed_events = self._load_executed_events()
         logger.info("Scheduling service initialized")
     
     def _load_config(self) -> Dict[str, Any]:
@@ -344,7 +347,7 @@ class SchedulingService:
                 'minutes_before': minutes_before,
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._scheduled_events.append(event)
@@ -421,6 +424,12 @@ class SchedulingService:
             # Extract event data
             channel_id = event.get('channel_id')
             program_title = event.get('program_title', 'Unknown Program')
+            program_start_time = event.get('program_start_time')
+            
+            # Validate required fields
+            if not channel_id or not program_start_time:
+                logger.error(f"Scheduled event {event_id} missing required fields (channel_id or program_start_time)")
+                return False
         
         # Release lock before executing the long-running channel check
         logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
@@ -433,7 +442,7 @@ class SchedulingService:
             )
             
             if result.get('success'):
-                # Re-acquire lock only to delete the event after successful execution
+                # Re-acquire lock only to delete the event and record execution
                 with self._lock:
                     # Remove the event and check if it was actually present
                     initial_count = len(self._scheduled_events)
@@ -444,6 +453,11 @@ class SchedulingService:
                         logger.info(f"Scheduled event {event_id} executed and removed successfully")
                     else:
                         logger.warning(f"Scheduled event {event_id} was already removed by another thread")
+                    
+                    # Record the executed event to prevent re-creation
+                    if program_start_time:
+                        self._record_executed_event(channel_id, program_start_time)
+                
                 return True
             else:
                 logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
@@ -485,6 +499,111 @@ class SchedulingService:
         except Exception as e:
             logger.error(f"Error saving auto-create rules: {e}")
             return False
+    
+    def _load_executed_events(self) -> List[Dict[str, Any]]:
+        """Load executed events history from file and clean up old entries.
+        
+        Returns:
+            List of executed event dictionaries (cleaned of old entries)
+        """
+        try:
+            if EXECUTED_EVENTS_FILE.exists():
+                with open(EXECUTED_EVENTS_FILE, 'r') as f:
+                    executed_events = json.load(f)
+                    
+                    # Clean up old executed events (older than retention period)
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(days=EXECUTED_EVENTS_RETENTION_DAYS)
+                    cleaned_events = []
+                    
+                    for event in executed_events:
+                        try:
+                            executed_at = datetime.fromisoformat(event.get('executed_at', '').replace('Z', '+00:00'))
+                            if executed_at.tzinfo is None:
+                                executed_at = executed_at.replace(tzinfo=timezone.utc)
+                            
+                            if executed_at >= cutoff_time:
+                                cleaned_events.append(event)
+                        except (ValueError, AttributeError):
+                            # Skip events with invalid timestamps
+                            continue
+                    
+                    if len(cleaned_events) < len(executed_events):
+                        logger.info(f"Cleaned up {len(executed_events) - len(cleaned_events)} old executed events")
+                    
+                    logger.info(f"Loaded {len(cleaned_events)} executed events")
+                    return cleaned_events
+        except Exception as e:
+            logger.error(f"Error loading executed events: {e}")
+        
+        return []
+    
+    def _save_executed_events(self) -> bool:
+        """Save executed events history to file.
+        
+        Returns:
+            True if successful
+        """
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(EXECUTED_EVENTS_FILE, 'w') as f:
+                json.dump(self._executed_events, f, indent=2)
+            logger.debug(f"Saved {len(self._executed_events)} executed events")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving executed events: {e}")
+            return False
+    
+    def _record_executed_event(self, channel_id: int, program_start_time: str) -> None:
+        """Record an event as executed to prevent re-creation.
+        
+        Args:
+            channel_id: Channel ID
+            program_start_time: Program start time (ISO format)
+        """
+        executed_event = {
+            'channel_id': channel_id,
+            'program_start_time': program_start_time,
+            'executed_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        self._executed_events.append(executed_event)
+        self._save_executed_events()
+        logger.debug(f"Recorded executed event for channel {channel_id} at {program_start_time}")
+    
+    def _is_event_executed(self, channel_id: int, program_start_time: str) -> bool:
+        """Check if an event has already been executed.
+        
+        Args:
+            channel_id: Channel ID
+            program_start_time: Program start time (ISO format)
+            
+        Returns:
+            True if the event has been executed within the detection window
+        """
+        try:
+            start_dt = datetime.fromisoformat(program_start_time.replace('Z', '+00:00'))
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            return False
+        
+        for executed in self._executed_events:
+            if executed.get('channel_id') != channel_id:
+                continue
+            
+            try:
+                executed_start = datetime.fromisoformat(executed.get('program_start_time', '').replace('Z', '+00:00'))
+                if executed_start.tzinfo is None:
+                    executed_start = executed_start.replace(tzinfo=timezone.utc)
+                
+                # Check if within duplicate detection window
+                time_diff = abs((executed_start - start_dt).total_seconds())
+                if time_diff < DUPLICATE_DETECTION_WINDOW_SECONDS:
+                    return True
+            except (ValueError, AttributeError):
+                continue
+        
+        return False
     
     def get_auto_create_rules(self) -> List[Dict[str, Any]]:
         """Get all auto-create rules.
@@ -541,7 +660,7 @@ class SchedulingService:
                 'tvg_id': channel.get('tvg_id'),
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._auto_create_rules.append(rule)
@@ -716,6 +835,17 @@ class SchedulingService:
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=timezone.utc)
                 
+                # Skip programs that have already started or are in the past
+                now = datetime.now(timezone.utc)
+                if start_dt <= now:
+                    logger.debug(f"Skipping past/started program '{title}' (start: {start_dt}, now: {now})")
+                    continue
+                
+                # Skip if this event has already been executed
+                if self._is_event_executed(channel_id, program_start):
+                    logger.debug(f"Skipping already-executed program '{title}' on channel {channel_id}")
+                    continue
+                
                 # Get the date of the program (for duplicate detection)
                 program_date = start_dt.date().isoformat()
                 
@@ -742,7 +872,7 @@ class SchedulingService:
                     'minutes_before': minutes_before,
                     'check_time': check_time.isoformat(),
                     'tvg_id': tvg_id,
-                    'created_at': datetime.now().isoformat(),
+                    'created_at': datetime.now(timezone.utc).isoformat(),
                     'auto_created': True,
                     'auto_create_rule_id': rule.get('id'),
                     'program_date': program_date  # For duplicate detection

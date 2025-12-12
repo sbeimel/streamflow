@@ -177,8 +177,12 @@ Automatically create scheduled events based on program name patterns:
   - Configurable refresh interval (default: 60 minutes, minimum: 5 minutes)
   - Rules scan EPG automatically on every refresh
   - Creates events for matching programs without manual intervention
-  - Duplicate prevention (same channel/date/time within 5 minutes)
-  - Smart updates: adjusts event title and time if program changes
+  - **Smart Filtering**:
+    - Skips programs that have already started or are in the past
+    - Prevents re-creation of events that have already been checked
+    - Tracks executed events for 7 days to avoid duplicates
+  - **Duplicate Prevention**: Same channel/date/time within 5 minutes treated as duplicate
+  - **Smart Updates**: Adjusts event title and time if program changes (within duplicate window)
 
 - **Background Processor**:
   - Auto-starts with the application
