@@ -43,6 +43,9 @@ from udi import get_udi_manager
 # Import dead streams tracker
 from dead_streams_tracker import DeadStreamsTracker
 
+# Import channel settings manager
+from channel_settings_manager import get_channel_settings_manager
+
 # Import centralized stream stats utilities
 from stream_stats_utils import (
     parse_bitrate_value,
@@ -391,11 +394,19 @@ class ChannelUpdateTracker:
                     if max_channels and len(channels) >= max_channels:
                         break
             
-            if channels:
-                self._save_updates()
-                logger.debug(f"Atomically retrieved and cleared {len(channels)} channels needing check")
+            # Filter channels by checking_mode setting
+            channel_settings = get_channel_settings_manager()
+            filtered_channels = [cid for cid in channels if channel_settings.is_checking_enabled(cid)]
+            excluded_count = len(channels) - len(filtered_channels)
             
-            return channels
+            if excluded_count > 0:
+                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled")
+            
+            if filtered_channels:
+                self._save_updates()
+                logger.debug(f"Atomically retrieved and cleared {len(filtered_channels)} channels needing check")
+            
+            return filtered_channels
     
     def mark_channel_checked(self, channel_id: int, timestamp: str = None, stream_count: int = None, checked_stream_ids: List[int] = None):
         """Mark a channel as checked (completed).
