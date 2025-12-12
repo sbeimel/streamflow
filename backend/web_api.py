@@ -1422,6 +1422,9 @@ def update_stream_checker_config():
                 if manager.running:
                     manager.stop_automation()
                     logger.info("Automation service stopped (pipeline disabled)")
+                # Stop background processors
+                stop_scheduled_event_processor()
+                stop_epg_refresh_processor()
             else:
                 # Start services if pipeline is active and they're not already running
                 if not service.running:
@@ -1430,6 +1433,13 @@ def update_stream_checker_config():
                 if not manager.running:
                     manager.start_automation()
                     logger.info(f"Automation service auto-started after config update (mode: {pipeline_mode})")
+                # Start background processors if not running
+                if not (scheduled_event_processor_thread and scheduled_event_processor_thread.is_alive()):
+                    start_scheduled_event_processor()
+                    logger.info("Scheduled event processor auto-started after config update")
+                if not (epg_refresh_thread and epg_refresh_thread.is_alive()):
+                    start_epg_refresh_processor()
+                    logger.info("EPG refresh processor auto-started after config update")
         
         return jsonify({"message": "Configuration updated successfully", "config": service.config.config})
     except Exception as e:
@@ -1792,6 +1802,13 @@ def create_auto_create_rule():
                 return jsonify({"error": f"Missing required field: {field}"}), 400
         
         rule = service.create_auto_create_rule(rule_data)
+        
+        # Immediately match programs to the new rule
+        try:
+            service.match_programs_to_rules()
+            logger.info("Triggered immediate program matching after creating auto-create rule")
+        except Exception as e:
+            logger.warning(f"Failed to immediately match programs to new rule: {e}")
         
         # Wake up the processor to check for new events immediately
         global scheduled_event_processor_wake
