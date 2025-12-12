@@ -11,7 +11,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 
 from logging_config import setup_logging
 
