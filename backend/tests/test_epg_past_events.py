@@ -15,6 +15,7 @@ import tempfile
 import json
 import os
 import sys
+import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta, timezone
@@ -70,7 +71,6 @@ class TestEPGPastEvents(unittest.TestCase):
         """Clean up test fixtures."""
         self.mock_udi_patcher.stop()
         # Clean up the temp directory
-        import shutil
         if os.path.exists(self.test_config_dir):
             shutil.rmtree(self.test_config_dir)
         

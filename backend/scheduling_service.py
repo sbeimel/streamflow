@@ -347,7 +347,7 @@ class SchedulingService:
                 'minutes_before': minutes_before,
                 'check_time': check_time.isoformat(),
                 'tvg_id': channel.get('tvg_id'),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._scheduled_events.append(event)
@@ -425,6 +425,11 @@ class SchedulingService:
             channel_id = event.get('channel_id')
             program_title = event.get('program_title', 'Unknown Program')
             program_start_time = event.get('program_start_time')
+            
+            # Validate required fields
+            if not channel_id or not program_start_time:
+                logger.error(f"Scheduled event {event_id} missing required fields (channel_id or program_start_time)")
+                return False
         
         # Release lock before executing the long-running channel check
         logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
@@ -655,7 +660,7 @@ class SchedulingService:
                 'tvg_id': channel.get('tvg_id'),
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
             
             self._auto_create_rules.append(rule)
@@ -867,7 +872,7 @@ class SchedulingService:
                     'minutes_before': minutes_before,
                     'check_time': check_time.isoformat(),
                     'tvg_id': tvg_id,
-                    'created_at': datetime.now().isoformat(),
+                    'created_at': datetime.now(timezone.utc).isoformat(),
                     'auto_created': True,
                     'auto_create_rule_id': rule.get('id'),
                     'program_date': program_date  # For duplicate detection
