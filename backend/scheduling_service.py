@@ -619,7 +619,7 @@ class SchedulingService:
         Args:
             rule_data: Rule data dictionary containing:
                 - name: Rule name
-                - channel_id: Channel ID to match
+                - channel_ids: List of Channel IDs to match (or channel_id for backward compatibility)
                 - regex_pattern: Regex pattern to match program names
                 - minutes_before: Minutes before program start to check
                 
@@ -630,11 +630,38 @@ class SchedulingService:
             # Generate unique ID
             rule_id = str(uuid.uuid4())
             
-            # Get channel info
+            # Get channel info - support both channel_id (single) and channel_ids (multiple)
             udi = get_udi_manager()
-            channel = udi.get_channel_by_id(rule_data['channel_id'])
-            if not channel:
-                raise ValueError(f"Channel {rule_data['channel_id']} not found")
+            
+            # Handle backward compatibility: convert channel_id to channel_ids
+            if 'channel_id' in rule_data and 'channel_ids' not in rule_data:
+                channel_ids = [rule_data['channel_id']]
+            elif 'channel_ids' in rule_data:
+                channel_ids = rule_data['channel_ids']
+            else:
+                raise ValueError("Either channel_id or channel_ids must be provided")
+            
+            # Validate all channels exist and collect their info
+            channels_info = []
+            for channel_id in channel_ids:
+                channel = udi.get_channel_by_id(channel_id)
+                if not channel:
+                    raise ValueError(f"Channel {channel_id} not found")
+                
+                # Get channel logo info
+                logo_id = channel.get('logo_id')
+                logo_url = None
+                if logo_id:
+                    logo = udi.get_logo_by_id(logo_id)
+                    if logo:
+                        logo_url = logo.get('cache_url') or logo.get('url')
+                
+                channels_info.append({
+                    'id': channel_id,
+                    'name': channel.get('name', ''),
+                    'logo_url': logo_url,
+                    'tvg_id': channel.get('tvg_id')
+                })
             
             # Validate regex pattern
             try:
@@ -642,22 +669,12 @@ class SchedulingService:
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern: {e}")
             
-            # Get channel logo info
-            logo_id = channel.get('logo_id')
-            logo_url = None
-            if logo_id:
-                logo = udi.get_logo_by_id(logo_id)
-                if logo:
-                    logo_url = logo.get('cache_url') or logo.get('url')
-            
             # Create rule
             rule = {
                 'id': rule_id,
                 'name': rule_data['name'],
-                'channel_id': rule_data['channel_id'],
-                'channel_name': channel.get('name', ''),
-                'channel_logo_url': logo_url,
-                'tvg_id': channel.get('tvg_id'),
+                'channel_ids': channel_ids,
+                'channels_info': channels_info,  # Store full channel info for display
                 'regex_pattern': rule_data['regex_pattern'],
                 'minutes_before': rule_data.get('minutes_before', 5),
                 'created_at': datetime.now(timezone.utc).isoformat()
@@ -666,7 +683,8 @@ class SchedulingService:
             self._auto_create_rules.append(rule)
             self._save_auto_create_rules()
             
-            logger.info(f"Created auto-create rule {rule_id} for channel {channel.get('name')}")
+            channel_names = ', '.join([ch['name'] for ch in channels_info])
+            logger.info(f"Created auto-create rule {rule_id} for channels: {channel_names}")
             
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
@@ -744,25 +762,49 @@ class SchedulingService:
             # Validate and update fields
             udi = get_udi_manager()
             
-            # Update channel if provided
-            if 'channel_id' in rule_data and rule_data['channel_id'] != rule.get('channel_id'):
-                channel = udi.get_channel_by_id(rule_data['channel_id'])
-                if not channel:
-                    raise ValueError(f"Channel {rule_data['channel_id']} not found")
+            # Update channels if provided - support both old (channel_id) and new (channel_ids) format
+            if 'channel_id' in rule_data or 'channel_ids' in rule_data:
+                # Convert channel_id to channel_ids for backward compatibility
+                if 'channel_id' in rule_data and 'channel_ids' not in rule_data:
+                    channel_ids = [rule_data['channel_id']]
+                else:
+                    channel_ids = rule_data['channel_ids']
+                
+                # Validate all channels exist and collect their info
+                channels_info = []
+                for channel_id in channel_ids:
+                    channel = udi.get_channel_by_id(channel_id)
+                    if not channel:
+                        raise ValueError(f"Channel {channel_id} not found")
+                    
+                    # Get channel logo info
+                    logo_id = channel.get('logo_id')
+                    logo_url = None
+                    if logo_id:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo:
+                            logo_url = logo.get('cache_url') or logo.get('url')
+                    
+                    channels_info.append({
+                        'id': channel_id,
+                        'name': channel.get('name', ''),
+                        'logo_url': logo_url,
+                        'tvg_id': channel.get('tvg_id')
+                    })
                 
                 # Update channel-related fields
-                rule['channel_id'] = rule_data['channel_id']
-                rule['channel_name'] = channel.get('name', '')
-                rule['tvg_id'] = channel.get('tvg_id')
+                rule['channel_ids'] = channel_ids
+                rule['channels_info'] = channels_info
                 
-                # Update logo
-                logo_id = channel.get('logo_id')
-                logo_url = None
-                if logo_id:
-                    logo = udi.get_logo_by_id(logo_id)
-                    if logo:
-                        logo_url = logo.get('cache_url') or logo.get('url')
-                rule['channel_logo_url'] = logo_url
+                # Keep old fields for backward compatibility but mark as deprecated
+                # Store first channel's info in old format for compatibility
+                if channel_ids:
+                    first_channel_info = channels_info[0] if channels_info else None
+                    if first_channel_info:
+                        rule['channel_id'] = first_channel_info['id']  # For backward compatibility
+                        rule['channel_name'] = first_channel_info['name']
+                        rule['channel_logo_url'] = first_channel_info.get('logo_url')
+                        rule['tvg_id'] = first_channel_info.get('tvg_id')
             
             # Update regex pattern if provided
             if 'regex_pattern' in rule_data:
@@ -881,14 +923,27 @@ class SchedulingService:
             programs_by_tvg_id[tvg_id].sort(key=lambda p: p.get('start_time', ''))
         
         for rule in rules_snapshot:
-            channel_id = rule.get('channel_id')
+            # Support both old format (channel_id) and new format (channel_ids)
+            channel_ids = rule.get('channel_ids') or ([rule.get('channel_id')] if rule.get('channel_id') else [])
             regex_pattern = rule.get('regex_pattern')
             minutes_before = rule.get('minutes_before', 5)
-            tvg_id = rule.get('tvg_id')
             
-            if not tvg_id:
-                logger.warning(f"Rule {rule.get('id')} has no TVG ID, skipping")
+            if not channel_ids:
+                logger.warning(f"Rule {rule.get('id')} has no channels, skipping")
                 continue
+            
+            # Collect channels_info for old rules that don't have it
+            channels_info = rule.get('channels_info')
+            if not channels_info:
+                # Build channels_info from old format
+                channels_info = []
+                for channel_id in channel_ids:
+                    channel = udi.get_channel_by_id(channel_id)
+                    if channel:
+                        channels_info.append({
+                            'id': channel_id,
+                            'tvg_id': channel.get('tvg_id')
+                        })
             
             try:
                 pattern = re.compile(regex_pattern, re.IGNORECASE)
@@ -896,80 +951,89 @@ class SchedulingService:
                 logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
                 continue
             
-            # Get programs for this channel from the pre-grouped dictionary
-            programs = programs_by_tvg_id.get(tvg_id, [])
-            
-            for program in programs:
-                title = program.get('title', '')
-                if not pattern.search(title):
+            # Process each channel in the rule
+            for channel_info in channels_info:
+                channel_id = channel_info.get('id')
+                tvg_id = channel_info.get('tvg_id')
+                
+                if not tvg_id:
+                    logger.warning(f"Rule {rule.get('id')} channel {channel_id} has no TVG ID, skipping")
                     continue
                 
-                # Program matches! Check if we already have an event for it
-                program_start = program.get('start_time')
-                program_end = program.get('end_time')
+                # Get programs for this channel from the pre-grouped dictionary
+                programs = programs_by_tvg_id.get(tvg_id, [])
                 
-                if not program_start or not program_end:
-                    logger.warning(f"Program missing start/end time: {title}")
-                    continue
-                
-                # Parse times
-                try:
-                    start_dt = datetime.fromisoformat(program_start.replace('Z', '+00:00'))
-                    end_dt = datetime.fromisoformat(program_end.replace('Z', '+00:00'))
-                except (ValueError, AttributeError) as e:
-                    logger.warning(f"Invalid program times for {title}: {e}")
-                    continue
-                
-                # Ensure timezone aware
-                if start_dt.tzinfo is None:
-                    start_dt = start_dt.replace(tzinfo=timezone.utc)
-                if end_dt.tzinfo is None:
-                    end_dt = end_dt.replace(tzinfo=timezone.utc)
-                
-                # Skip programs that have already started or are in the past
-                now = datetime.now(timezone.utc)
-                if start_dt <= now:
-                    logger.debug(f"Skipping past/started program '{title}' (start: {start_dt}, now: {now})")
-                    continue
-                
-                # Skip if this event has already been executed
-                if self._is_event_executed(channel_id, program_start):
-                    logger.debug(f"Skipping already-executed program '{title}' on channel {channel_id}")
-                    continue
-                
-                # Get the date of the program (for duplicate detection)
-                program_date = start_dt.date().isoformat()
-                
-                # Create new event data
-                check_time = start_dt - timedelta(minutes=minutes_before)
-                
-                # Get channel info for logo
-                channel = udi.get_channel_by_id(channel_id)
-                logo_id = channel.get('logo_id') if channel else None
-                logo_url = None
-                if logo_id:
-                    logo = udi.get_logo_by_id(logo_id)
-                    if logo:
-                        logo_url = logo.get('cache_url') or logo.get('url')
-                
-                event_data = {
-                    'id': str(uuid.uuid4()),
-                    'channel_id': channel_id,
-                    'channel_name': channel.get('name', '') if channel else '',
-                    'channel_logo_url': logo_url,
-                    'program_title': title,
-                    'program_start_time': program_start,
-                    'program_end_time': program_end,
-                    'minutes_before': minutes_before,
-                    'check_time': check_time.isoformat(),
-                    'tvg_id': tvg_id,
-                    'created_at': datetime.now(timezone.utc).isoformat(),
-                    'auto_created': True,
-                    'auto_create_rule_id': rule.get('id'),
-                    'program_date': program_date  # For duplicate detection
-                }
-                
-                events_to_add.append(event_data)
+                for program in programs:
+                    title = program.get('title', '')
+                    if not pattern.search(title):
+                        continue
+                    
+                    # Program matches! Check if we already have an event for it
+                    program_start = program.get('start_time')
+                    program_end = program.get('end_time')
+                    
+                    if not program_start or not program_end:
+                        logger.warning(f"Program missing start/end time: {title}")
+                        continue
+                    
+                    # Parse times
+                    try:
+                        start_dt = datetime.fromisoformat(program_start.replace('Z', '+00:00'))
+                        end_dt = datetime.fromisoformat(program_end.replace('Z', '+00:00'))
+                    except (ValueError, AttributeError) as e:
+                        logger.warning(f"Invalid program times for {title}: {e}")
+                        continue
+                    
+                    # Ensure timezone aware
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=timezone.utc)
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=timezone.utc)
+                    
+                    # Skip programs that have already started or are in the past
+                    now = datetime.now(timezone.utc)
+                    if start_dt <= now:
+                        logger.debug(f"Skipping past/started program '{title}' (start: {start_dt}, now: {now})")
+                        continue
+                    
+                    # Skip if this event has already been executed
+                    if self._is_event_executed(channel_id, program_start):
+                        logger.debug(f"Skipping already-executed program '{title}' on channel {channel_id}")
+                        continue
+                    
+                    # Get the date of the program (for duplicate detection)
+                    program_date = start_dt.date().isoformat()
+                    
+                    # Create new event data
+                    check_time = start_dt - timedelta(minutes=minutes_before)
+                    
+                    # Get channel info for logo
+                    channel = udi.get_channel_by_id(channel_id)
+                    logo_id = channel.get('logo_id') if channel else None
+                    logo_url = None
+                    if logo_id:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo:
+                            logo_url = logo.get('cache_url') or logo.get('url')
+                    
+                    event_data = {
+                        'id': str(uuid.uuid4()),
+                        'channel_id': channel_id,
+                        'channel_name': channel.get('name', '') if channel else '',
+                        'channel_logo_url': logo_url,
+                        'program_title': title,
+                        'program_start_time': program_start,
+                        'program_end_time': program_end,
+                        'minutes_before': minutes_before,
+                        'check_time': check_time.isoformat(),
+                        'tvg_id': tvg_id,
+                        'created_at': datetime.now(timezone.utc).isoformat(),
+                        'auto_created': True,
+                        'auto_create_rule_id': rule.get('id'),
+                        'program_date': program_date  # For duplicate detection
+                    }
+                    
+                    events_to_add.append(event_data)
         
         # Now acquire the lock briefly to update the scheduled events
         with self._lock:
