@@ -270,8 +270,12 @@ def epg_refresh_processor():
             
         except Exception as e:
             logger.error(f"Error in EPG refresh processor: {e}", exc_info=True)
-            # On error, wait before retrying
-            time.sleep(EPG_REFRESH_ERROR_RETRY_SECONDS)
+            # On error, wait before retrying (using wake event for responsiveness)
+            if epg_refresh_wake and epg_refresh_running:
+                epg_refresh_wake.wait(timeout=EPG_REFRESH_ERROR_RETRY_SECONDS)
+                epg_refresh_wake.clear()
+            else:
+                break  # Exit if wake event is invalid or processor is stopping
     
     logger.info("EPG refresh processor thread stopped")
 
@@ -2065,9 +2069,10 @@ def trigger_epg_refresh():
         JSON with result
     """
     try:
-        global epg_refresh_wake
+        global epg_refresh_wake, epg_refresh_running, epg_refresh_thread
         
-        if epg_refresh_wake and epg_refresh_running:
+        # Validate that the processor is actually running
+        if epg_refresh_wake and epg_refresh_running and epg_refresh_thread and epg_refresh_thread.is_alive():
             epg_refresh_wake.set()
             return jsonify({"message": "EPG refresh triggered"}), 200
         else:
