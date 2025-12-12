@@ -1842,7 +1842,7 @@ def create_auto_create_rule():
     Expected JSON body:
     {
         "name": "Rule Name",
-        "channel_id": 123,
+        "channel_ids": [123, 456],  // or "channel_id": 123 for backward compatibility
         "regex_pattern": "^Breaking News",
         "minutes_before": 5
     }
@@ -1855,11 +1855,15 @@ def create_auto_create_rule():
         if not rule_data:
             return jsonify({"error": "No rule data provided"}), 400
         
-        # Validate required fields
-        required_fields = ['name', 'channel_id', 'regex_pattern']
+        # Validate required fields - accept either channel_id or channel_ids
+        required_fields = ['name', 'regex_pattern']
         for field in required_fields:
             if field not in rule_data:
                 return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        # Validate that either channel_id or channel_ids is provided
+        if 'channel_id' not in rule_data and 'channel_ids' not in rule_data:
+            return jsonify({"error": "Missing required field: channel_id or channel_ids"}), 400
         
         rule = service.create_auto_create_rule(rule_data)
         
