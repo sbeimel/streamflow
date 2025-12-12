@@ -1034,13 +1034,13 @@ export default function Scheduling() {
                                   value={searchValue}
                                   onSelect={() => handleRuleChannelSelect(channel.id)}
                                 >
+                                  {channel.channel_number ? `${channel.channel_number} - ` : ''}{channel.name}
                                   <Check
                                     className={cn(
-                                      "mr-2 h-4 w-4",
+                                      "ml-auto h-4 w-4",
                                       isSelected ? "opacity-100" : "opacity-0"
                                     )}
                                   />
-                                  {channel.channel_number ? `${channel.channel_number} - ` : ''}{channel.name}
                                 </CommandItem>
                                 );
                               })}
@@ -1057,7 +1057,15 @@ export default function Scheduling() {
                             <button
                               type="button"
                               onClick={() => handleRuleChannelSelect(channel.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleRuleChannelSelect(channel.id);
+                                }
+                              }}
                               className="ml-1 hover:text-destructive"
+                              aria-label={`Remove ${channel.name}`}
+                              tabIndex={0}
                             >
                               ×
                             </button>
@@ -1248,7 +1256,7 @@ export default function Scheduling() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  );
+                  )
                   })}
                 </TableBody>
               </Table>

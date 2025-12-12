@@ -796,11 +796,15 @@ class SchedulingService:
                 rule['channel_ids'] = channel_ids
                 rule['channels_info'] = channels_info
                 
-                # Remove old single-channel fields if they exist
-                rule.pop('channel_id', None)
-                rule.pop('channel_name', None)
-                rule.pop('channel_logo_url', None)
-                rule.pop('tvg_id', None)
+                # Keep old fields for backward compatibility but mark as deprecated
+                # Store first channel's info in old format for compatibility
+                if channel_ids:
+                    first_channel_info = channels_info[0] if channels_info else None
+                    if first_channel_info:
+                        rule['channel_id'] = first_channel_info['id']  # For backward compatibility
+                        rule['channel_name'] = first_channel_info['name']
+                        rule['channel_logo_url'] = first_channel_info.get('logo_url')
+                        rule['tvg_id'] = first_channel_info.get('tvg_id')
             
             # Update regex pattern if provided
             if 'regex_pattern' in rule_data:
