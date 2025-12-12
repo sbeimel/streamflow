@@ -40,6 +40,31 @@ jobs:
         cd frontend
         npm ci
 
+    - name: Generate version file
+      run: |
+        # Determine version based on event and branch
+        if [ "${{ github.event_name }}" = "release" ]; then
+          # For releases, use the tag name (strip leading "v" if present)
+          raw_tag="${GITHUB_REF##*/}"
+          VERSION="${raw_tag#v}"
+        else
+          # For non-release builds, use branch name and build date
+          BRANCH_NAME="${GITHUB_REF##*/}"
+          # Sanitize branch name (replace / and other special chars with -)
+          SANITIZED_BRANCH=$(echo "${BRANCH_NAME}" | tr '/._' '---')
+          BUILD_DATE=$(date -u +%Y%m%d)
+          VERSION="${SANITIZED_BRANCH}-${BUILD_DATE}"
+        fi
+        
+        echo "Generated version: $VERSION"
+        
+        # Create version file for backend
+        echo "$VERSION" > backend/version.txt
+        
+        # Create version file for frontend build
+        mkdir -p frontend/public
+        echo "$VERSION" > frontend/public/version.txt
+
     - name: Build frontend
       run: |
         cd frontend
