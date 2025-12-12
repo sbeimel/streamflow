@@ -363,7 +363,7 @@ export default function ChannelConfiguration() {
       // Show starting notification
       toast({
         title: "Channel Check Started",
-        description: "Checking channel streams...",
+        description: "Checking channel streams... This may take a few minutes.",
       })
       
       const response = await streamCheckerAPI.checkSingleChannel(channelId)
@@ -385,11 +385,20 @@ export default function ChannelConfiguration() {
       }
     } catch (err) {
       console.error('Error checking channel:', err)
-      toast({
-        title: "Error",
-        description: "Failed to check channel",
-        variant: "destructive"
-      })
+      // Check if it's a timeout error
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        toast({
+          title: "Check Taking Longer Than Expected",
+          description: "The channel check is still running. Please check back in a few minutes.",
+          variant: "default"
+        })
+      } else {
+        toast({
+          title: "Error",
+          description: err.response?.data?.error || "Failed to check channel",
+          variant: "destructive"
+        })
+      }
     } finally {
       setCheckingChannel(null)
     }
