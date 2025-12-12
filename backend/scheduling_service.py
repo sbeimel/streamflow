@@ -717,6 +717,97 @@ class SchedulingService:
             logger.warning(f"Auto-create rule {rule_id} not found")
             return False
     
+    def update_auto_create_rule(self, rule_id: str, rule_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing auto-create rule.
+        
+        Args:
+            rule_id: Rule ID to update
+            rule_data: Updated rule data (only provided fields will be updated)
+            
+        Returns:
+            Updated rule dictionary or None if not found
+        """
+        with self._lock:
+            # Find the rule
+            rule = None
+            rule_index = None
+            for i, r in enumerate(self._auto_create_rules):
+                if r.get('id') == rule_id:
+                    rule = r
+                    rule_index = i
+                    break
+            
+            if not rule:
+                logger.warning(f"Auto-create rule {rule_id} not found for update")
+                return None
+            
+            # Validate and update fields
+            udi = get_udi_manager()
+            
+            # Update channel if provided
+            if 'channel_id' in rule_data and rule_data['channel_id'] != rule.get('channel_id'):
+                channel = udi.get_channel_by_id(rule_data['channel_id'])
+                if not channel:
+                    raise ValueError(f"Channel {rule_data['channel_id']} not found")
+                
+                # Update channel-related fields
+                rule['channel_id'] = rule_data['channel_id']
+                rule['channel_name'] = channel.get('name', '')
+                rule['tvg_id'] = channel.get('tvg_id')
+                
+                # Update logo
+                logo_id = channel.get('logo_id')
+                logo_url = None
+                if logo_id:
+                    logo = udi.get_logo_by_id(logo_id)
+                    if logo:
+                        logo_url = logo.get('cache_url') or logo.get('url')
+                rule['channel_logo_url'] = logo_url
+            
+            # Update regex pattern if provided
+            if 'regex_pattern' in rule_data:
+                try:
+                    re.compile(rule_data['regex_pattern'])
+                    rule['regex_pattern'] = rule_data['regex_pattern']
+                except re.error as e:
+                    raise ValueError(f"Invalid regex pattern: {e}")
+            
+            # Update other fields
+            if 'name' in rule_data:
+                rule['name'] = rule_data['name']
+            if 'minutes_before' in rule_data:
+                rule['minutes_before'] = rule_data['minutes_before']
+            
+            # Save changes
+            self._auto_create_rules[rule_index] = rule
+            self._save_auto_create_rules()
+            
+            logger.info(f"Updated auto-create rule {rule_id}")
+            
+            # Delete old events created by this rule and rematch
+            initial_events_count = len(self._scheduled_events)
+            self._scheduled_events = [
+                e for e in self._scheduled_events 
+                if e.get('auto_create_rule_id') != rule_id
+            ]
+            deleted_events_count = initial_events_count - len(self._scheduled_events)
+            
+            if deleted_events_count > 0:
+                self._save_scheduled_events()
+                logger.info(f"Deleted {deleted_events_count} old event(s) from updated rule {rule_id}")
+            
+            # Schedule matching in background thread
+            def match_in_background():
+                try:
+                    self.fetch_epg_grid()
+                except Exception as e:
+                    logger.error(f"Error matching programs to updated rule: {e}", exc_info=True)
+            
+            match_thread = threading.Thread(target=match_in_background, daemon=True)
+            match_thread.start()
+            
+            return rule
+    
     def test_regex_against_epg(self, channel_id: int, regex_pattern: str) -> List[Dict[str, Any]]:
         """Test a regex pattern against EPG programs for a channel.
         

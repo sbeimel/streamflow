@@ -120,6 +120,7 @@ export const schedulingAPI = {
   deleteEvent: (eventId) => api.delete(`/scheduling/events/${eventId}`),
   getAutoCreateRules: () => api.get('/scheduling/auto-create-rules'),
   createAutoCreateRule: (ruleData) => api.post('/scheduling/auto-create-rules', ruleData),
+  updateAutoCreateRule: (ruleId, ruleData) => api.put(`/scheduling/auto-create-rules/${ruleId}`, ruleData),
   deleteAutoCreateRule: (ruleId) => api.delete(`/scheduling/auto-create-rules/${ruleId}`),
   testAutoCreateRule: (testData) => api.post('/scheduling/auto-create-rules/test', testData),
 };
