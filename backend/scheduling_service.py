@@ -996,40 +996,40 @@ class SchedulingService:
                     if self._is_event_executed(channel_id, program_start):
                         logger.debug(f"Skipping already-executed program '{title}' on channel {channel_id}")
                         continue
-                
-                # Get the date of the program (for duplicate detection)
-                program_date = start_dt.date().isoformat()
-                
-                # Create new event data
-                check_time = start_dt - timedelta(minutes=minutes_before)
-                
-                # Get channel info for logo
-                channel = udi.get_channel_by_id(channel_id)
-                logo_id = channel.get('logo_id') if channel else None
-                logo_url = None
-                if logo_id:
-                    logo = udi.get_logo_by_id(logo_id)
-                    if logo:
-                        logo_url = logo.get('cache_url') or logo.get('url')
-                
-                event_data = {
-                    'id': str(uuid.uuid4()),
-                    'channel_id': channel_id,
-                    'channel_name': channel.get('name', '') if channel else '',
-                    'channel_logo_url': logo_url,
-                    'program_title': title,
-                    'program_start_time': program_start,
-                    'program_end_time': program_end,
-                    'minutes_before': minutes_before,
-                    'check_time': check_time.isoformat(),
-                    'tvg_id': tvg_id,
-                    'created_at': datetime.now(timezone.utc).isoformat(),
-                    'auto_created': True,
-                    'auto_create_rule_id': rule.get('id'),
-                    'program_date': program_date  # For duplicate detection
-                }
-                
-                events_to_add.append(event_data)
+                    
+                    # Get the date of the program (for duplicate detection)
+                    program_date = start_dt.date().isoformat()
+                    
+                    # Create new event data
+                    check_time = start_dt - timedelta(minutes=minutes_before)
+                    
+                    # Get channel info for logo
+                    channel = udi.get_channel_by_id(channel_id)
+                    logo_id = channel.get('logo_id') if channel else None
+                    logo_url = None
+                    if logo_id:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo:
+                            logo_url = logo.get('cache_url') or logo.get('url')
+                    
+                    event_data = {
+                        'id': str(uuid.uuid4()),
+                        'channel_id': channel_id,
+                        'channel_name': channel.get('name', '') if channel else '',
+                        'channel_logo_url': logo_url,
+                        'program_title': title,
+                        'program_start_time': program_start,
+                        'program_end_time': program_end,
+                        'minutes_before': minutes_before,
+                        'check_time': check_time.isoformat(),
+                        'tvg_id': tvg_id,
+                        'created_at': datetime.now(timezone.utc).isoformat(),
+                        'auto_created': True,
+                        'auto_create_rule_id': rule.get('id'),
+                        'program_date': program_date  # For duplicate detection
+                    }
+                    
+                    events_to_add.append(event_data)
         
         # Now acquire the lock briefly to update the scheduled events
         with self._lock:
