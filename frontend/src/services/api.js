@@ -123,6 +123,8 @@ export const schedulingAPI = {
   updateAutoCreateRule: (ruleId, ruleData) => api.put(`/scheduling/auto-create-rules/${ruleId}`, ruleData),
   deleteAutoCreateRule: (ruleId) => api.delete(`/scheduling/auto-create-rules/${ruleId}`),
   testAutoCreateRule: (testData) => api.post('/scheduling/auto-create-rules/test', testData),
+  exportAutoCreateRules: () => api.get('/scheduling/auto-create-rules/export'),
+  importAutoCreateRules: (rulesData) => api.post('/scheduling/auto-create-rules/import', rulesData),
 };
 
 export const versionAPI = {

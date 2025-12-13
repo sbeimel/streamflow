@@ -172,7 +172,7 @@ Automatically create scheduled events based on program name patterns:
 
 - **Rule Configuration**:
   - Rule name for easy identification
-  - Channel selection with search
+  - Channel selection with search (supports multiple channels)
   - Regex pattern to match program names
   - Minutes before setting (when to run check)
 
@@ -180,6 +180,23 @@ Automatically create scheduled events based on program name patterns:
   - Test patterns against real EPG data
   - See matching programs before creating rule
   - Case-insensitive matching for flexibility
+
+- **Import/Export Rules**:
+  - **Export**: Download all rules as JSON file for backup or transfer
+    - Click "Export" button to download rules
+    - Rules are exported with essential fields only (name, channels, pattern, timing)
+    - Compatible with import format
+  - **Import**: Load rules from JSON file
+    - **Main Import**: Use "Import" button next to "Export" to bulk import rules
+    - **Wizard Import**: Use "Import JSON" button in the rule creation dialog to load a single rule into the form
+    - Validates all rules before import
+    - Shows detailed import results (imported/failed counts)
+    - Skips invalid rules and reports errors
+  - **Use Cases**:
+    - Backup rules before making changes
+    - Transfer rules between environments
+    - Share rule configurations with other users
+    - Quick setup with pre-configured rule sets
 
 - **Automatic Event Creation**:
   - **Automatic EPG Refresh**: Background processor fetches EPG data periodically
@@ -203,8 +220,10 @@ Automatically create scheduled events based on program name patterns:
 
 - **Rule Management**:
   - View all active rules
+  - Edit existing rules
   - Delete rules when no longer needed
-  - Rules table shows channel, pattern, and timing
+  - Rules table shows channel(s), pattern, and timing
+  - Multi-channel support for rules that apply across channels
 
 **Use Cases**:
 - Breaking news alerts: `^Breaking News|^Special Report`
