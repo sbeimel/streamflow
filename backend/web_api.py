@@ -1076,6 +1076,10 @@ def set_channel_order():
         if not isinstance(order, list):
             return jsonify({"error": "'order' must be a list of channel IDs"}), 400
         
+        # Validate that all items are integers
+        if not all(isinstance(item, int) for item in order):
+            return jsonify({"error": "'order' must contain only integer channel IDs"}), 400
+        
         order_manager = get_channel_order_manager()
         success = order_manager.set_order(order)
         
@@ -1303,10 +1307,6 @@ def update_dispatcharr_config_endpoint():
             os.environ["DISPATCHARR_PASS"] = password
         
         # Clear token when credentials change so we re-authenticate
-        from dotenv import set_key
-        env_file = Path('.') / '.env'
-        if env_file.exists():
-            set_key(env_file, "DISPATCHARR_TOKEN", "")
         os.environ["DISPATCHARR_TOKEN"] = ""
         
         return jsonify({"message": "Dispatcharr configuration updated successfully"})

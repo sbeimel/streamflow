@@ -1194,11 +1194,10 @@ class SchedulingService:
                     raise ValueError("Missing required field: channel_id or channel_ids")
                 
                 # Normalize to channel_ids list
-                if 'channel_id' in rule_data and 'channel_ids' not in rule_data:
-                    import_channel_ids = [rule_data['channel_id']]
-                elif 'channel_ids' in rule_data:
+                if 'channel_ids' in rule_data:
                     import_channel_ids = rule_data['channel_ids']
                 else:
+                    # Must have channel_id if channel_ids is not present
                     import_channel_ids = [rule_data['channel_id']]
                 
                 import_regex = rule_data['regex_pattern']
