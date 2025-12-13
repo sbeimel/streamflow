@@ -528,6 +528,76 @@ Test a regex pattern against current EPG programs for a channel without creating
 }
 ```
 
+#### Export Auto-Create Rules
+```
+GET /api/scheduling/auto-create-rules/export
+```
+Export all auto-create rules as JSON. The exported rules contain only essential fields (name, channel_ids, regex_pattern, minutes_before) and can be imported back using the import endpoint.
+
+**Response:**
+```json
+[
+  {
+    "name": "Breaking News",
+    "channel_ids": [123, 456],
+    "channel_id": 123,
+    "regex_pattern": "^Breaking News",
+    "minutes_before": 5
+  }
+]
+```
+
+#### Import Auto-Create Rules
+```
+POST /api/scheduling/auto-create-rules/import
+Content-Type: application/json
+
+[
+  {
+    "name": "Breaking News",
+    "channel_ids": [123, 456],
+    "regex_pattern": "^Breaking News",
+    "minutes_before": 5
+  },
+  {
+    "name": "Sports Events",
+    "channel_id": 789,
+    "regex_pattern": "^Live:|Championship",
+    "minutes_before": 10
+  }
+]
+```
+Import auto-create rules from JSON. Each rule is validated before import. Invalid rules are skipped and reported in the response.
+
+**Request Fields:**
+- `name` (required): Rule name
+- `channel_ids` (required, unless `channel_id` provided): Array of channel IDs
+- `channel_id` (optional): Single channel ID for backward compatibility
+- `regex_pattern` (required): Regex pattern to match programs
+- `minutes_before` (optional, default: 5): Minutes before program start
+
+**Response:**
+```json
+{
+  "imported": 2,
+  "failed": 0,
+  "total": 2,
+  "errors": []
+}
+```
+
+If some rules fail:
+```json
+{
+  "imported": 1,
+  "failed": 1,
+  "total": 2,
+  "errors": [
+    "Rule 2 ('Sports Events'): Channel 789 not found"
+  ]
+}
+```
+
 ### Scheduled Events Processor
 
 ### Get Scheduled Event Processor Status

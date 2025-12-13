@@ -56,6 +56,18 @@ export const channelSettingsAPI = {
   updateSettings: (channelId, settings) => api.put(`/channel-settings/${channelId}`, settings),
 };
 
+export const groupSettingsAPI = {
+  getAllSettings: () => api.get('/group-settings'),
+  getSettings: (groupId) => api.get(`/group-settings/${groupId}`),
+  updateSettings: (groupId, settings) => api.put(`/group-settings/${groupId}`, settings),
+};
+
+export const channelOrderAPI = {
+  getOrder: () => api.get('/channel-order'),
+  setOrder: (order) => api.put('/channel-order', { order }),
+  clearOrder: () => api.delete('/channel-order'),
+};
+
 export const regexAPI = {
   getPatterns: () => api.get('/regex-patterns'),
   addPattern: (pattern) => api.post('/regex-patterns', pattern),
@@ -123,6 +135,8 @@ export const schedulingAPI = {
   updateAutoCreateRule: (ruleId, ruleData) => api.put(`/scheduling/auto-create-rules/${ruleId}`, ruleData),
   deleteAutoCreateRule: (ruleId) => api.delete(`/scheduling/auto-create-rules/${ruleId}`),
   testAutoCreateRule: (testData) => api.post('/scheduling/auto-create-rules/test', testData),
+  exportAutoCreateRules: () => api.get('/scheduling/auto-create-rules/export'),
+  importAutoCreateRules: (rulesData) => api.post('/scheduling/auto-create-rules/import', rulesData),
 };
 
 export const versionAPI = {

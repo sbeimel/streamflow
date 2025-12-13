@@ -7,9 +7,27 @@ import { Badge } from '@/components/ui/badge.jsx'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
+import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload } from 'lucide-react'
+import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI } from '@/services/api.js'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 // Constants for localStorage keys
 const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
@@ -297,6 +315,192 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
   )
 }
 
+function SortableChannelItem({ channel }) {
+  const [logoUrl, setLogoUrl] = useState(null)
+  const [logoError, setLogoError] = useState(false)
+  
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: channel.id })
+
+  useEffect(() => {
+    const loadLogo = () => {
+      // Try cached logo first from localStorage
+      const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
+      if (cachedLogo) {
+        setLogoUrl(cachedLogo)
+        return // Use cached version, don't fetch again
+      }
+      
+      // Only fetch from API if not cached and logo_id is available
+      if (channel.logo_id) {
+        const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
+        setLogoUrl(logoUrl)
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, logoUrl)
+      }
+    }
+    loadLogo()
+  }, [channel.id, channel.logo_id])
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-3 p-4 bg-card border rounded-lg ${
+        isDragging ? 'shadow-lg' : 'shadow-sm'
+      }`}
+    >
+      <div
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing touch-none"
+      >
+        <GripVertical className="h-5 w-5 text-muted-foreground" />
+      </div>
+      
+      {/* Channel Logo */}
+      <div className="w-20 h-10 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+        {logoUrl && !logoError ? (
+          <img 
+            src={logoUrl} 
+            alt={channel.name} 
+            className="w-full h-full object-contain"
+            onError={() => setLogoError(true)}
+          />
+        ) : (
+          <span className="text-xl font-bold text-muted-foreground">
+            {channel.name?.charAt(0) || '?'}
+          </span>
+        )}
+      </div>
+      
+      <div className="flex-1 flex items-center gap-4">
+        <Badge variant="outline" className="font-mono">
+          #{channel.channel_number || 'N/A'}
+        </Badge>
+        <div className="flex-1 min-w-0">
+          <div className="font-medium truncate">{channel.name}</div>
+          <div className="text-xs text-muted-foreground">ID: {channel.id}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function GroupCard({ group, channels, groupSettings, onUpdateSettings }) {
+  const { toast } = useToast()
+  const matchingMode = groupSettings?.matching_mode || 'enabled'
+  const checkingMode = groupSettings?.checking_mode || 'enabled'
+  
+  // Count channels in this group
+  const channelCount = channels.filter(ch => ch.channel_group_id === group.id).length
+
+  const handleMatchingModeChange = async (value) => {
+    try {
+      await onUpdateSettings(group.id, { matching_mode: value })
+      toast({
+        title: "Success",
+        description: "Group matching mode updated successfully"
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update matching mode",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleCheckingModeChange = async (value) => {
+    try {
+      await onUpdateSettings(group.id, { checking_mode: value })
+      toast({
+        title: "Success",
+        description: "Group checking mode updated successfully"
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update checking mode",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const bothDisabled = matchingMode === 'disabled' && checkingMode === 'disabled'
+
+  return (
+    <Card className="w-full">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-4">
+          {/* Group Info */}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-base truncate">{group.name}</h3>
+            <div className="flex flex-wrap gap-3 mt-1 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <span>Channels:</span>
+                <span className="font-medium">{channelCount}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>Group ID:</span>
+                <span className="font-medium">{group.id}</span>
+              </div>
+            </div>
+            {bothDisabled && (
+              <p className="text-xs text-amber-600 mt-1">
+                ⚠️ Channels from this group will not appear in Regex Configuration or Channel Ordering
+              </p>
+            )}
+          </div>
+
+          {/* Settings Controls */}
+          <div className="grid grid-cols-2 gap-4 flex-shrink-0">
+            <div className="space-y-2 min-w-[180px]">
+              <Label htmlFor={`group-matching-${group.id}`} className="text-sm font-medium">
+                Stream Matching
+              </Label>
+              <Select value={matchingMode} onValueChange={handleMatchingModeChange}>
+                <SelectTrigger id={`group-matching-${group.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enabled">Enabled</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 min-w-[180px]">
+              <Label htmlFor={`group-checking-${group.id}`} className="text-sm font-medium">
+                Stream Checking
+              </Label>
+              <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
+                <SelectTrigger id={`group-checking-${group.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enabled">Enabled</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
   const [patterns, setPatterns] = useState({})
@@ -313,9 +517,38 @@ export default function ChannelConfiguration() {
   const testRequestIdRef = useRef(0)
   const { toast } = useToast()
   
-  // Pagination state
+  // Pagination state for Regex Configuration
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(20)
+  
+  // Pagination state for Channel Order
+  const [orderCurrentPage, setOrderCurrentPage] = useState(1)
+  const [orderItemsPerPage, setOrderItemsPerPage] = useState(20)
+  
+  // Pagination state for Group Management
+  const [groupCurrentPage, setGroupCurrentPage] = useState(1)
+  const [groupItemsPerPage, setGroupItemsPerPage] = useState(20)
+  const [groupSearchQuery, setGroupSearchQuery] = useState('')
+  
+  // Channel ordering state
+  const [orderedChannels, setOrderedChannels] = useState([])
+  const [originalChannelOrder, setOriginalChannelOrder] = useState([])
+  const [hasOrderChanges, setHasOrderChanges] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
+  const [sortBy, setSortBy] = useState('custom')
+  
+  // Group management state
+  const [groups, setGroups] = useState([])
+  const [groupSettings, setGroupSettings] = useState({})
+  const [pendingChanges, setPendingChanges] = useState({})
+  const [activeTab, setActiveTab] = useState('regex')
+  
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
 
   useEffect(() => {
     loadData()
@@ -324,15 +557,60 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, settingsResponse] = await Promise.all([
+      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
         channelsAPI.getChannels(),
         regexAPI.getPatterns(),
-        channelSettingsAPI.getAllSettings()
+        channelSettingsAPI.getAllSettings(),
+        channelsAPI.getGroups(),
+        groupSettingsAPI.getAllSettings(),
+        channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })) // Handle case where no order is saved
       ])
       
       setChannels(channelsResponse.data)
       setPatterns(patternsResponse.data.patterns || {})
       setChannelSettings(settingsResponse.data || {})
+      setGroups(groupsResponse.data || [])
+      setGroupSettings(groupSettingsResponse.data || {})
+      
+      // Initialize ordered channels
+      const channelData = channelsResponse.data || []
+      const savedOrder = orderResponse.data?.order || []
+      
+      let orderedList = []
+      
+      if (savedOrder.length > 0) {
+        // Apply saved custom order
+        // Create a map for quick lookup
+        const channelMap = new Map(channelData.map(ch => [ch.id, ch]))
+        
+        // First, add channels in the saved order
+        orderedList = savedOrder
+          .map(id => channelMap.get(id))
+          .filter(ch => ch !== undefined) // Filter out any channels that no longer exist
+        
+        // Then add any new channels that weren't in the saved order (sorted by channel number)
+        const orderedIds = new Set(orderedList.map(ch => ch.id))
+        const newChannels = channelData
+          .filter(ch => !orderedIds.has(ch.id))
+          .sort((a, b) => {
+            const numA = parseFloat(a.channel_number) || 999999
+            const numB = parseFloat(b.channel_number) || 999999
+            return numA - numB
+          })
+        
+        orderedList = [...orderedList, ...newChannels]
+      } else {
+        // No saved order, sort by channel_number
+        orderedList = [...channelData].sort((a, b) => {
+          const numA = parseFloat(a.channel_number) || 999999
+          const numB = parseFloat(b.channel_number) || 999999
+          return numA - numB
+        })
+      }
+      
+      setOrderedChannels(orderedList)
+      setOriginalChannelOrder(orderedList)
+      setHasOrderChanges(false)
     } catch (err) {
       console.error('Failed to load data:', err)
       toast({
@@ -351,6 +629,17 @@ export default function ChannelConfiguration() {
       // Reload settings to get updated values
       const settingsResponse = await channelSettingsAPI.getAllSettings()
       setChannelSettings(settingsResponse.data || {})
+    } catch (err) {
+      throw err
+    }
+  }
+
+  const handleUpdateGroupSettings = async (groupId, settings) => {
+    try {
+      await groupSettingsAPI.updateSettings(groupId, settings)
+      // Reload settings to get updated values
+      const groupSettingsResponse = await groupSettingsAPI.getAllSettings()
+      setGroupSettings(groupSettingsResponse.data || {})
     } catch (err) {
       throw err
     }
@@ -588,8 +877,28 @@ export default function ChannelConfiguration() {
     }
   }
 
-  // Filter channels based on search query
+  // Helper function to check if channel should be visible based on group settings
+  const isChannelVisibleByGroup = (channel) => {
+    // If channel has no group, it's visible
+    if (!channel.channel_group_id) return true
+    
+    // Get group settings
+    const groupSetting = groupSettings[channel.channel_group_id]
+    if (!groupSetting) return true // No settings means visible
+    
+    // Channel is hidden if both matching and checking are disabled for its group
+    const matchingDisabled = groupSetting.matching_mode === 'disabled'
+    const checkingDisabled = groupSetting.checking_mode === 'disabled'
+    
+    return !(matchingDisabled && checkingDisabled)
+  }
+
+  // Filter channels based on search query and group settings
   const filteredChannels = channels.filter(channel => {
+    // First check group visibility
+    if (!isChannelVisibleByGroup(channel)) return false
+    
+    // Then apply search filter
     if (!searchQuery.trim()) return true
     
     const query = searchQuery.toLowerCase()
@@ -602,19 +911,131 @@ export default function ChannelConfiguration() {
            channelId.includes(query)
   })
 
-  // Calculate pagination
+  // Filter ordered channels based on group settings
+  const visibleOrderedChannels = orderedChannels.filter(isChannelVisibleByGroup)
+
+  // Calculate pagination for Regex Configuration
   const totalPages = Math.ceil(filteredChannels.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
   const paginatedChannels = filteredChannels.slice(startIndex, endIndex)
+  
+  // Calculate pagination for Channel Order
+  const orderTotalPages = Math.ceil(visibleOrderedChannels.length / orderItemsPerPage)
+  const orderStartIndex = (orderCurrentPage - 1) * orderItemsPerPage
+  const orderEndIndex = orderStartIndex + orderItemsPerPage
+  const paginatedOrderedChannels = visibleOrderedChannels.slice(orderStartIndex, orderEndIndex)
+  
+  // Filter groups for Group Management search
+  const filteredGroups = groups.filter(group => {
+    if (!groupSearchQuery.trim()) return true
+    
+    const query = groupSearchQuery.toLowerCase()
+    const groupName = (group.name || '').toLowerCase()
+    const groupId = String(group.id)
+    
+    return groupName.includes(query) || groupId.includes(query)
+  })
+  
+  // Calculate pagination for Group Management
+  const groupTotalPages = Math.ceil(filteredGroups.length / groupItemsPerPage)
+  const groupStartIndex = (groupCurrentPage - 1) * groupItemsPerPage
+  const groupEndIndex = groupStartIndex + groupItemsPerPage
+  const paginatedGroups = filteredGroups.slice(groupStartIndex, groupEndIndex)
 
   // Reset to first page when search changes
   useEffect(() => {
     setCurrentPage(1)
   }, [searchQuery])
 
+  // Reset to first page when group search changes
+  useEffect(() => {
+    setGroupCurrentPage(1)
+  }, [groupSearchQuery])
+
   const clearSearch = () => {
     setSearchQuery('')
+  }
+  
+  // Channel ordering handlers
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      setOrderedChannels((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id)
+        const newIndex = items.findIndex((item) => item.id === over.id)
+        const newOrder = arrayMove(items, oldIndex, newIndex)
+        setHasOrderChanges(true)
+        return newOrder
+      })
+    }
+  }
+
+  const handleSort = (value) => {
+    setSortBy(value)
+    
+    let sorted = [...orderedChannels]
+    
+    switch (value) {
+      case 'channel_number':
+        sorted.sort((a, b) => {
+          const numA = parseFloat(a.channel_number) || 999999
+          const numB = parseFloat(b.channel_number) || 999999
+          return numA - numB
+        })
+        break
+      case 'name':
+        sorted.sort((a, b) => a.name.localeCompare(b.name))
+        break
+      case 'id':
+        sorted.sort((a, b) => a.id - b.id)
+        break
+      case 'custom':
+        // Keep current order
+        return
+    }
+    
+    setOrderedChannels(sorted)
+    setHasOrderChanges(JSON.stringify(sorted) !== JSON.stringify(originalChannelOrder))
+  }
+
+  const handleSaveOrder = async () => {
+    try {
+      setSavingOrder(true)
+      
+      // Create order array with channel IDs
+      const order = orderedChannels.map(ch => ch.id)
+      
+      await channelOrderAPI.setOrder(order)
+      
+      setOriginalChannelOrder([...orderedChannels])
+      setHasOrderChanges(false)
+      
+      toast({
+        title: "Success",
+        description: "Channel order saved successfully"
+      })
+    } catch (err) {
+      console.error('Failed to save order:', err)
+      toast({
+        title: "Error",
+        description: "Failed to save channel order",
+        variant: "destructive"
+      })
+    } finally {
+      setSavingOrder(false)
+    }
+  }
+
+  const handleResetOrder = () => {
+    setOrderedChannels([...originalChannelOrder])
+    setHasOrderChanges(false)
+    setSortBy('custom')
+    toast({
+      title: "Reset",
+      description: "Changes have been discarded"
+    })
   }
 
   const handleExportPatterns = () => {
@@ -708,195 +1129,551 @@ export default function ChannelConfiguration() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Channel Configuration</h1>
         <p className="text-muted-foreground">
-          View and manage channel regex patterns and stream assignments
+          View and manage channel regex patterns, settings, and ordering
         </p>
       </div>
 
-      {/* Search Bar and Export/Import Buttons */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search channels by name, number, or ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 pr-10"
-          />
-          {searchQuery && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
-              onClick={clearSearch}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-        {searchQuery && (
-          <Badge variant="secondary">
-            {filteredChannels.length} of {channels.length} channels
-          </Badge>
-        )}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
+          <TabsTrigger value="groups">Group Management</TabsTrigger>
+          <TabsTrigger value="ordering">Channel Order</TabsTrigger>
+        </TabsList>
         
-        {/* Export/Import Buttons */}
-        <div className="flex items-center gap-2 ml-auto">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportPatterns}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export Regex
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => document.getElementById('import-file-input').click()}
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            Import Regex
-          </Button>
-          <input
-            id="import-file-input"
-            type="file"
-            accept=".json"
-            onChange={handleImportPatterns}
-            style={{ display: 'none' }}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        {/* Pagination info and controls at top */}
-        {filteredChannels.length > 0 && (
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-muted-foreground">
-              Showing {startIndex + 1}-{Math.min(endIndex, filteredChannels.length)} of {filteredChannels.length} channels
+        <TabsContent value="regex" className="space-y-6">
+          {/* Search Bar and Export/Import Buttons */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search channels by name, number, or ID..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-10"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                  onClick={clearSearch}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <Label htmlFor="items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
-              <Select
-                value={itemsPerPage.toString()}
-                onValueChange={(value) => {
-                  setItemsPerPage(Number(value))
-                  setCurrentPage(1)
-                }}
+            {searchQuery && (
+              <Badge variant="secondary">
+                {filteredChannels.length} of {channels.length} channels
+              </Badge>
+            )}
+            
+            {/* Export/Import Buttons */}
+            <div className="flex items-center gap-2 ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportPatterns}
               >
-                <SelectTrigger className="h-9 w-[100px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="20">20</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                </SelectContent>
-              </Select>
+                <Download className="h-4 w-4 mr-2" />
+                Export Regex
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => document.getElementById('import-file-input').click()}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import Regex
+              </Button>
+              <input
+                id="import-file-input"
+                type="file"
+                accept=".json"
+                onChange={handleImportPatterns}
+                style={{ display: 'none' }}
+              />
             </div>
           </div>
-        )}
 
-        {filteredChannels.length === 0 ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">
-                {searchQuery ? `No channels found matching "${searchQuery}"` : 'No channels available'}
-              </p>
-              {searchQuery && (
+          <div className="space-y-4">
+            {/* Pagination info and controls at top */}
+            {filteredChannels.length > 0 && (
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-muted-foreground">
+                  Showing {startIndex + 1}-{Math.min(endIndex, filteredChannels.length)} of {filteredChannels.length} channels
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
+                  <Select
+                    value={itemsPerPage.toString()}
+                    onValueChange={(value) => {
+                      setItemsPerPage(Number(value))
+                      setCurrentPage(1)
+                    }}
+                  >
+                    <SelectTrigger className="h-9 w-[100px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {filteredChannels.length === 0 ? (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <p className="text-muted-foreground">
+                    {searchQuery ? `No channels found matching "${searchQuery}"` : 'No channels available'}
+                  </p>
+                  {searchQuery && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={clearSearch}
+                    >
+                      Clear search
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              paginatedChannels.map(channel => (
+                <ChannelCard
+                  key={channel.id}
+                  channel={channel}
+                  patterns={patterns}
+                  channelSettings={channelSettings[channel.id]}
+                  onEditRegex={handleEditRegex}
+                  onDeletePattern={handleDeletePattern}
+                  onCheckChannel={handleCheckChannel}
+                  onUpdateSettings={handleUpdateSettings}
+                  loading={checkingChannel === channel.id}
+                />
+              ))
+            )}
+
+            {/* Pagination controls at bottom */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-4">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="mt-4"
-                  onClick={clearSearch}
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
                 >
-                  Clear search
+                  First
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  Previous
+                </Button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    // Show pages around current page
+                    let pageNum
+                    if (totalPages <= 5) {
+                      pageNum = i + 1
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i
+                    } else {
+                      pageNum = currentPage - 2 + i
+                    }
+                    
+                    return (
+                      <Button
+                        key={pageNum}
+                        variant={currentPage === pageNum ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setCurrentPage(pageNum)}
+                        className="w-9"
+                      >
+                        {pageNum}
+                      </Button>
+                    )
+                  })}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                >
+                  Last
+                </Button>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="groups" className="space-y-6">
+          {/* Search Bar for Groups */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search groups by name or ID..."
+                value={groupSearchQuery}
+                onChange={(e) => setGroupSearchQuery(e.target.value)}
+                className="pl-10 pr-10"
+              />
+              {groupSearchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                  onClick={() => setGroupSearchQuery('')}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+            {groupSearchQuery && (
+              <Badge variant="secondary">
+                {filteredGroups.length} of {groups.length} groups
+              </Badge>
+            )}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Channel Group Settings</CardTitle>
+              <CardDescription>
+                Manage stream matching and checking settings for entire channel groups. 
+                When both settings are disabled for a group, its channels will not appear in Regex Configuration or Channel Ordering.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Pagination info and controls at top */}
+              {filteredGroups.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {groupStartIndex + 1}-{Math.min(groupEndIndex, filteredGroups.length)} of {filteredGroups.length} groups
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="group-items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
+                    <Select
+                      value={groupItemsPerPage.toString()}
+                      onValueChange={(value) => {
+                        setGroupItemsPerPage(Number(value))
+                        setGroupCurrentPage(1)
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-[100px]" id="group-items-per-page">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {filteredGroups.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {groupSearchQuery ? `No groups found matching "${groupSearchQuery}"` : 'No channel groups available'}
+                  {groupSearchQuery && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => setGroupSearchQuery('')}
+                    >
+                      Clear search
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-4">
+                    {paginatedGroups.map(group => (
+                      <GroupCard
+                        key={group.id}
+                        group={group}
+                        channels={channels}
+                        groupSettings={groupSettings[group.id]}
+                        onUpdateSettings={handleUpdateGroupSettings}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Pagination controls at bottom */}
+                  {groupTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2 pt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(1)}
+                        disabled={groupCurrentPage === 1}
+                      >
+                        First
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(groupCurrentPage - 1)}
+                        disabled={groupCurrentPage === 1}
+                      >
+                        Previous
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, groupTotalPages) }, (_, i) => {
+                          let pageNum
+                          if (groupTotalPages <= 5) {
+                            pageNum = i + 1
+                          } else if (groupCurrentPage <= 3) {
+                            pageNum = i + 1
+                          } else if (groupCurrentPage >= groupTotalPages - 2) {
+                            pageNum = groupTotalPages - 4 + i
+                          } else {
+                            pageNum = groupCurrentPage - 2 + i
+                          }
+                          
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={groupCurrentPage === pageNum ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setGroupCurrentPage(pageNum)}
+                              className="w-9"
+                            >
+                              {pageNum}
+                            </Button>
+                          )
+                        })}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(groupCurrentPage + 1)}
+                        disabled={groupCurrentPage === groupTotalPages}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(groupTotalPages)}
+                        disabled={groupCurrentPage === groupTotalPages}
+                      >
+                        Last
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
-        ) : (
-          paginatedChannels.map(channel => (
-            <ChannelCard
-              key={channel.id}
-              channel={channel}
-              patterns={patterns}
-              channelSettings={channelSettings[channel.id]}
-              onEditRegex={handleEditRegex}
-              onDeletePattern={handleDeletePattern}
-              onCheckChannel={handleCheckChannel}
-              onUpdateSettings={handleUpdateSettings}
-              loading={checkingChannel === channel.id}
-            />
-          ))
-        )}
-
-        {/* Pagination controls at bottom */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 pt-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(1)}
-              disabled={currentPage === 1}
-            >
-              First
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(currentPage - 1)}
-              disabled={currentPage === 1}
-            >
-              Previous
-            </Button>
-            <div className="flex items-center gap-1">
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                // Show pages around current page
-                let pageNum
-                if (totalPages <= 5) {
-                  pageNum = i + 1
-                } else if (currentPage <= 3) {
-                  pageNum = i + 1
-                } else if (currentPage >= totalPages - 2) {
-                  pageNum = totalPages - 4 + i
-                } else {
-                  pageNum = currentPage - 2 + i
-                }
-                
-                return (
-                  <Button
-                    key={pageNum}
-                    variant={currentPage === pageNum ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setCurrentPage(pageNum)}
-                    className="w-9"
-                  >
-                    {pageNum}
+        </TabsContent>
+        
+        <TabsContent value="ordering" className="space-y-6">
+          {hasOrderChanges && (
+            <Alert>
+              <AlertDescription className="flex items-center justify-between">
+                <span>You have unsaved changes</span>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={handleResetOrder}>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset
                   </Button>
-                )
-              })}
+                  <Button size="sm" onClick={handleSaveOrder} disabled={savingOrder}>
+                    {savingOrder && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Channel List</CardTitle>
+                  <CardDescription>
+                    {visibleOrderedChannels.length} visible channels ({orderedChannels.length} total) - Drag and drop within the current page to reorder
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
+                  <Select value={sortBy} onValueChange={handleSort}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="Sort by..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="custom">Custom Order</SelectItem>
+                      <SelectItem value="channel_number">Channel Number</SelectItem>
+                      <SelectItem value="name">Name (A-Z)</SelectItem>
+                      <SelectItem value="id">ID</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Pagination info and controls at top */}
+              {visibleOrderedChannels.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {orderStartIndex + 1}-{Math.min(orderEndIndex, visibleOrderedChannels.length)} of {visibleOrderedChannels.length} channels
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="order-items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
+                    <Select
+                      value={orderItemsPerPage.toString()}
+                      onValueChange={(value) => {
+                        setOrderItemsPerPage(Number(value))
+                        setOrderCurrentPage(1)
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-[100px]" id="order-items-per-page">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {visibleOrderedChannels.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No channels available
+                </div>
+              ) : (
+                <>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={paginatedOrderedChannels.map(ch => ch.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-2">
+                        {paginatedOrderedChannels.map((channel) => (
+                          <SortableChannelItem key={channel.id} channel={channel} />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+
+                  {/* Pagination controls at bottom */}
+                  {orderTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2 pt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(1)}
+                        disabled={orderCurrentPage === 1}
+                      >
+                        First
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(orderCurrentPage - 1)}
+                        disabled={orderCurrentPage === 1}
+                      >
+                        Previous
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, orderTotalPages) }, (_, i) => {
+                          let pageNum
+                          if (orderTotalPages <= 5) {
+                            pageNum = i + 1
+                          } else if (orderCurrentPage <= 3) {
+                            pageNum = i + 1
+                          } else if (orderCurrentPage >= orderTotalPages - 2) {
+                            pageNum = orderTotalPages - 4 + i
+                          } else {
+                            pageNum = orderCurrentPage - 2 + i
+                          }
+                          
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={orderCurrentPage === pageNum ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setOrderCurrentPage(pageNum)}
+                              className="w-9"
+                            >
+                              {pageNum}
+                            </Button>
+                          )
+                        })}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(orderCurrentPage + 1)}
+                        disabled={orderCurrentPage === orderTotalPages}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(orderTotalPages)}
+                        disabled={orderCurrentPage === orderTotalPages}
+                      >
+                        Last
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {hasOrderChanges && (
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={handleResetOrder}>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Reset Changes
+              </Button>
+              <Button onClick={handleSaveOrder} disabled={savingOrder} size="lg">
+                {savingOrder && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Save className="h-4 w-4 mr-2" />
+                Save Order
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(currentPage + 1)}
-              disabled={currentPage === totalPages}
-            >
-              Next
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-            >
-              Last
-            </Button>
-          </div>
-        )}
-      </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Regex Pattern Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

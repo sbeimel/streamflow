@@ -1,6 +1,31 @@
 # Features
 
+## Configuration Management
+
+### Dispatcharr Connection Settings
+- **Centralized Configuration**: Configure Dispatcharr connection in the Automation Settings page
+- **Connection Testing**: Test connection to Dispatcharr with instant feedback
+- **Secure Credentials**: Password storage with masking
+- **Wizard Integration**: Configuration available in both Setup Wizard and Settings
+
+### M3U Account Auto-Discovery
+- **Automatic Detection**: New M3U accounts added in Dispatcharr are automatically discovered during playlist updates
+- **Seamless Integration**: No manual configuration needed for new accounts
+- **Real-time Updates**: Account list refreshed after every playlist refresh
+- **UDI Integration**: Uses Universal Data Index (UDI) for efficient caching
+
 ## Stream Management
+
+### Channel Ordering Interface
+- **Drag-and-Drop Reordering**: Intuitive drag-and-drop interface for channel organization
+- **Multiple Sorting Options**:
+  - Sort by channel number (ascending)
+  - Sort by name (alphabetical)
+  - Sort by ID
+  - Custom manual order
+- **Visual Feedback**: Real-time updates with unsaved changes indicator
+- **Bulk Operations**: Save all changes at once
+- **Reset Option**: Discard changes and revert to last saved order
 
 ### Pipeline-Based Automation
 StreamFlow offers 5 pipeline modes to match different usage scenarios:
@@ -172,7 +197,7 @@ Automatically create scheduled events based on program name patterns:
 
 - **Rule Configuration**:
   - Rule name for easy identification
-  - Channel selection with search
+  - Channel selection with search (supports multiple channels)
   - Regex pattern to match program names
   - Minutes before setting (when to run check)
 
@@ -180,6 +205,23 @@ Automatically create scheduled events based on program name patterns:
   - Test patterns against real EPG data
   - See matching programs before creating rule
   - Case-insensitive matching for flexibility
+
+- **Import/Export Rules**:
+  - **Export**: Download all rules as JSON file for backup or transfer
+    - Click "Export" button to download rules
+    - Rules are exported with essential fields only (name, channels, pattern, timing)
+    - Compatible with import format
+  - **Import**: Load rules from JSON file
+    - **Main Import**: Use "Import" button next to "Export" to bulk import rules
+    - **Wizard Import**: Use "Import JSON" button in the rule creation dialog to load a single rule into the form
+    - Validates all rules before import
+    - Shows detailed import results (imported/failed counts)
+    - Skips invalid rules and reports errors
+  - **Use Cases**:
+    - Backup rules before making changes
+    - Transfer rules between environments
+    - Share rule configurations with other users
+    - Quick setup with pre-configured rule sets
 
 - **Automatic Event Creation**:
   - **Automatic EPG Refresh**: Background processor fetches EPG data periodically
@@ -203,8 +245,10 @@ Automatically create scheduled events based on program name patterns:
 
 - **Rule Management**:
   - View all active rules
+  - Edit existing rules
   - Delete rules when no longer needed
-  - Rules table shows channel, pattern, and timing
+  - Rules table shows channel(s), pattern, and timing
+  - Multi-channel support for rules that apply across channels
 
 **Use Cases**:
 - Breaking news alerts: `^Breaking News|^Special Report`
@@ -221,6 +265,10 @@ Automatically create scheduled events based on program name patterns:
 6. No manual intervention required - fully automatic!
 
 ### Channel Configuration
+- **Three Main Tabs**: Comprehensive channel management interface
+  - **Regex Configuration**: Pattern-based stream matching for individual channels
+  - **Group Management**: Bulk settings for entire channel groups
+  - **Channel Order**: Drag-and-drop channel organization
 - **Horizontal Channel Cards**: Modern card-based layout with expandable sections
   - Channel logo display (wider than taller for better visibility)
   - Channel name and metadata
@@ -230,6 +278,13 @@ Automatically create scheduled events based on program name patterns:
     - Most common resolution
     - Average bitrate (Kbps)
   - Quick actions: Edit Regex, **Check Channel**
+- **Group Management Features**: Control settings for entire channel groups at once
+  - **Stream Matching Toggle**: Enable/disable stream matching for all channels in a group
+  - **Stream Checking Toggle**: Enable/disable quality checking for all channels in a group
+  - **Visibility Control**: Channels from groups with both settings disabled are hidden from other tabs
+  - **Channel Count Display**: See how many channels are in each group
+  - **Bulk Operations**: Efficiently manage large numbers of channels
+  - **Persistent Settings**: Group settings stored to disk and survive restarts
 - **Per-Channel Settings**: Fine-grained control over each channel's behavior
   - **Matching Mode**: Control whether the channel participates in stream matching
     - `enabled` (default): Channel included in automatic stream discovery and assignment
