@@ -1385,8 +1385,12 @@ def update_dispatcharr_config_endpoint():
                 udi.initialize(force_refresh=True)
                 logger.info("UDI Manager initialized successfully with new credentials")
             except Exception as e:
-                logger.warning(f"Failed to initialize UDI Manager after config update: {e}")
+                logger.warning(
+                    f"Failed to initialize UDI Manager after config update: {e}. "
+                    f"Data may not be available until manual refresh or application restart."
+                )
                 # Don't fail the config update if UDI initialization fails
+                # The UI will poll and detect if data is not loaded
         
         return jsonify({"message": "Dispatcharr configuration updated successfully"})
     except Exception as e:
