@@ -557,12 +557,13 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse] = await Promise.all([
+      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
         channelsAPI.getChannels(),
         regexAPI.getPatterns(),
         channelSettingsAPI.getAllSettings(),
         channelsAPI.getGroups(),
-        groupSettingsAPI.getAllSettings()
+        groupSettingsAPI.getAllSettings(),
+        channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })) // Handle case where no order is saved
       ])
       
       setChannels(channelsResponse.data)
@@ -573,13 +574,42 @@ export default function ChannelConfiguration() {
       
       // Initialize ordered channels
       const channelData = channelsResponse.data || []
-      const sorted = [...channelData].sort((a, b) => {
-        const numA = parseFloat(a.channel_number) || 999999
-        const numB = parseFloat(b.channel_number) || 999999
-        return numA - numB
-      })
-      setOrderedChannels(sorted)
-      setOriginalChannelOrder(sorted)
+      const savedOrder = orderResponse.data?.order || []
+      
+      let orderedList = []
+      
+      if (savedOrder.length > 0) {
+        // Apply saved custom order
+        // Create a map for quick lookup
+        const channelMap = new Map(channelData.map(ch => [ch.id, ch]))
+        
+        // First, add channels in the saved order
+        orderedList = savedOrder
+          .map(id => channelMap.get(id))
+          .filter(ch => ch !== undefined) // Filter out any channels that no longer exist
+        
+        // Then add any new channels that weren't in the saved order (sorted by channel number)
+        const orderedIds = new Set(orderedList.map(ch => ch.id))
+        const newChannels = channelData
+          .filter(ch => !orderedIds.has(ch.id))
+          .sort((a, b) => {
+            const numA = parseFloat(a.channel_number) || 999999
+            const numB = parseFloat(b.channel_number) || 999999
+            return numA - numB
+          })
+        
+        orderedList = [...orderedList, ...newChannels]
+      } else {
+        // No saved order, sort by channel_number
+        orderedList = [...channelData].sort((a, b) => {
+          const numA = parseFloat(a.channel_number) || 999999
+          const numB = parseFloat(b.channel_number) || 999999
+          return numA - numB
+        })
+      }
+      
+      setOrderedChannels(orderedList)
+      setOriginalChannelOrder(orderedList)
       setHasOrderChanges(false)
     } catch (err) {
       console.error('Failed to load data:', err)
