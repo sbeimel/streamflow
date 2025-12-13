@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { schedulingAPI, channelsAPI } from '@/services/api.js'
-import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings, ChevronsUpDown, Check, Edit } from 'lucide-react'
+import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings, ChevronsUpDown, Check, Edit, Download, Upload, FileJson } from 'lucide-react'
 import { cn } from '@/lib/utils.js'
 
 export default function Scheduling() {
@@ -49,6 +49,10 @@ export default function Scheduling() {
   const [deleteRuleDialogOpen, setDeleteRuleDialogOpen] = useState(false)
   const [ruleToDelete, setRuleToDelete] = useState(null)
   const [editingRuleId, setEditingRuleId] = useState(null)
+  
+  // File input refs for import
+  const fileInputRef = useRef(null)
+  const wizardFileInputRef = useRef(null)
   
   const { toast } = useToast()
 
@@ -413,6 +417,146 @@ export default function Scheduling() {
         description: "Failed to update configuration",
         variant: "destructive"
       })
+    }
+  }
+  
+  const handleExportRules = async () => {
+    try {
+      const response = await schedulingAPI.exportAutoCreateRules()
+      const rulesData = response.data
+      
+      // Create a blob and download
+      const blob = new Blob([JSON.stringify(rulesData, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `auto-create-rules-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      toast({
+        title: "Success",
+        description: `Exported ${rulesData.length} rule(s)`
+      })
+    } catch (err) {
+      console.error('Failed to export rules:', err)
+      toast({
+        title: "Error",
+        description: "Failed to export auto-create rules",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleImportRules = async (event, fromWizard = false) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    
+    try {
+      const text = await file.text()
+      const rulesData = JSON.parse(text)
+      
+      if (!Array.isArray(rulesData)) {
+        toast({
+          title: "Error",
+          description: "Invalid file format. Expected a JSON array of rules.",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      const response = await schedulingAPI.importAutoCreateRules(rulesData)
+      const result = response.data
+      
+      if (result.imported > 0) {
+        toast({
+          title: "Success",
+          description: `Imported ${result.imported} rule(s). ${result.failed > 0 ? `${result.failed} failed.` : ''}`
+        })
+        await loadData()
+      } else {
+        toast({
+          title: "Import Failed",
+          description: result.errors?.[0] || "No rules were imported",
+          variant: "destructive"
+        })
+      }
+    } catch (err) {
+      console.error('Failed to import rules:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to import rules. Please check the file format.",
+        variant: "destructive"
+      })
+    } finally {
+      // Reset file input
+      if (event.target) {
+        event.target.value = ''
+      }
+    }
+  }
+  
+  const handleImportIntoWizard = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    
+    try {
+      const text = await file.text()
+      const rulesData = JSON.parse(text)
+      
+      // If it's a single rule object, wrap it in an array
+      const rules = Array.isArray(rulesData) ? rulesData : [rulesData]
+      
+      if (rules.length === 0) {
+        toast({
+          title: "Error",
+          description: "No rules found in the file",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      // Import the first rule into the wizard form
+      const rule = rules[0]
+      
+      // Populate form fields
+      setRuleName(rule.name || '')
+      setRuleRegexPattern(rule.regex_pattern || '')
+      setRuleMinutesBefore(rule.minutes_before || 5)
+      
+      // Handle channel selection
+      const channelIds = rule.channel_ids || (rule.channel_id ? [rule.channel_id] : [])
+      const selectedChannels = channelIds
+        .map(id => channels.find(c => c.id === id))
+        .filter(Boolean)
+      
+      setRuleSelectedChannels(selectedChannels)
+      
+      if (rules.length > 1) {
+        toast({
+          title: "Info",
+          description: `Loaded first rule from file. File contains ${rules.length} rules total. Import all rules using the main Import button.`
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: "Rule loaded into form"
+        })
+      }
+    } catch (err) {
+      console.error('Failed to load rule:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load rule. Please check the file format.",
+        variant: "destructive"
+      })
+    } finally {
+      // Reset file input
+      if (event.target) {
+        event.target.value = ''
+      }
     }
   }
 
@@ -954,7 +1098,37 @@ export default function Scheduling() {
                 Automatically create scheduled events based on regex patterns matching EPG program names
               </CardDescription>
             </div>
-            <Dialog open={ruleDialogOpen} onOpenChange={(open) => {
+            <div className="flex gap-2">
+              {/* Export Button */}
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={handleExportRules}
+                disabled={autoCreateRules.length === 0}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Export
+              </Button>
+              
+              {/* Import Button */}
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImportRules}
+                style={{ display: 'none' }}
+              />
+              
+              {/* Add Rule Dialog */}
+              <Dialog open={ruleDialogOpen} onOpenChange={(open) => {
               setRuleDialogOpen(open)
               if (!open) {
                 // Clear form when dialog closes
@@ -982,7 +1156,28 @@ export default function Scheduling() {
               </DialogTrigger>
               <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>{editingRuleId ? 'Edit Auto-Create Rule' : 'Create Auto-Create Rule'}</DialogTitle>
+                  <DialogTitle>
+                    <div className="flex items-center justify-between">
+                      <span>{editingRuleId ? 'Edit Auto-Create Rule' : 'Create Auto-Create Rule'}</span>
+                      {!editingRuleId && (
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => wizardFileInputRef.current?.click()}
+                        >
+                          <FileJson className="h-4 w-4 mr-2" />
+                          Import JSON
+                        </Button>
+                      )}
+                      <input
+                        ref={wizardFileInputRef}
+                        type="file"
+                        accept=".json"
+                        onChange={handleImportIntoWizard}
+                        style={{ display: 'none' }}
+                      />
+                    </div>
+                  </DialogTitle>
                   <DialogDescription>
                     Define a regex pattern to automatically create scheduled checks for matching programs
                   </DialogDescription>

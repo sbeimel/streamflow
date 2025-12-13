@@ -1113,6 +1113,78 @@ class SchedulingService:
             logger.info(f"Auto-create matching complete: {result}")
         
         return result
+    
+    def export_auto_create_rules(self) -> List[Dict[str, Any]]:
+        """Export auto-create rules for backup/transfer.
+        
+        Returns:
+            List of rules with only essential fields for import
+        """
+        exported_rules = []
+        for rule in self._auto_create_rules:
+            # Export only the essential fields needed for import
+            exported_rule = {
+                'name': rule.get('name'),
+                'channel_ids': rule.get('channel_ids', []),
+                'regex_pattern': rule.get('regex_pattern'),
+                'minutes_before': rule.get('minutes_before', 5)
+            }
+            # For backward compatibility, also include channel_id if there's only one channel
+            if len(exported_rule['channel_ids']) == 1:
+                exported_rule['channel_id'] = exported_rule['channel_ids'][0]
+            
+            exported_rules.append(exported_rule)
+        
+        logger.info(f"Exported {len(exported_rules)} auto-create rules")
+        return exported_rules
+    
+    def import_auto_create_rules(self, rules_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Import auto-create rules from JSON data.
+        
+        Args:
+            rules_data: List of rule dictionaries to import
+            
+        Returns:
+            Dictionary with import results
+        """
+        if not isinstance(rules_data, list):
+            raise ValueError("Rules data must be a list")
+        
+        imported_count = 0
+        failed_count = 0
+        errors = []
+        
+        for idx, rule_data in enumerate(rules_data):
+            try:
+                # Validate required fields
+                required_fields = ['name', 'regex_pattern']
+                for field in required_fields:
+                    if field not in rule_data:
+                        raise ValueError(f"Missing required field: {field}")
+                
+                # Check that either channel_id or channel_ids is provided
+                if 'channel_id' not in rule_data and 'channel_ids' not in rule_data:
+                    raise ValueError("Missing required field: channel_id or channel_ids")
+                
+                # Create the rule (this will validate channels and pattern)
+                self.create_auto_create_rule(rule_data)
+                imported_count += 1
+                
+            except Exception as e:
+                failed_count += 1
+                error_msg = f"Rule {idx + 1} ('{rule_data.get('name', 'unknown')}'): {str(e)}"
+                errors.append(error_msg)
+                logger.warning(f"Failed to import rule: {error_msg}")
+        
+        result = {
+            'imported': imported_count,
+            'failed': failed_count,
+            'total': len(rules_data),
+            'errors': errors
+        }
+        
+        logger.info(f"Import complete: {imported_count} imported, {failed_count} failed out of {len(rules_data)} rules")
+        return result
 
 
 # Global singleton instance

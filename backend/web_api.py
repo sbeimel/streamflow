@@ -2018,6 +2018,70 @@ def test_auto_create_rule():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/scheduling/auto-create-rules/export', methods=['GET'])
+@log_function_call
+def export_auto_create_rules():
+    """Export all auto-create rules as JSON.
+    
+    Returns:
+        JSON array of auto-create rules
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rules = service.export_auto_create_rules()
+        return jsonify(rules), 200
+    except Exception as e:
+        logger.error(f"Error exporting auto-create rules: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules/import', methods=['POST'])
+@log_function_call
+def import_auto_create_rules():
+    """Import auto-create rules from JSON.
+    
+    Expected JSON body:
+    [
+        {
+            "name": "Rule Name",
+            "channel_ids": [123, 456],
+            "regex_pattern": "^Breaking News",
+            "minutes_before": 5
+        },
+        ...
+    ]
+    
+    Returns:
+        JSON with import results
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rules_data = request.get_json()
+        
+        if not rules_data:
+            return jsonify({"error": "No rules data provided"}), 400
+        
+        if not isinstance(rules_data, list):
+            return jsonify({"error": "Rules data must be an array"}), 400
+        
+        result = service.import_auto_create_rules(rules_data)
+        
+        # Wake up the processor to check for new events immediately
+        global scheduled_event_processor_wake
+        if scheduled_event_processor_wake:
+            scheduled_event_processor_wake.set()
+        
+        return jsonify(result), 200 if result['imported'] > 0 else 400
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error importing auto-create rules: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/scheduling/process-due-events', methods=['POST'])
 @log_function_call
 def process_due_scheduled_events():
