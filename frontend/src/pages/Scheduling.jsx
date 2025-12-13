@@ -1129,31 +1129,31 @@ export default function Scheduling() {
               
               {/* Add Rule Dialog */}
               <Dialog open={ruleDialogOpen} onOpenChange={(open) => {
-              setRuleDialogOpen(open)
-              if (!open) {
-                // Clear form when dialog closes
-                setEditingRuleId(null)
-                setRuleName('')
-                setRuleSelectedChannels([])
-                setRuleRegexPattern('')
-                setRuleMinutesBefore(5)
-                setRegexMatches([])
-              }
-            }}>
-              <DialogTrigger asChild>
-                <Button size="sm" onClick={() => {
-                  // Clear editing state when opening to create new rule
+                setRuleDialogOpen(open)
+                if (!open) {
+                  // Clear form when dialog closes
                   setEditingRuleId(null)
                   setRuleName('')
                   setRuleSelectedChannels([])
                   setRuleRegexPattern('')
                   setRuleMinutesBefore(5)
                   setRegexMatches([])
-                }}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Rule
-                </Button>
-              </DialogTrigger>
+                }
+              }}>
+                <DialogTrigger asChild>
+                  <Button size="sm" onClick={() => {
+                    // Clear editing state when opening to create new rule
+                    setEditingRuleId(null)
+                    setRuleName('')
+                    setRuleSelectedChannels([])
+                    setRuleRegexPattern('')
+                    setRuleMinutesBefore(5)
+                    setRegexMatches([])
+                  }}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Rule
+                  </Button>
+                </DialogTrigger>
               <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>
@@ -1169,19 +1169,19 @@ export default function Scheduling() {
                           Import JSON
                         </Button>
                       )}
-                      <input
-                        ref={wizardFileInputRef}
-                        type="file"
-                        accept=".json"
-                        onChange={handleImportIntoWizard}
-                        style={{ display: 'none' }}
-                      />
                     </div>
                   </DialogTitle>
                   <DialogDescription>
                     Define a regex pattern to automatically create scheduled checks for matching programs
                   </DialogDescription>
                 </DialogHeader>
+                <input
+                  ref={wizardFileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportIntoWizard}
+                  style={{ display: 'none' }}
+                />
                 
                 <div className="space-y-4 py-4">
                   {/* Rule Name */}
@@ -1359,6 +1359,7 @@ export default function Scheduling() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
