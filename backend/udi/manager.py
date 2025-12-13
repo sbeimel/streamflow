@@ -34,6 +34,9 @@ from udi.cache import UDICache
 
 from logging_config import setup_logging
 
+# Import at module level for better performance
+from dispatcharr_config import get_dispatcharr_config
+
 logger = setup_logging(__name__)
 
 
@@ -660,9 +663,17 @@ class UDIManager:
     def _ensure_initialized(self) -> None:
         """Ensure UDI Manager is initialized before data access.
         
-        This will auto-initialize if not already done.
+        This will auto-initialize if not already done, but only if
+        Dispatcharr credentials are configured.
         """
         if not self._initialized:
+            # Check if Dispatcharr is configured before auto-initializing
+            config = get_dispatcharr_config()
+            
+            if not config.is_configured():
+                logger.warning("UDI Manager not initialized and Dispatcharr credentials not configured. Skipping auto-initialization.")
+                return
+            
             logger.info("UDI Manager not initialized, auto-initializing...")
             self.initialize()
 
