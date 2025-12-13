@@ -249,20 +249,39 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       
       toast({
         title: "Success",
-        description: "Dispatcharr configuration saved and data is being loaded..."
+        description: "Dispatcharr configuration saved. Loading channel data..."
       })
       
-      // Wait a moment for backend initialization, then refresh status
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      await refreshSetupStatus()
+      // Poll status until channels are loaded (max 10 seconds)
+      let attempts = 0
+      const maxAttempts = 10
+      let dataLoaded = false
       
-      // Mark UDI as initialized
-      setUdiInitialized(true)
+      while (attempts < maxAttempts && !dataLoaded) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        const response = await setupAPI.getStatus()
+        setSetupStatus(response.data)
+        determineActiveStep(response.data)
+        
+        if (response.data.has_channels && response.data.dispatcharr_connection) {
+          dataLoaded = true
+          setUdiInitialized(true)
+          toast({
+            title: "Data Loaded",
+            description: "Channel data loaded successfully from Dispatcharr"
+          })
+        }
+        
+        attempts++
+      }
       
-      toast({
-        title: "Data Loaded",
-        description: "Channel data loaded successfully from Dispatcharr"
-      })
+      if (!dataLoaded) {
+        toast({
+          title: "Warning",
+          description: "Configuration saved but channel data may still be loading. Please refresh if needed.",
+          variant: "default"
+        })
+      }
       
     } catch (err) {
       toast({
