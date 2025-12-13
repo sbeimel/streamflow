@@ -96,7 +96,7 @@ Modified playlist update logic to refresh M3U accounts list after each update:
 
 ### Dependencies Added
 - `@dnd-kit/core`: ^6.3.1 - Core drag-and-drop functionality
-- `@dnd-kit/sortable`: ^8.0.0 - Sortable lists
+- `@dnd-kit/sortable`: ^10.0.0 - Sortable lists
 - `@dnd-kit/utilities`: ^3.2.2 - Utility functions
 
 All dependencies checked for security vulnerabilities - none found.
