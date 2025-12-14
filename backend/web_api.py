@@ -1087,7 +1087,7 @@ def update_group_settings_endpoint(group_id):
         
         matching_mode = data.get('matching_mode')
         checking_mode = data.get('checking_mode')
-        cascade_to_channels = data.get('cascade_to_channels', True)  # Default to True
+        cascade_to_channels = data.get('cascade_to_channels', False)  # Default to False to preserve individual channel settings
         
         # Validate modes if provided
         valid_modes = ['enabled', 'disabled']
