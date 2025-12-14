@@ -1474,6 +1474,9 @@ class StreamCheckerService:
         logger.info(f"Checking channel {channel_id} (parallel mode)")
         logger.info(f"=" * 80)
         
+        # Get dead stream removal configuration early (used later in finally block)
+        dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
+        
         try:
             # Get channel information from UDI
             logger.debug(f"Updating progress for channel {channel_id} initialization")
@@ -1742,7 +1745,6 @@ class StreamCheckerService:
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
-            dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
             if dead_stream_ids:
                 if dead_stream_removal_enabled:
                     logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
@@ -1924,6 +1926,9 @@ class StreamCheckerService:
         logger.info(f"=" * 80)
         logger.info(f"Checking channel {channel_id} (sequential mode)")
         logger.info(f"=" * 80)
+        
+        # Get dead stream removal configuration early (used later in finally block)
+        dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
         
         try:
             # Get channel information from UDI
@@ -2182,7 +2187,6 @@ class StreamCheckerService:
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
-            dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
             if dead_stream_ids:
                 if dead_stream_removal_enabled:
                     logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
