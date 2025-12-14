@@ -1739,12 +1739,16 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel
+            # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
+            dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
             if dead_stream_ids:
-                logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
-                analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                if dead_stream_removal_enabled:
+                    logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                    analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                else:
+                    logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -1848,7 +1852,11 @@ class StreamCheckerService:
             # This prevents dead stream IDs from being saved in checked_stream_ids
             # which would cause them to be skipped by 2-hour immunity even after revival
             # Note: Using list comprehension instead of set operations to preserve order
-            final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            # Only exclude dead streams if removal is enabled
+            if dead_stream_removal_enabled:
+                final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            else:
+                final_stream_ids = current_stream_ids  # Keep all streams if removal is disabled
             self.update_tracker.mark_channel_checked(
                 channel_id, 
                 stream_count=len(streams),
@@ -2171,17 +2179,21 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel
+            # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
+            dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
             if dead_stream_ids:
-                logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
-                # Log which streams are being removed
-                for stream_id in dead_stream_ids:
-                    dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
-                    if dead_stream:
-                        logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
-                analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                if dead_stream_removal_enabled:
+                    logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                    # Log which streams are being removed
+                    for stream_id in dead_stream_ids:
+                        dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
+                        if dead_stream:
+                            logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
+                    analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                else:
+                    logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -2304,7 +2316,11 @@ class StreamCheckerService:
             # This prevents dead stream IDs from being saved in checked_stream_ids
             # which would cause them to be skipped by 2-hour immunity even after revival
             # Note: Using list comprehension instead of set operations to preserve order
-            final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            # Only exclude dead streams if removal is enabled
+            if dead_stream_removal_enabled:
+                final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            else:
+                final_stream_ids = current_stream_ids  # Keep all streams if removal is disabled
             self.update_tracker.mark_channel_checked(
                 channel_id, 
                 stream_count=len(streams),
