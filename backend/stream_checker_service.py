@@ -394,13 +394,37 @@ class ChannelUpdateTracker:
                     if max_channels and len(channels) >= max_channels:
                         break
             
-            # Filter channels by checking_mode setting
+            # Filter channels by checking_mode setting (both channel-level and group-level)
+            # Need to get full channel data to access channel_group_id
             channel_settings = get_channel_settings_manager()
-            filtered_channels = [cid for cid in channels if channel_settings.is_checking_enabled(cid)]
+            udi = get_udi_manager()
+            
+            filtered_channels = []
+            for cid in channels:
+                # Get channel data to access group_id
+                channel_data = None
+                for ch in udi.get_channels():
+                    if ch.get('id') == cid:
+                        channel_data = ch
+                        break
+                
+                if channel_data:
+                    channel_group_id = channel_data.get('channel_group_id')
+                    channel_enabled = channel_settings.is_checking_enabled(cid)
+                    group_enabled = channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking')
+                    
+                    # Channel must be enabled at both levels
+                    if channel_enabled and group_enabled:
+                        filtered_channels.append(cid)
+                else:
+                    # If we can't find channel data, include it by default for safety
+                    if channel_settings.is_checking_enabled(cid):
+                        filtered_channels.append(cid)
+            
             excluded_count = len(channels) - len(filtered_channels)
             
             if excluded_count > 0:
-                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled")
+                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level)")
             
             if filtered_channels:
                 self._save_updates()
@@ -1131,13 +1155,29 @@ class StreamCheckerService:
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
-                # Filter channels by checking_mode setting
+                # Filter channels by checking_mode setting (both channel-level and group-level)
                 channel_settings = get_channel_settings_manager()
-                filtered_channel_ids = [cid for cid in channel_ids if channel_settings.is_checking_enabled(cid)]
+                filtered_channel_ids = []
+                
+                for ch in channels:
+                    if not isinstance(ch, dict) or 'id' not in ch:
+                        continue
+                    
+                    cid = ch['id']
+                    channel_group_id = ch.get('channel_group_id')
+                    
+                    # Check both channel-level and group-level settings
+                    channel_enabled = channel_settings.is_checking_enabled(cid)
+                    group_enabled = channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking')
+                    
+                    # Channel must be enabled at both levels
+                    if channel_enabled and group_enabled:
+                        filtered_channel_ids.append(cid)
+                
                 excluded_count = len(channel_ids) - len(filtered_channel_ids)
                 
                 if excluded_count > 0:
-                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled from global action")
+                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level) from global action")
                 
                 if not filtered_channel_ids:
                     logger.info("No channels with checking enabled to queue for global check")

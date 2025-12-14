@@ -716,7 +716,7 @@ class AutomatedStreamManager:
                 logger.warning("No channels found")
                 return {}
             
-            # Filter channels by matching_mode setting
+            # Filter channels by matching_mode setting (both channel-level and group-level)
             channel_settings = get_channel_settings_manager()
             matching_enabled_channel_ids = []
             
@@ -724,7 +724,14 @@ class AutomatedStreamManager:
                 if not isinstance(channel, dict) or 'id' not in channel:
                     continue
                 channel_id = channel['id']
-                if channel_settings.is_matching_enabled(channel_id):
+                channel_group_id = channel.get('channel_group_id')
+                
+                # Check both channel-level and group-level settings
+                channel_enabled = channel_settings.is_matching_enabled(channel_id)
+                group_enabled = channel_settings.is_channel_enabled_by_group(channel_group_id, mode='matching')
+                
+                # Channel must be enabled at both levels
+                if channel_enabled and group_enabled:
                     matching_enabled_channel_ids.append(channel_id)
             
             # Filter channels to only those with matching enabled
@@ -732,7 +739,7 @@ class AutomatedStreamManager:
             
             excluded_count = len(all_channels) - len(filtered_channels)
             if excluded_count > 0:
-                logger.info(f"Excluding {excluded_count} channel(s) with matching disabled from stream assignment")
+                logger.info(f"Excluding {excluded_count} channel(s) with matching disabled (channel or group level) from stream assignment")
             
             # Use filtered channels for the rest of the logic
             all_channels = filtered_channels
