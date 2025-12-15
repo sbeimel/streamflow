@@ -714,7 +714,7 @@ def analyze_stream(
         total_attempts = retries + 1
         for attempt in range(total_attempts):
             if attempt > 0:
-                logger.info(f"  Retry attempt {attempt} of {retries} for {stream_name}")
+                logger.info(f"  Retry attempt {attempt} of {retries} (attempt {attempt + 1} of {total_attempts}) for {stream_name}")
                 time.sleep(retry_delay)
 
             try:
