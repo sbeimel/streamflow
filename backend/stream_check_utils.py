@@ -694,58 +694,83 @@ def analyze_stream(
     """
     logger.info(f"▶ Analyzing stream: {stream_name} (ID: {stream_id})")
 
-    result = {'status': 'FAILED'}  # Default result in case of failure
-    for attempt in range(retries):
-        if attempt > 0:
-            logger.info(f"  Retry attempt {attempt}/{retries} for {stream_name}")
-            time.sleep(retry_delay)
+    # Default result in case of failure - includes all required fields
+    result = {
+        'stream_id': stream_id,
+        'stream_name': stream_name,
+        'stream_url': stream_url,
+        'timestamp': datetime.now().isoformat(),
+        'video_codec': 'N/A',
+        'audio_codec': 'N/A',
+        'resolution': '0x0',
+        'fps': 0,
+        'bitrate_kbps': None,
+        'status': 'Error'
+    }
+    
+    try:
+        for attempt in range(retries):
+            if attempt > 0:
+                logger.info(f"  Retry attempt {attempt}/{retries} for {stream_name}")
+                time.sleep(retry_delay)
 
-        # Use single ffmpeg call to get all stream information
-        logger.info("  Analyzing stream (single ffmpeg call)...")
-        result_data = get_stream_info_and_bitrate(
-            url=stream_url,
-            duration=ffmpeg_duration,
-            timeout=timeout,
-            user_agent=user_agent
-        )
+            try:
+                # Use single ffmpeg call to get all stream information
+                logger.info("  Analyzing stream (single ffmpeg call)...")
+                result_data = get_stream_info_and_bitrate(
+                    url=stream_url,
+                    duration=ffmpeg_duration,
+                    timeout=timeout,
+                    user_agent=user_agent
+                )
 
-        # Build result dictionary with metadata
-        result = {
-            'stream_id': stream_id,
-            'stream_name': stream_name,
-            'stream_url': stream_url,
-            'timestamp': datetime.now().isoformat(),
-            'video_codec': result_data['video_codec'],
-            'audio_codec': result_data['audio_codec'],
-            'resolution': result_data['resolution'],
-            'fps': result_data['fps'],
-            'bitrate_kbps': result_data['bitrate_kbps'],
-            'status': result_data['status']
-        }
+                # Build result dictionary with metadata
+                result = {
+                    'stream_id': stream_id,
+                    'stream_name': stream_name,
+                    'stream_url': stream_url,
+                    'timestamp': datetime.now().isoformat(),
+                    'video_codec': result_data['video_codec'],
+                    'audio_codec': result_data['audio_codec'],
+                    'resolution': result_data['resolution'],
+                    'fps': result_data['fps'],
+                    'bitrate_kbps': result_data['bitrate_kbps'],
+                    'status': result_data['status']
+                }
 
-        # Log results
-        if result['video_codec'] != 'N/A' or result['resolution'] != '0x0':
-            logger.info(f"    ✓ Video: {result['video_codec']}, {result['resolution']}, {result['fps']} FPS")
-        else:
-            logger.warning("    ✗ No video info found")
+                # Log results
+                if result['video_codec'] != 'N/A' or result['resolution'] != '0x0':
+                    logger.info(f"    ✓ Video: {result['video_codec']}, {result['resolution']}, {result['fps']} FPS")
+                else:
+                    logger.warning("    ✗ No video info found")
 
-        if result['audio_codec'] != 'N/A':
-            logger.info(f"    ✓ Audio: {result['audio_codec']}")
-        else:
-            logger.warning("    ✗ No audio info found")
+                if result['audio_codec'] != 'N/A':
+                    logger.info(f"    ✓ Audio: {result['audio_codec']}")
+                else:
+                    logger.warning("    ✗ No audio info found")
 
-        if result['status'] == "OK":
-            if result['bitrate_kbps'] is not None:
-                logger.info(f"    ✓ Bitrate: {result['bitrate_kbps']:.2f} kbps (elapsed: {result_data['elapsed_time']:.2f}s)")
-            else:
-                logger.warning(f"    ⚠ Bitrate detection failed (elapsed: {result_data['elapsed_time']:.2f}s)")
-            logger.info(f"  ✓ Stream analysis complete for {stream_name}")
-            break
-        else:
-            logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
+                if result['status'] == "OK":
+                    if result['bitrate_kbps'] is not None:
+                        logger.info(f"    ✓ Bitrate: {result['bitrate_kbps']:.2f} kbps (elapsed: {result_data['elapsed_time']:.2f}s)")
+                    else:
+                        logger.warning(f"    ⚠ Bitrate detection failed (elapsed: {result_data['elapsed_time']:.2f}s)")
+                    logger.info(f"  ✓ Stream analysis complete for {stream_name}")
+                    break
+                else:
+                    logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
 
-            # If not the last attempt, continue to retry
-            if attempt < retries:
-                logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
+                    # If not the last attempt, continue to retry
+                    if attempt < retries - 1:
+                        logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
+            except Exception as inner_e:
+                logger.error(f"  Exception during stream analysis attempt {attempt + 1}/{retries}: {inner_e}")
+                # Continue to next retry if available, otherwise use the default error result
+                if attempt < retries - 1:
+                    logger.warning(f"  Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
+                else:
+                    logger.error(f"  All retry attempts exhausted for stream {stream_name}")
+    except Exception as outer_e:
+        logger.error(f"Unexpected error in analyze_stream for {stream_name}: {outer_e}")
+        # Result already has default error values, so just return it
 
     return result
