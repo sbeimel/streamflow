@@ -20,6 +20,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestStreamIdKeyErrorFix(unittest.TestCase):
     """Test that analyze_stream always returns complete dict with stream_id."""
     
+    def _assert_has_all_required_fields(self, result):
+        """Helper method to assert that result has all required fields."""
+        required_fields = [
+            'stream_id', 'stream_name', 'stream_url', 'timestamp',
+            'video_codec', 'audio_codec', 'resolution', 'fps',
+            'bitrate_kbps', 'status'
+        ]
+        for field in required_fields:
+            self.assertIn(field, result, f"Result missing required field: {field}")
+    
     def test_analyze_stream_with_zero_retries(self):
         """Test that analyze_stream returns complete dict when retries=0.
         
@@ -43,16 +53,7 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
         )
         
         # Verify all required fields are present
-        self.assertIn('stream_id', result)
-        self.assertIn('stream_name', result)
-        self.assertIn('stream_url', result)
-        self.assertIn('timestamp', result)
-        self.assertIn('video_codec', result)
-        self.assertIn('audio_codec', result)
-        self.assertIn('resolution', result)
-        self.assertIn('fps', result)
-        self.assertIn('bitrate_kbps', result)
-        self.assertIn('status', result)
+        self._assert_has_all_required_fields(result)
         
         # Verify values match input
         self.assertEqual(result['stream_id'], 12345)
@@ -88,16 +89,7 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
         )
         
         # Verify all required fields are present
-        self.assertIn('stream_id', result)
-        self.assertIn('stream_name', result)
-        self.assertIn('stream_url', result)
-        self.assertIn('timestamp', result)
-        self.assertIn('video_codec', result)
-        self.assertIn('audio_codec', result)
-        self.assertIn('resolution', result)
-        self.assertIn('fps', result)
-        self.assertIn('bitrate_kbps', result)
-        self.assertIn('status', result)
+        self._assert_has_all_required_fields(result)
         
         # Verify values match input
         self.assertEqual(result['stream_id'], 67890)
