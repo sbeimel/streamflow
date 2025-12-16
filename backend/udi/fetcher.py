@@ -479,6 +479,52 @@ class UDIFetcher:
         url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
         return self._fetch_url(url)
     
+    def fetch_profile_channels(self, profile_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """Fetch channel associations for multiple profiles.
+        
+        Args:
+            profile_ids: List of profile IDs to fetch channels for
+            
+        Returns:
+            Dictionary mapping profile_id to profile channel data
+        """
+        if not self.base_url:
+            logger.error("DISPATCHARR_BASE_URL not set")
+            return {}
+        
+        profile_channels = {}
+        for profile_id in profile_ids:
+            try:
+                url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
+                logger.debug(f"Fetching channels for profile {profile_id} from {url}")
+                profile_data = self._fetch_url(url)
+                
+                if profile_data:
+                    # Parse the channels field
+                    channels_data = profile_data.get('channels', '')
+                    
+                    # Try to parse if it's a JSON string
+                    if isinstance(channels_data, str) and channels_data.strip():
+                        try:
+                            channels_data = json.loads(channels_data)
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Could not parse channels for profile {profile_id}: {e}")
+                            channels_data = []
+                    elif not isinstance(channels_data, list):
+                        channels_data = []
+                    
+                    profile_channels[profile_id] = {
+                        'profile': profile_data,
+                        'channels': channels_data
+                    }
+                    logger.debug(f"Fetched {len(channels_data)} channel associations for profile {profile_id}")
+            except Exception as e:
+                logger.error(f"Error fetching channels for profile {profile_id}: {e}")
+                continue
+        
+        logger.info(f"Fetched channel data for {len(profile_channels)} profiles")
+        return profile_channels
+    
     def refresh_all(self) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch all data from Dispatcharr.
         
