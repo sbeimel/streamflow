@@ -37,6 +37,9 @@ from logging_config import setup_logging
 # Import at module level for better performance
 from dispatcharr_config import get_dispatcharr_config
 
+# Import M3U priority config for merging priority_mode
+from m3u_priority_config import get_m3u_priority_config
+
 logger = setup_logging(__name__)
 
 
@@ -359,7 +362,6 @@ class UDIManager:
         
         # Merge priority_mode from local configuration
         try:
-            from m3u_priority_config import get_m3u_priority_config
             priority_config = get_m3u_priority_config()
             for account in accounts:
                 account_id = account.get('id')
@@ -387,7 +389,6 @@ class UDIManager:
             if account:
                 # Merge priority_mode from local configuration
                 try:
-                    from m3u_priority_config import get_m3u_priority_config
                     priority_config = get_m3u_priority_config()
                     account['priority_mode'] = priority_config.get_priority_mode(account_id)
                 except Exception as e:
@@ -400,7 +401,6 @@ class UDIManager:
                 result = account.copy()
                 # Merge priority_mode from local configuration
                 try:
-                    from m3u_priority_config import get_m3u_priority_config
                     priority_config = get_m3u_priority_config()
                     result['priority_mode'] = priority_config.get_priority_mode(account_id)
                 except Exception as e:

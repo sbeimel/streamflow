@@ -5,6 +5,16 @@ M3U Priority Configuration Manager
 Manages priority_mode settings for M3U accounts.
 This is a StreamFlow-specific configuration that determines how priority bonuses
 are applied during stream scoring.
+
+Priority Modes:
+- "disabled": No priority bonuses applied. Streams are selected based on quality alone.
+- "same_resolution": Priority bonuses applied only within the same resolution group.
+  Higher priority accounts' streams will be preferred among streams with identical resolutions.
+- "all_streams": Priority bonuses applied to all streams regardless of quality.
+  Higher priority accounts' streams will be preferred even if they have lower quality.
+
+The priority value (0-100) from Dispatcharr determines the strength of the bonus.
+Higher values give stronger preference to streams from that M3U account.
 """
 
 import json
