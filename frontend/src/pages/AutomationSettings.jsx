@@ -27,6 +27,9 @@ export default function AutomationSettings() {
   const [snapshots, setSnapshots] = useState({})
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [disablingEmptyChannels, setDisablingEmptyChannels] = useState(false)
+  const [refreshingProfiles, setRefreshingProfiles] = useState(false)
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [diagnosticInfo, setDiagnosticInfo] = useState(null)
   
   const { toast } = useToast()
 
@@ -289,6 +292,62 @@ export default function AutomationSettings() {
       })
     } finally {
       setDisablingEmptyChannels(false)
+    }
+  }
+
+  const handleRefreshProfiles = async () => {
+    try {
+      setRefreshingProfiles(true)
+      const response = await profileAPI.refreshProfiles()
+      
+      if (response.data.success) {
+        setProfiles(response.data.profiles || [])
+        toast({
+          title: "Success",
+          description: response.data.message || `Refreshed ${response.data.profile_count} profiles`,
+        })
+      } else {
+        throw new Error(response.data.message || "Failed to refresh profiles")
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || err.message || "Failed to refresh profiles",
+        variant: "destructive"
+      })
+    } finally {
+      setRefreshingProfiles(false)
+    }
+  }
+
+  const handleDiagnoseProfiles = async () => {
+    try {
+      setDiagnosing(true)
+      const response = await profileAPI.diagnoseProfiles()
+      setDiagnosticInfo(response.data)
+      
+      // Show a summary in toast
+      if (response.data.cache_profile_count === 0) {
+        toast({
+          title: "No Profiles Found",
+          description: "Check the diagnostic details below for possible causes",
+          variant: "destructive"
+        })
+      } else {
+        toast({
+          title: "Diagnostic Complete",
+          description: `Found ${response.data.cache_profile_count} profiles in cache`,
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to run diagnostics",
+        variant: "destructive"
+      })
+      setDiagnosticInfo(null)
+    } finally {
+      setDiagnosing(false)
     }
   }
 
@@ -931,6 +990,100 @@ export default function AutomationSettings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Profile Diagnostics Section */}
+              {profiles.length === 0 && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                  <AlertTitle>No Channel Profiles Found</AlertTitle>
+                  <AlertDescription className="space-y-3">
+                    <p>Streamflow is not detecting any channel profiles from Dispatcharr.</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleRefreshProfiles}
+                        disabled={refreshingProfiles}
+                        aria-label="Refresh channel profiles from Dispatcharr"
+                      >
+                        {refreshingProfiles && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-label="Refreshing profiles" />}
+                        Refresh Profiles
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleDiagnoseProfiles}
+                        disabled={diagnosing}
+                        aria-label="Run diagnostic tests for profile fetching"
+                      >
+                        {diagnosing && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-label="Running diagnostics" />}
+                        Run Diagnostics
+                      </Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Diagnostic Results */}
+              {diagnosticInfo && (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                  <AlertTitle>Profile Diagnostic Results</AlertTitle>
+                  <AlertDescription className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-sm mt-2">
+                      <div>UDI Initialized:</div>
+                      <div className="font-medium">{diagnosticInfo.udi_initialized ? 'Yes' : 'No'}</div>
+                      
+                      <div>Dispatcharr Configured:</div>
+                      <div className="font-medium">{diagnosticInfo.dispatcharr_configured ? 'Yes' : 'No'}</div>
+                      
+                      <div>Profiles in Cache:</div>
+                      <div className="font-medium">{diagnosticInfo.cache_profile_count}</div>
+                      
+                      <div>Profiles in Storage:</div>
+                      <div className="font-medium">{diagnosticInfo.storage_profile_count}</div>
+                      
+                      {diagnosticInfo.last_refresh_time && (
+                        <>
+                          <div>Last Refresh:</div>
+                          <div className="font-medium text-xs">{new Date(diagnosticInfo.last_refresh_time).toLocaleString()}</div>
+                        </>
+                      )}
+                    </div>
+
+                    {diagnosticInfo.possible_causes && diagnosticInfo.possible_causes.length > 0 && (
+                      <div className="mt-3">
+                        <p className="font-medium text-sm mb-1">Possible Causes:</p>
+                        <ul className="list-disc list-inside text-sm space-y-1">
+                          {diagnosticInfo.possible_causes.map((cause, idx) => (
+                            <li key={idx}>{cause}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {diagnosticInfo.recommended_actions && diagnosticInfo.recommended_actions.length > 0 && (
+                      <div className="mt-3">
+                        <p className="font-medium text-sm mb-1">Recommended Actions:</p>
+                        <ol className="list-decimal list-inside text-sm space-y-1">
+                          {diagnosticInfo.recommended_actions.map((action, idx) => (
+                            <li key={idx}>{action}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
+
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setDiagnosticInfo(null)}
+                      className="mt-2"
+                    >
+                      Close
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* Profile Selection */}
               <div className="space-y-4">
                 <div className="flex items-center space-x-2">

@@ -154,6 +154,8 @@ export const profileAPI = {
   // Profile management
   getProfiles: () => api.get('/profiles'),
   getProfileChannels: (profileId) => api.get(`/profiles/${profileId}/channels`),
+  refreshProfiles: () => api.post('/profiles/refresh'),
+  diagnoseProfiles: () => api.get('/profiles/diagnose'),
   
   // Snapshot management
   createSnapshot: (profileId) => api.post(`/profiles/${profileId}/snapshot`),

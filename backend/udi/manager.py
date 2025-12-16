@@ -175,6 +175,14 @@ class UDIManager:
     
     # === Data Access Methods ===
     
+    def is_initialized(self) -> bool:
+        """Check if the UDI Manager has been initialized.
+        
+        Returns:
+            True if initialized, False otherwise
+        """
+        return self._initialized
+    
     def get_channels(self) -> List[Dict[str, Any]]:
         """Get all channels.
         
