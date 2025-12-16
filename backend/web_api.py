@@ -1140,6 +1140,22 @@ def diagnose_profiles():
         }), 500
 
 
+def _get_all_channels_as_enabled():
+    """Helper function to get all channels formatted with enabled=True.
+    
+    This is used as a fallback when profile channel parsing fails.
+    
+    Returns:
+        List of channel dicts in format [{channel_id, enabled}, ...]
+    """
+    udi = get_udi_manager()
+    all_channels = udi.get_channels()
+    return [
+        {'channel_id': ch['id'], 'enabled': True}
+        for ch in all_channels if ch.get('id')
+    ]
+
+
 @app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
 @log_function_call
 def get_profile_channels(profile_id):
@@ -1167,20 +1183,90 @@ def get_profile_channels(profile_id):
         resp.raise_for_status()
         profile = resp.json()
         
-        # Get channels for this profile
-        # NOTE: Dispatcharr's ChannelProfile.channels field is read-only and returns
-        # a serialized representation. To get the actual channel list with enabled/disabled
-        # status, the frontend should parse the channels field or make separate API calls
-        # to query channel-profile associations via:
-        # GET /api/channels/channels/?profile={profile_id} (if Dispatcharr supports it)
-        # For now, we return all channels as the profile.channels field contains the IDs
-        udi = get_udi_manager()
-        all_channels = udi.get_channels()
+        # Parse the channels field from the profile
+        # The profile.channels field from Dispatcharr contains the channel-profile associations
+        channels_data = profile.get('channels', '')
+        # Log type and length/preview only to avoid exposing sensitive data
+        if isinstance(channels_data, str):
+            preview = channels_data[:50] + '...' if len(channels_data) > 50 else channels_data
+            logger.debug(f"Raw profile.channels type: string, length: {len(channels_data)}, preview: {preview}")
+        else:
+            logger.debug(f"Raw profile.channels type: {type(channels_data).__name__}, count: {len(channels_data) if isinstance(channels_data, (list, dict)) else 'N/A'}")
         
-        # Return profile with channels
+        # Try to parse if it's a string (JSON serialized)
+        if isinstance(channels_data, str):
+            if channels_data.strip():  # Only try to parse non-empty strings
+                try:
+                    channels_data = json.loads(channels_data)
+                    logger.debug(f"Parsed profile channels from JSON string")
+                except json.JSONDecodeError as e:
+                    # json.loads() raises JSONDecodeError for invalid JSON
+                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
+                    # If it's just a string description, fall back to querying all channels
+                    # and assuming they're all enabled for this profile
+                    logger.info(f"Falling back to returning all channels as enabled for profile {profile_id}")
+                    return jsonify({
+                        'profile': profile,
+                        'channels': _get_all_channels_as_enabled()
+                    })
+            else:
+                channels_data = []
+        
+        # Ensure channels_data is a list
+        if not isinstance(channels_data, list):
+            logger.warning(f"Profile channels is not a list, got type: {type(channels_data).__name__}. Falling back to all channels.")
+            # Fall back to querying all channels
+            return jsonify({
+                'profile': profile,
+                'channels': _get_all_channels_as_enabled()
+            })
+        
+        # Convert the channels data to the format expected by frontend: [{channel_id, enabled}, ...]
+        # The data might be in different formats:
+        # 1. Already in correct format: [{channel_id: 1, enabled: true}, ...]
+        # 2. Just IDs: [1, 2, 3, ...]
+        # 3. Channel objects: [{id: 1, name: "...", ...}, ...]
+        formatted_channels = []
+        for item in channels_data:
+            if isinstance(item, dict):
+                # Check if already in the right format (has 'enabled' and 'channel_id')
+                if 'channel_id' in item and 'enabled' in item:
+                    formatted_channels.append(item)
+                # Or if it has 'id' and 'enabled'
+                elif 'id' in item and 'enabled' in item:
+                    formatted_channels.append({
+                        'channel_id': item['id'],
+                        'enabled': item['enabled']
+                    })
+                # Otherwise assume it's a full channel object with 'id' (assume enabled=True)
+                elif 'id' in item:
+                    formatted_channels.append({
+                        'channel_id': item['id'],
+                        'enabled': True
+                    })
+            elif isinstance(item, (int, str)):
+                # Just an ID - assume enabled=True
+                try:
+                    channel_id = int(item)
+                    formatted_channels.append({
+                        'channel_id': channel_id,
+                        'enabled': True
+                    })
+                except (ValueError, TypeError):
+                    # Log type only, not the actual value to avoid exposing sensitive data
+                    logger.warning(f"Could not convert channel item to int, type: {type(item).__name__}")
+        
+        if not formatted_channels:
+            # If we couldn't parse any channels, fall back to all channels
+            logger.warning(f"No channels were parsed from profile.channels. Falling back to all channels.")
+            formatted_channels = _get_all_channels_as_enabled()
+        
+        logger.info(f"Returning {len(formatted_channels)} channels for profile {profile_id}")
+        
+        # Return profile with formatted channels
         return jsonify({
             'profile': profile,
-            'channels': all_channels
+            'channels': formatted_channels
         })
     except Exception as e:
         logger.error(f"Error getting profile channels: {e}")
