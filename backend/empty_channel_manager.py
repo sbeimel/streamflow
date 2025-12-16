@@ -63,6 +63,8 @@ def disable_empty_channels_in_profile(profile_id: int,
             channels_to_check = all_channels
         
         # If check_enabled_only is True, we need to fetch the profile and filter
+        # This is used when snapshot mode is enabled to only check channels that are
+        # currently enabled in the profile (the snapshot represents the desired state)
         if check_enabled_only:
             try:
                 profile = udi.get_channel_profile_by_id(profile_id)

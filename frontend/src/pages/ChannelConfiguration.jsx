@@ -571,7 +571,10 @@ export default function ChannelConfiguration() {
       setLoading(true)
       
       // First, load profile configuration to see if we should filter channels
-      const profileConfigResponse = await profileAPI.getConfig().catch(() => ({ data: null }))
+      const profileConfigResponse = await profileAPI.getConfig().catch((err) => {
+        console.error('Failed to load profile configuration:', err)
+        return { data: null }
+      })
       const profileConfig = profileConfigResponse.data
       
       // Determine which channels to load
@@ -610,7 +613,7 @@ export default function ChannelConfiguration() {
           toast({
             title: "Warning",
             description: "Failed to filter by profile, showing all channels",
-            variant: "warning"
+            variant: "destructive"
           })
           // Fall back to loading all channels
           const channelsResponse = await channelsAPI.getChannels()
