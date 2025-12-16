@@ -436,6 +436,38 @@ class UDIFetcher:
             return accounts
         return []
     
+    def fetch_channel_profiles(self) -> List[Dict[str, Any]]:
+        """Fetch all channel profiles from Dispatcharr.
+        
+        Returns:
+            List of channel profile dictionaries
+        """
+        if not self.base_url:
+            logger.error("DISPATCHARR_BASE_URL not set")
+            return []
+        
+        url = f"{self.base_url}/api/channels/profiles/"
+        profiles = self._fetch_url(url)
+        if isinstance(profiles, list):
+            logger.info(f"Fetched {len(profiles)} channel profiles")
+            return profiles
+        return []
+    
+    def fetch_channel_profile_by_id(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a specific channel profile by ID.
+        
+        Args:
+            profile_id: The profile ID
+            
+        Returns:
+            Profile dictionary or None
+        """
+        if not self.base_url:
+            return None
+        
+        url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
+        return self._fetch_url(url)
+    
     def refresh_all(self) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch all data from Dispatcharr.
         
@@ -449,13 +481,15 @@ class UDIFetcher:
             'streams': self.fetch_streams(),
             'channel_groups': self.fetch_channel_groups(),
             'logos': self.fetch_logos(),
-            'm3u_accounts': self.fetch_m3u_accounts()
+            'm3u_accounts': self.fetch_m3u_accounts(),
+            'channel_profiles': self.fetch_channel_profiles()
         }
         
         logger.info(
             f"Full refresh complete: {len(data['channels'])} channels, "
             f"{len(data['streams'])} streams, {len(data['channel_groups'])} groups, "
-            f"{len(data['logos'])} logos, {len(data['m3u_accounts'])} M3U accounts"
+            f"{len(data['logos'])} logos, {len(data['m3u_accounts'])} M3U accounts, "
+            f"{len(data['channel_profiles'])} channel profiles"
         )
         
         return data
