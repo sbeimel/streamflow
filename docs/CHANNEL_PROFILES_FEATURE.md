@@ -657,13 +657,121 @@ Complete API documentation is embedded in the code docstrings. Key endpoints:
 - **Cause**: CONFIG_DIR not writable
 - **Solution**: Tests now use temporary directory
 
+**Issue**: "No channel profiles found"
+- **Cause**: Profiles not being fetched from Dispatcharr
+- **Solution**: Use the diagnostic tools described below
+
+### Profile Fetching Diagnostics
+
+If profiles are not appearing in Streamflow, use these tools to diagnose:
+
+#### 1. Web UI Diagnostics (Recommended)
+
+Navigate to **Configuration > Profiles** section:
+
+1. Look for "No Channel Profiles Found" alert
+2. Click **"Run Diagnostics"** button
+3. Review diagnostic results showing:
+   - UDI initialization status
+   - Dispatcharr configuration status
+   - Profile counts in cache and storage
+   - Last refresh time
+   - Possible causes and recommended actions
+
+4. Click **"Refresh Profiles"** to force a fresh fetch from Dispatcharr
+
+#### 2. Command-Line Test Script
+
+Run the profile fetching test from the backend directory:
+
+```bash
+cd /app/backend
+python3 tests/test_profile_fetching.py
+```
+
+This script will:
+- Verify environment configuration (DISPATCHARR_BASE_URL, credentials)
+- Test authentication with Dispatcharr
+- Fetch profiles from the API endpoint
+- Display detailed results with profile information
+- Provide troubleshooting guidance if issues are found
+
+#### 3. API Endpoints for Troubleshooting
+
+**Refresh Profiles:**
+```http
+POST /api/profiles/refresh
+```
+
+Response with success:
+```json
+{
+  "success": true,
+  "message": "Successfully refreshed 3 channel profiles",
+  "profile_count": 3,
+  "profiles": [...]
+}
+```
+
+**Diagnose Profile Fetching:**
+```http
+GET /api/profiles/diagnose
+```
+
+Response:
+```json
+{
+  "udi_initialized": true,
+  "dispatcharr_configured": true,
+  "dispatcharr_base_url": "http://dispatcharr:9191",
+  "cache_profile_count": 0,
+  "storage_profile_count": 0,
+  "last_refresh_time": null,
+  "diagnosis": "No profiles found",
+  "possible_causes": [
+    "No channel profiles have been created in Dispatcharr yet",
+    "Profile fetch failed during initialization",
+    "Authentication issue preventing API access"
+  ],
+  "recommended_actions": [
+    "Create channel profiles in Dispatcharr web UI (Channels > Profiles)",
+    "Click 'Refresh Profiles' button to force a refresh",
+    "Check Dispatcharr logs for errors"
+  ]
+}
+```
+
+#### Common Causes and Solutions
+
+**No profiles exist in Dispatcharr:**
+- Log into Dispatcharr web UI
+- Navigate to Channels > Profiles
+- Create at least one channel profile
+- Return to Streamflow and click "Refresh Profiles"
+
+**Authentication failure:**
+- Verify DISPATCHARR_USER and DISPATCHARR_PASS in .env file
+- Check that user has permissions to view profiles
+- Test login manually in Dispatcharr web UI
+
+**Network connectivity:**
+- Verify DISPATCHARR_BASE_URL is correct
+- Check that Streamflow can reach Dispatcharr (ping/curl)
+- Review Docker network configuration if using containers
+
+**API endpoint issues:**
+- Verify Dispatcharr version is compatible
+- Check Dispatcharr logs for API errors
+- Ensure `/api/channels/profiles/` endpoint is available
+
 ## Support
 
 For issues or questions:
 1. Check logs in `/app/data/logs/`
-2. Verify Dispatcharr connectivity
-3. Review API responses in browser dev tools
-4. Check configuration files in `/app/data/`
+2. Run diagnostics using the tools above
+3. Verify Dispatcharr connectivity
+4. Review API responses in browser dev tools
+5. Check configuration files in `/app/data/`
 
 ## License
 
