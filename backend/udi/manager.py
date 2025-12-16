@@ -73,6 +73,7 @@ class UDIManager:
         self._logos_cache: List[Dict[str, Any]] = []
         self._m3u_accounts_cache: List[Dict[str, Any]] = []
         self._channel_profiles_cache: List[Dict[str, Any]] = []
+        self._profile_channels_cache: Dict[int, Dict[str, Any]] = {}
         
         # Index caches for fast lookups
         self._channels_by_id: Dict[int, Dict[str, Any]] = {}
@@ -143,6 +144,7 @@ class UDIManager:
         self._logos_cache = self.storage.load_logos()
         self._m3u_accounts_cache = self.storage.load_m3u_accounts()
         self._channel_profiles_cache = self.storage.load_channel_profiles()
+        self._profile_channels_cache = self.storage.load_profile_channels()
         
         # Build index caches
         self._build_indexes()
@@ -158,11 +160,21 @@ class UDIManager:
                 except ValueError:
                     pass
         
+        # Also mark profile_channels if present
+        profile_channels_timestamp = metadata.get('profile_channels_last_updated')
+        if profile_channels_timestamp:
+            try:
+                timestamp = datetime.fromisoformat(profile_channels_timestamp)
+                self.cache.mark_refreshed('profile_channels', timestamp)
+            except ValueError:
+                pass
+        
         logger.info(
             f"Loaded from storage: {len(self._channels_cache)} channels, "
             f"{len(self._streams_cache)} streams, {len(self._channel_groups_cache)} groups, "
             f"{len(self._logos_cache)} logos, {len(self._m3u_accounts_cache)} M3U accounts, "
-            f"{len(self._channel_profiles_cache)} profiles"
+            f"{len(self._channel_profiles_cache)} profiles, "
+            f"{len(self._profile_channels_cache)} profile channels"
         )
     
     def _build_indexes(self) -> None:
@@ -391,6 +403,18 @@ class UDIManager:
         self._ensure_initialized()
         return self._profiles_by_id.get(profile_id)
     
+    def get_profile_channels(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Get channel associations for a specific profile.
+        
+        Args:
+            profile_id: The profile ID
+            
+        Returns:
+            Profile channel data or None if not cached
+        """
+        self._ensure_initialized()
+        return self._profile_channels_cache.get(profile_id)
+    
     def has_custom_streams(self) -> bool:
         """Check if any custom streams exist.
         
@@ -427,6 +451,14 @@ class UDIManager:
             self._m3u_accounts_cache = data.get('m3u_accounts', [])
             self._channel_profiles_cache = data.get('channel_profiles', [])
             
+            # Fetch profile channels data for all profiles
+            profile_ids = [p.get('id') for p in self._channel_profiles_cache if p.get('id')]
+            if profile_ids:
+                logger.info(f"Fetching channel data for {len(profile_ids)} profiles...")
+                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids)
+            else:
+                self._profile_channels_cache = {}
+            
             # Build index caches
             self._build_indexes()
             
@@ -437,6 +469,7 @@ class UDIManager:
             self.storage.save_logos(self._logos_cache)
             self.storage.save_m3u_accounts(self._m3u_accounts_cache)
             self.storage.save_channel_profiles(self._channel_profiles_cache)
+            self.storage.save_profile_channels(self._profile_channels_cache)
             
             # Update metadata
             now = datetime.now()
@@ -448,12 +481,13 @@ class UDIManager:
                 'logos_last_updated': now.isoformat(),
                 'm3u_accounts_last_updated': now.isoformat(),
                 'channel_profiles_last_updated': now.isoformat(),
+                'profile_channels_last_updated': now.isoformat(),
                 'version': '1.0.0'
             }
             self.storage.save_metadata(metadata)
             
             # Mark all caches as refreshed
-            for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles']:
+            for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles', 'profile_channels']:
                 self.cache.mark_refreshed(entity_type, now)
             
             logger.info("UDI data refresh complete")

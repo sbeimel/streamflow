@@ -1159,9 +1159,10 @@ def _get_all_channels_as_enabled():
 @app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
 @log_function_call
 def get_profile_channels(profile_id):
-    """Get channels for a specific profile.
+    """Get channels for a specific profile from UDI cache.
     
-    Makes a direct API call to Dispatcharr to get the current channel list.
+    Uses cached data from UDI instead of making direct API calls to Dispatcharr.
+    The cache is updated when playlists are refreshed.
     
     Args:
         profile_id: Profile ID
@@ -1170,106 +1171,68 @@ def get_profile_channels(profile_id):
         JSON with profile and channels
     """
     try:
-        base_url = _get_base_url()
-        if not base_url:
-            return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+        # Get data from UDI cache
+        udi = get_udi_manager()
         
-        # Import here to avoid circular dependency
-        from udi.fetcher import _get_auth_headers
+        # Get profile info
+        profile = udi.get_channel_profile_by_id(profile_id)
+        if not profile:
+            return jsonify({"error": f"Profile {profile_id} not found in UDI cache"}), 404
         
-        # Get profile details
-        profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
-        resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
-        resp.raise_for_status()
-        profile = resp.json()
+        # Get cached profile channels
+        profile_channels_data = udi.get_profile_channels(profile_id)
         
-        # Parse the channels field from the profile
-        # The profile.channels field from Dispatcharr contains the channel-profile associations
-        channels_data = profile.get('channels', '')
-        # Log type and length/preview only to avoid exposing sensitive data
-        if isinstance(channels_data, str):
-            preview = channels_data[:50] + '...' if len(channels_data) > 50 else channels_data
-            logger.debug(f"Raw profile.channels type: string, length: {len(channels_data)}, preview: {preview}")
-        else:
-            logger.debug(f"Raw profile.channels type: {type(channels_data).__name__}, count: {len(channels_data) if isinstance(channels_data, (list, dict)) else 'N/A'}")
-        
-        # Try to parse if it's a string (JSON serialized)
-        if isinstance(channels_data, str):
-            if channels_data.strip():  # Only try to parse non-empty strings
-                try:
-                    channels_data = json.loads(channels_data)
-                    logger.debug(f"Parsed profile channels from JSON string")
-                except json.JSONDecodeError as e:
-                    # json.loads() raises JSONDecodeError for invalid JSON
-                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
-                    # If it's just a string description, fall back to querying all channels
-                    # and assuming they're all enabled for this profile
-                    logger.info(f"Falling back to returning all channels as enabled for profile {profile_id}")
-                    return jsonify({
-                        'profile': profile,
-                        'channels': _get_all_channels_as_enabled()
-                    })
-            else:
-                channels_data = []
-        
-        # Ensure channels_data is a list
-        if not isinstance(channels_data, list):
-            logger.warning(f"Profile channels is not a list, got type: {type(channels_data).__name__}. Falling back to all channels.")
-            # Fall back to querying all channels
+        if profile_channels_data:
+            # Use cached data
+            channels = profile_channels_data.get('channels', [])
+            logger.info(f"Returning {len(channels)} cached channel associations for profile {profile_id}")
             return jsonify({
                 'profile': profile,
-                'channels': _get_all_channels_as_enabled()
+                'channels': channels
             })
-        
-        # Convert the channels data to the format expected by frontend: [{channel_id, enabled}, ...]
-        # The data might be in different formats:
-        # 1. Already in correct format: [{channel_id: 1, enabled: true}, ...]
-        # 2. Just IDs: [1, 2, 3, ...]
-        # 3. Channel objects: [{id: 1, name: "...", ...}, ...]
-        formatted_channels = []
-        for item in channels_data:
-            if isinstance(item, dict):
-                # Check if already in the right format (has 'enabled' and 'channel_id')
-                if 'channel_id' in item and 'enabled' in item:
-                    formatted_channels.append(item)
-                # Or if it has 'id' and 'enabled'
-                elif 'id' in item and 'enabled' in item:
-                    formatted_channels.append({
-                        'channel_id': item['id'],
-                        'enabled': item['enabled']
-                    })
-                # Otherwise assume it's a full channel object with 'id' (assume enabled=True)
-                elif 'id' in item:
-                    formatted_channels.append({
-                        'channel_id': item['id'],
-                        'enabled': True
-                    })
-            elif isinstance(item, (int, str)):
-                # Just an ID - assume enabled=True
+        else:
+            # If not in cache yet (e.g., first load), fall back to direct API call
+            # This will only happen once until the next playlist refresh
+            logger.warning(f"Profile channels not in UDI cache for profile {profile_id}, making direct API call")
+            base_url = _get_base_url()
+            if not base_url:
+                return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+            
+            # Import here to avoid circular dependency
+            from udi.fetcher import _get_auth_headers
+            
+            # Get profile details directly from Dispatcharr
+            profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
+            resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
+            resp.raise_for_status()
+            profile_data = resp.json()
+            
+            # Parse the channels field
+            channels_data = profile_data.get('channels', '')
+            
+            # Try to parse if it's a JSON string
+            if isinstance(channels_data, str) and channels_data.strip():
                 try:
-                    channel_id = int(item)
-                    formatted_channels.append({
-                        'channel_id': channel_id,
-                        'enabled': True
-                    })
-                except (ValueError, TypeError):
-                    # Log type only, not the actual value to avoid exposing sensitive data
-                    logger.warning(f"Could not convert channel item to int, type: {type(item).__name__}")
-        
-        if not formatted_channels:
-            # If we couldn't parse any channels, fall back to all channels
-            logger.warning(f"No channels were parsed from profile.channels. Falling back to all channels.")
-            formatted_channels = _get_all_channels_as_enabled()
-        
-        logger.info(f"Returning {len(formatted_channels)} channels for profile {profile_id}")
-        
-        # Return profile with formatted channels
-        return jsonify({
-            'profile': profile,
-            'channels': formatted_channels
-        })
+                    channels_data = json.loads(channels_data)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
+                    channels_data = []
+            elif not isinstance(channels_data, list):
+                channels_data = []
+            
+            # Return the data and cache it for future use
+            profile_channels_to_cache = {
+                'profile': profile_data,
+                'channels': channels_data
+            }
+            # Store in UDI for future use
+            udi.storage.save_profile_channels_by_id(profile_id, profile_channels_to_cache)
+            udi._profile_channels_cache[profile_id] = profile_channels_to_cache
+            
+            return jsonify(profile_channels_to_cache)
+    
     except Exception as e:
-        logger.error(f"Error getting profile channels: {e}")
+        logger.error(f"Error fetching profile channels: {e}")
         return jsonify({"error": str(e)}), 500
 
 
