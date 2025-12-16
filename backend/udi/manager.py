@@ -37,6 +37,9 @@ from logging_config import setup_logging
 # Import at module level for better performance
 from dispatcharr_config import get_dispatcharr_config
 
+# Import M3U priority config for merging priority_mode
+from m3u_priority_config import get_m3u_priority_config
+
 logger = setup_logging(__name__)
 
 
@@ -348,17 +351,29 @@ class UDIManager:
         return None
     
     def get_m3u_accounts(self) -> List[Dict[str, Any]]:
-        """Get all M3U accounts.
+        """Get all M3U accounts with priority_mode merged from local config.
         
         Returns:
-            List of M3U account dictionaries
+            List of M3U account dictionaries with priority_mode included
         """
         self._ensure_initialized()
         logger.debug(f"Returning {len(self._m3u_accounts_cache)} M3U accounts from UDI cache")
-        return self._m3u_accounts_cache.copy()
+        accounts = self._m3u_accounts_cache.copy()
+        
+        # Merge priority_mode from local configuration
+        try:
+            priority_config = get_m3u_priority_config()
+            for account in accounts:
+                account_id = account.get('id')
+                if account_id:
+                    account['priority_mode'] = priority_config.get_priority_mode(account_id)
+        except Exception as e:
+            logger.error(f"Error merging priority_mode: {e}")
+        
+        return accounts
     
     def get_m3u_account_by_id(self, account_id: int) -> Optional[Dict[str, Any]]:
-        """Get a specific M3U account by ID.
+        """Get a specific M3U account by ID with priority_mode merged.
         
         Args:
             account_id: M3U account ID
@@ -372,12 +387,25 @@ class UDIManager:
         if hasattr(self.storage, 'get_m3u_account_by_id'):
             account = self.storage.get_m3u_account_by_id(account_id)
             if account:
+                # Merge priority_mode from local configuration
+                try:
+                    priority_config = get_m3u_priority_config()
+                    account['priority_mode'] = priority_config.get_priority_mode(account_id)
+                except Exception as e:
+                    logger.error(f"Error merging priority_mode: {e}")
                 return account
         
         # Fallback to in-memory cache
         for account in self._m3u_accounts_cache:
             if account.get('id') == account_id:
-                return account.copy()
+                result = account.copy()
+                # Merge priority_mode from local configuration
+                try:
+                    priority_config = get_m3u_priority_config()
+                    result['priority_mode'] = priority_config.get_priority_mode(account_id)
+                except Exception as e:
+                    logger.error(f"Error merging priority_mode: {e}")
+                return result
         
         logger.debug(f"M3U account {account_id} not found in UDI")
         return None
