@@ -38,6 +38,12 @@ class ProfileConfig:
         """Initialize the profile configuration manager."""
         self._lock = threading.Lock()
         self._config: Dict[str, Any] = {}
+        
+        # Reload CONFIG_DIR from environment in case it was changed (for testing)
+        global CONFIG_DIR, PROFILE_CONFIG_FILE
+        CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
+        PROFILE_CONFIG_FILE = CONFIG_DIR / 'profile_config.json'
+        
         self._load_config()
         logger.info("Profile configuration manager initialized")
     
