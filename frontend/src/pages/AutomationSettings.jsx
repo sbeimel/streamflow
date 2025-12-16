@@ -7,9 +7,10 @@ import { Switch } from '@/components/ui/switch.jsx'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
-import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
+import { Loader2, AlertCircle, CheckCircle2, Trash2, Plus } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamCheckerAPI, dispatcharrAPI } from '@/services/api.js'
+import { automationAPI, streamCheckerAPI, dispatcharrAPI, profileAPI } from '@/services/api.js'
 
 export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
@@ -19,6 +20,14 @@ export default function AutomationSettings() {
   const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  
+  // Profile management state
+  const [profileConfig, setProfileConfig] = useState(null)
+  const [profiles, setProfiles] = useState([])
+  const [snapshots, setSnapshots] = useState({})
+  const [loadingProfiles, setLoadingProfiles] = useState(false)
+  const [disablingEmptyChannels, setDisablingEmptyChannels] = useState(false)
+  
   const { toast } = useToast()
 
   useEffect(() => {
@@ -28,14 +37,20 @@ export default function AutomationSettings() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const [automationResponse, streamCheckerResponse, dispatcharrResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, dispatcharrResponse, profileConfigResponse, profilesResponse, snapshotsResponse] = await Promise.all([
         automationAPI.getConfig(),
         streamCheckerAPI.getConfig(),
-        dispatcharrAPI.getConfig()
+        dispatcharrAPI.getConfig(),
+        profileAPI.getConfig().catch(() => ({ data: null })),
+        profileAPI.getProfiles().catch(() => ({ data: [] })),
+        profileAPI.getAllSnapshots().catch(() => ({ data: {} }))
       ])
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
       setDispatcharrConfig(dispatcharrResponse.data)
+      setProfileConfig(profileConfigResponse.data)
+      setProfiles(profilesResponse.data || [])
+      setSnapshots(snapshotsResponse.data || {})
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -51,11 +66,18 @@ export default function AutomationSettings() {
   const handleSave = async () => {
     try {
       setSaving(true)
-      await Promise.all([
+      const promises = [
         automationAPI.updateConfig(config),
         streamCheckerAPI.updateConfig(streamCheckerConfig),
         dispatcharrAPI.updateConfig(dispatcharrConfig)
-      ])
+      ]
+      
+      // Save profile config if it exists
+      if (profileConfig) {
+        promises.push(profileAPI.updateConfig(profileConfig))
+      }
+      
+      await Promise.all(promises)
       toast({
         title: "Success",
         description: "Configuration saved successfully",
@@ -161,6 +183,93 @@ export default function AutomationSettings() {
     }
   }
 
+  const handleProfileConfigChange = (field, value) => {
+    if (field.includes('.')) {
+      const parts = field.split('.')
+      setProfileConfig(prev => {
+        const newConfig = { ...prev }
+        let current = newConfig
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!current[parts[i]]) current[parts[i]] = {}
+          current = current[parts[i]]
+        }
+        current[parts[parts.length - 1]] = value
+        return newConfig
+      })
+    } else {
+      setProfileConfig(prev => ({
+        ...prev,
+        [field]: value
+      }))
+    }
+  }
+
+  const handleCreateSnapshot = async (profileId) => {
+    try {
+      setLoadingProfiles(true)
+      const response = await profileAPI.createSnapshot(profileId)
+      setSnapshots(prev => ({
+        ...prev,
+        [profileId]: response.data.snapshot
+      }))
+      toast({
+        title: "Success",
+        description: "Profile snapshot created successfully",
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to create snapshot",
+        variant: "destructive"
+      })
+    } finally {
+      setLoadingProfiles(false)
+    }
+  }
+
+  const handleDeleteSnapshot = async (profileId) => {
+    try {
+      setLoadingProfiles(true)
+      await profileAPI.deleteSnapshot(profileId)
+      setSnapshots(prev => {
+        const newSnapshots = { ...prev }
+        delete newSnapshots[profileId]
+        return newSnapshots
+      })
+      toast({
+        title: "Success",
+        description: "Snapshot deleted successfully",
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to delete snapshot",
+        variant: "destructive"
+      })
+    } finally {
+      setLoadingProfiles(false)
+    }
+  }
+
+  const handleDisableEmptyChannels = async (profileId) => {
+    try {
+      setDisablingEmptyChannels(true)
+      const response = await profileAPI.disableEmptyChannels(profileId)
+      toast({
+        title: "Success",
+        description: response.data.message || "Empty channels disabled successfully",
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to disable empty channels",
+        variant: "destructive"
+      })
+    } finally {
+      setDisablingEmptyChannels(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -197,12 +306,13 @@ export default function AutomationSettings() {
       </div>
 
       <Tabs defaultValue="connection" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="connection">Connection</TabsTrigger>
           <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
           <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
           <TabsTrigger value="queue">Queue</TabsTrigger>
           <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
+          <TabsTrigger value="profiles">Profiles</TabsTrigger>
         </TabsList>
         
         <TabsContent value="connection" className="space-y-6">
@@ -777,6 +887,219 @@ export default function AutomationSettings() {
                   </Alert>
                 </>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Save Button */}
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving} size="lg">
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Settings
+            </Button>
+          </div>
+        </TabsContent>
+
+        {/* Profile Management Tab */}
+        <TabsContent value="profiles" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Channel Profile Management</CardTitle>
+              <CardDescription>
+                Manage Dispatcharr channel profiles for selective channel control and dead stream handling
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Profile Selection */}
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="use_profile"
+                    checked={profileConfig?.use_profile || false}
+                    onCheckedChange={(checked) => handleProfileConfigChange('use_profile', checked)}
+                  />
+                  <Label htmlFor="use_profile" className="text-base font-medium">
+                    Use Specific Profile
+                  </Label>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Enable to use a specific Dispatcharr channel profile instead of the general channel list
+                </p>
+
+                {profileConfig?.use_profile && (
+                  <div className="space-y-2 ml-6">
+                    <Label htmlFor="selected_profile">Selected Profile</Label>
+                    <Select
+                      value={profileConfig?.selected_profile_id?.toString() || ''}
+                      onValueChange={(value) => {
+                        const profileId = parseInt(value)
+                        const profile = profiles.find(p => p.id === profileId)
+                        handleProfileConfigChange('selected_profile_id', profileId)
+                        handleProfileConfigChange('selected_profile_name', profile?.name || '')
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a profile" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {profiles.map((profile) => (
+                          <SelectItem key={profile.id} value={profile.id.toString()}>
+                            {profile.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {profileConfig?.selected_profile_name && (
+                      <p className="text-sm text-muted-foreground">
+                        Currently using: <span className="font-medium">{profileConfig.selected_profile_name}</span>
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-medium mb-4">Dead Stream Management</h3>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="dead_streams_enabled"
+                      checked={profileConfig?.dead_streams?.enabled || false}
+                      onCheckedChange={(checked) => handleProfileConfigChange('dead_streams.enabled', checked)}
+                    />
+                    <Label htmlFor="dead_streams_enabled" className="text-base font-medium">
+                      Enable Dead Stream Management
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically disable channels with no working streams in a target profile
+                  </p>
+
+                  {profileConfig?.dead_streams?.enabled && (
+                    <div className="space-y-4 ml-6">
+                      <div className="space-y-2">
+                        <Label htmlFor="target_profile">Target Profile</Label>
+                        <Select
+                          value={profileConfig?.dead_streams?.target_profile_id?.toString() || ''}
+                          onValueChange={(value) => {
+                            const profileId = parseInt(value)
+                            const profile = profiles.find(p => p.id === profileId)
+                            handleProfileConfigChange('dead_streams.target_profile_id', profileId)
+                            handleProfileConfigChange('dead_streams.target_profile_name', profile?.name || '')
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select target profile" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {profiles.map((profile) => (
+                              <SelectItem key={profile.id} value={profile.id.toString()}>
+                                {profile.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-sm text-muted-foreground">
+                          Profile where empty channels will be disabled
+                        </p>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="use_snapshot"
+                          checked={profileConfig?.dead_streams?.use_snapshot || false}
+                          onCheckedChange={(checked) => handleProfileConfigChange('dead_streams.use_snapshot', checked)}
+                        />
+                        <Label htmlFor="use_snapshot">
+                          Use Snapshots for Re-enabling
+                        </Label>
+                      </div>
+                      <p className="text-sm text-muted-foreground ml-6">
+                        Create snapshots to track which channels should be re-enabled when streams return
+                      </p>
+
+                      {profileConfig?.dead_streams?.target_profile_id && (
+                        <div className="mt-4 p-4 border rounded-lg space-y-3">
+                          <h4 className="font-medium">Snapshot Management</h4>
+                          {snapshots[profileConfig.dead_streams.target_profile_id] ? (
+                            <div className="space-y-2">
+                              <p className="text-sm text-muted-foreground">
+                                Snapshot created: {new Date(snapshots[profileConfig.dead_streams.target_profile_id].created_at).toLocaleString()}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                Channels: {snapshots[profileConfig.dead_streams.target_profile_id].channel_count}
+                              </p>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleDeleteSnapshot(profileConfig.dead_streams.target_profile_id)}
+                                disabled={loadingProfiles}
+                              >
+                                {loadingProfiles ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                )}
+                                Delete Snapshot
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-sm text-muted-foreground">No snapshot exists for this profile</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleCreateSnapshot(profileConfig.dead_streams.target_profile_id)}
+                                disabled={loadingProfiles}
+                              >
+                                {loadingProfiles ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Plus className="mr-2 h-4 w-4" />
+                                )}
+                                Create Snapshot
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {profileConfig?.dead_streams?.target_profile_id && (
+                        <div className="mt-4">
+                          <Button
+                            variant="outline"
+                            onClick={() => handleDisableEmptyChannels(profileConfig.dead_streams.target_profile_id)}
+                            disabled={disablingEmptyChannels}
+                          >
+                            {disablingEmptyChannels && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Disable Empty Channels Now
+                          </Button>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Manually trigger disabling of channels with no working streams
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>How Profile Management Works</AlertTitle>
+                <AlertDescription className="space-y-2 mt-2">
+                  <p>
+                    <strong>Profile Selection:</strong> Choose a specific Dispatcharr channel profile to use instead of the general channel list.
+                  </p>
+                  <p>
+                    <strong>Dead Stream Management:</strong> Automatically disable channels with no working streams in a target profile, 
+                    keeping your channel list clean and organized.
+                  </p>
+                  <p>
+                    <strong>Snapshots:</strong> Create snapshots to remember which channels should be re-enabled when streams become available again.
+                  </p>
+                </AlertDescription>
+              </Alert>
             </CardContent>
           </Card>
 
