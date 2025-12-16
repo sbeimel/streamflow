@@ -1140,6 +1140,22 @@ def diagnose_profiles():
         }), 500
 
 
+def _get_all_channels_as_enabled():
+    """Helper function to get all channels formatted with enabled=True.
+    
+    This is used as a fallback when profile channel parsing fails.
+    
+    Returns:
+        List of channel dicts in format [{channel_id, enabled}, ...]
+    """
+    udi = get_udi_manager()
+    all_channels = udi.get_channels()
+    return [
+        {'channel_id': ch['id'], 'enabled': True}
+        for ch in all_channels if ch.get('id')
+    ]
+
+
 @app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
 @log_function_call
 def get_profile_channels(profile_id):
@@ -1170,7 +1186,12 @@ def get_profile_channels(profile_id):
         # Parse the channels field from the profile
         # The profile.channels field from Dispatcharr contains the channel-profile associations
         channels_data = profile.get('channels', '')
-        logger.debug(f"Raw profile.channels type: {type(channels_data).__name__}, value: {str(channels_data)[:200]}")
+        # Log type and length/preview only to avoid exposing sensitive data
+        if isinstance(channels_data, str):
+            preview = channels_data[:50] + '...' if len(channels_data) > 50 else channels_data
+            logger.debug(f"Raw profile.channels type: string, length: {len(channels_data)}, preview: {preview}")
+        else:
+            logger.debug(f"Raw profile.channels type: {type(channels_data).__name__}, count: {len(channels_data) if isinstance(channels_data, (list, dict)) else 'N/A'}")
         
         # Try to parse if it's a string (JSON serialized)
         if isinstance(channels_data, str):
@@ -1178,20 +1199,15 @@ def get_profile_channels(profile_id):
                 try:
                     channels_data = json.loads(channels_data)
                     logger.debug(f"Parsed profile channels from JSON string")
-                except (json.JSONDecodeError, TypeError) as e:
+                except json.JSONDecodeError as e:
+                    # json.loads() raises JSONDecodeError for invalid JSON
                     logger.warning(f"Could not parse profile.channels as JSON: {e}")
                     # If it's just a string description, fall back to querying all channels
                     # and assuming they're all enabled for this profile
                     logger.info(f"Falling back to returning all channels as enabled for profile {profile_id}")
-                    udi = get_udi_manager()
-                    all_channels = udi.get_channels()
-                    formatted_channels = [
-                        {'channel_id': ch['id'], 'enabled': True}
-                        for ch in all_channels if ch.get('id')
-                    ]
                     return jsonify({
                         'profile': profile,
-                        'channels': formatted_channels
+                        'channels': _get_all_channels_as_enabled()
                     })
             else:
                 channels_data = []
@@ -1200,15 +1216,9 @@ def get_profile_channels(profile_id):
         if not isinstance(channels_data, list):
             logger.warning(f"Profile channels is not a list, got type: {type(channels_data).__name__}. Falling back to all channels.")
             # Fall back to querying all channels
-            udi = get_udi_manager()
-            all_channels = udi.get_channels()
-            formatted_channels = [
-                {'channel_id': ch['id'], 'enabled': True}
-                for ch in all_channels if ch.get('id')
-            ]
             return jsonify({
                 'profile': profile,
-                'channels': formatted_channels
+                'channels': _get_all_channels_as_enabled()
             })
         
         # Convert the channels data to the format expected by frontend: [{channel_id, enabled}, ...]
@@ -1243,17 +1253,13 @@ def get_profile_channels(profile_id):
                         'enabled': True
                     })
                 except (ValueError, TypeError):
-                    logger.warning(f"Could not convert channel item to int: {item}")
+                    # Log type only, not the actual value to avoid exposing sensitive data
+                    logger.warning(f"Could not convert channel item to int, type: {type(item).__name__}")
         
         if not formatted_channels:
             # If we couldn't parse any channels, fall back to all channels
             logger.warning(f"No channels were parsed from profile.channels. Falling back to all channels.")
-            udi = get_udi_manager()
-            all_channels = udi.get_channels()
-            formatted_channels = [
-                {'channel_id': ch['id'], 'enabled': True}
-                for ch in all_channels if ch.get('id')
-            ]
+            formatted_channels = _get_all_channels_as_enabled()
         
         logger.info(f"Returning {len(formatted_channels)} channels for profile {profile_id}")
         
