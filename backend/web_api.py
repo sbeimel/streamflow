@@ -1084,7 +1084,7 @@ def diagnose_profiles():
         udi = get_udi_manager()
         
         # Check if UDI is initialized
-        is_initialized = udi._initialized
+        is_initialized = udi.is_initialized()
         
         # Get current profile cache
         profiles = udi.get_channel_profiles()

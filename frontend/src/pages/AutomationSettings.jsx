@@ -993,7 +993,7 @@ export default function AutomationSettings() {
               {/* Profile Diagnostics Section */}
               {profiles.length === 0 && (
                 <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
                   <AlertTitle>No Channel Profiles Found</AlertTitle>
                   <AlertDescription className="space-y-3">
                     <p>Streamflow is not detecting any channel profiles from Dispatcharr.</p>
@@ -1003,8 +1003,9 @@ export default function AutomationSettings() {
                         variant="outline"
                         onClick={handleRefreshProfiles}
                         disabled={refreshingProfiles}
+                        aria-label="Refresh channel profiles from Dispatcharr"
                       >
-                        {refreshingProfiles && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {refreshingProfiles && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-label="Refreshing profiles" />}
                         Refresh Profiles
                       </Button>
                       <Button
@@ -1012,8 +1013,9 @@ export default function AutomationSettings() {
                         variant="outline"
                         onClick={handleDiagnoseProfiles}
                         disabled={diagnosing}
+                        aria-label="Run diagnostic tests for profile fetching"
                       >
-                        {diagnosing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {diagnosing && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-label="Running diagnostics" />}
                         Run Diagnostics
                       </Button>
                     </div>
@@ -1024,7 +1026,7 @@ export default function AutomationSettings() {
               {/* Diagnostic Results */}
               {diagnosticInfo && (
                 <Alert>
-                  <AlertCircle className="h-4 w-4" />
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
                   <AlertTitle>Profile Diagnostic Results</AlertTitle>
                   <AlertDescription className="space-y-2">
                     <div className="grid grid-cols-2 gap-2 text-sm mt-2">
