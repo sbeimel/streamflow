@@ -447,10 +447,21 @@ class UDIFetcher:
             return []
         
         url = f"{self.base_url}/api/channels/profiles/"
+        logger.debug(f"Fetching channel profiles from {url}")
         profiles = self._fetch_url(url)
+        
+        if profiles is None:
+            logger.error("Failed to fetch channel profiles - received None response")
+            return []
+        
         if isinstance(profiles, list):
-            logger.info(f"Fetched {len(profiles)} channel profiles")
+            logger.info(f"Successfully fetched {len(profiles)} channel profiles")
+            if len(profiles) > 0:
+                logger.debug(f"Sample profile: {profiles[0]}")
             return profiles
+        
+        logger.warning(f"Unexpected response type for channel profiles: {type(profiles).__name__}")
+        logger.debug(f"Response content: {profiles}")
         return []
     
     def fetch_channel_profile_by_id(self, profile_id: int) -> Optional[Dict[str, Any]]:

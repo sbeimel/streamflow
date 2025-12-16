@@ -1017,10 +1017,127 @@ def get_profiles():
         udi = get_udi_manager()
         profiles = udi.get_channel_profiles()
         
+        logger.info(f"Returning {len(profiles)} channel profiles")
+        if len(profiles) == 0:
+            logger.warning("No channel profiles found in UDI cache")
+        
         return jsonify(profiles)
     except Exception as e:
-        logger.error(f"Error getting profiles: {e}")
+        logger.error(f"Error getting profiles: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/refresh', methods=['POST'])
+@log_function_call
+def refresh_profiles():
+    """Force refresh channel profiles from Dispatcharr API.
+    
+    This endpoint can be used to manually trigger a profile refresh
+    when profiles are not appearing in the UI.
+    
+    Returns:
+        JSON with refresh status and profile count
+    """
+    try:
+        udi = get_udi_manager()
+        logger.info("Forcing channel profiles refresh...")
+        
+        success = udi.refresh_channel_profiles()
+        
+        if success:
+            profiles = udi.get_channel_profiles()
+            return jsonify({
+                "success": True,
+                "message": f"Successfully refreshed {len(profiles)} channel profiles",
+                "profile_count": len(profiles),
+                "profiles": profiles
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Failed to refresh channel profiles"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error refreshing profiles: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/profiles/diagnose', methods=['GET'])
+@log_function_call
+def diagnose_profiles():
+    """Diagnostic endpoint to check profile fetching status.
+    
+    Returns detailed information about:
+    - UDI initialization status
+    - Profile cache contents
+    - Dispatcharr API connectivity
+    - Recent refresh attempts
+    
+    Returns:
+        JSON with diagnostic information
+    """
+    try:
+        udi = get_udi_manager()
+        
+        # Check if UDI is initialized
+        is_initialized = udi._initialized
+        
+        # Get current profile cache
+        profiles = udi.get_channel_profiles()
+        
+        # Check Dispatcharr configuration
+        from dispatcharr_config import get_dispatcharr_config
+        config = get_dispatcharr_config()
+        is_configured = config.is_configured()
+        base_url = config.get_base_url()
+        
+        # Check if profiles exist in storage
+        try:
+            storage_profiles = udi.storage.load_channel_profiles()
+            storage_count = len(storage_profiles) if storage_profiles else 0
+        except Exception as e:
+            storage_count = f"Error: {e}"
+        
+        # Get last refresh time
+        last_refresh = udi.cache.get_last_refresh('channel_profiles')
+        
+        diagnostic_info = {
+            "udi_initialized": is_initialized,
+            "dispatcharr_configured": is_configured,
+            "dispatcharr_base_url": base_url,
+            "cache_profile_count": len(profiles),
+            "storage_profile_count": storage_count,
+            "last_refresh_time": last_refresh.isoformat() if last_refresh else None,
+            "profiles_in_cache": profiles
+        }
+        
+        if len(profiles) == 0:
+            diagnostic_info["diagnosis"] = "No profiles found"
+            diagnostic_info["possible_causes"] = [
+                "No channel profiles have been created in Dispatcharr yet",
+                "Profile fetch failed during initialization",
+                "Authentication issue preventing API access",
+                "Network connectivity problem"
+            ]
+            diagnostic_info["recommended_actions"] = [
+                "Create channel profiles in Dispatcharr web UI (Channels > Profiles)",
+                "Click 'Refresh Profiles' button to force a refresh",
+                "Check Dispatcharr logs for errors",
+                "Verify DISPATCHARR_BASE_URL, DISPATCHARR_USER, and DISPATCHARR_PASS in .env"
+            ]
+        
+        return jsonify(diagnostic_info)
+        
+    except Exception as e:
+        logger.error(f"Error in profile diagnostics: {e}", exc_info=True)
+        return jsonify({
+            "error": str(e),
+            "message": "Failed to run profile diagnostics"
+        }), 500
 
 
 @app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
