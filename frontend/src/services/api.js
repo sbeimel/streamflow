@@ -145,3 +145,22 @@ export const schedulingAPI = {
 export const versionAPI = {
   getVersion: () => api.get('/version'),
 };
+
+export const profileAPI = {
+  // Profile configuration
+  getConfig: () => api.get('/profile-config'),
+  updateConfig: (config) => api.put('/profile-config', config),
+  
+  // Profile management
+  getProfiles: () => api.get('/profiles'),
+  getProfileChannels: (profileId) => api.get(`/profiles/${profileId}/channels`),
+  
+  // Snapshot management
+  createSnapshot: (profileId) => api.post(`/profiles/${profileId}/snapshot`),
+  getSnapshot: (profileId) => api.get(`/profiles/${profileId}/snapshot`),
+  deleteSnapshot: (profileId) => api.delete(`/profiles/${profileId}/snapshot`),
+  getAllSnapshots: () => api.get('/profiles/snapshots'),
+  
+  // Actions
+  disableEmptyChannels: (profileId) => api.post(`/profiles/${profileId}/disable-empty-channels`),
+};
