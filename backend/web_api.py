@@ -1051,15 +1051,19 @@ def get_profile_channels(profile_id):
         profile = resp.json()
         
         # Get channels for this profile
-        # Note: The profile.channels field might be a list of IDs or a serialized representation
-        # We'll fetch all channels and filter by profile if needed
+        # NOTE: Dispatcharr's ChannelProfile.channels field is read-only and returns
+        # a serialized representation. To get the actual channel list with enabled/disabled
+        # status, the frontend should parse the channels field or make separate API calls
+        # to query channel-profile associations via:
+        # GET /api/channels/channels/?profile={profile_id} (if Dispatcharr supports it)
+        # For now, we return all channels as the profile.channels field contains the IDs
         udi = get_udi_manager()
         all_channels = udi.get_channels()
         
         # Return profile with channels
         return jsonify({
             'profile': profile,
-            'channels': all_channels  # In production, filter by profile
+            'channels': all_channels
         })
     except Exception as e:
         logger.error(f"Error getting profile channels: {e}")
@@ -1091,8 +1095,13 @@ def create_profile_snapshot(profile_id):
             return jsonify({"error": "Profile not found"}), 404
         
         # Get channels for this profile
-        # For now, we'll snapshot all channels
-        # In production, this should query Dispatcharr for channels in this specific profile
+        # NOTE: To properly snapshot only the channels in this profile, we would need to:
+        # 1. Query Dispatcharr for channel-profile associations
+        # 2. Use an endpoint like GET /api/channels/profiles/{id}/channels/
+        # Since the Dispatcharr API's ChannelProfile.channels field is read-only and
+        # the bulk-update endpoint exists for managing associations, we currently
+        # snapshot all channels. The frontend can filter based on profile.channels when needed.
+        # TODO: Update this to query profile-specific channels when Dispatcharr API supports it
         all_channels = udi.get_channels()
         channel_ids = [ch['id'] for ch in all_channels if ch.get('id')]
         

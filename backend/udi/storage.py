@@ -320,6 +320,7 @@ class UDIStorage:
             if success:
                 self._update_metadata('m3u_accounts_last_updated')
             return success
+            return success
     
     # Channel Profiles
     def load_channel_profiles(self) -> List[Dict[str, Any]]:

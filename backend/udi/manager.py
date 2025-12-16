@@ -142,7 +142,7 @@ class UDIManager:
         self._channel_groups_cache = self.storage.load_channel_groups()
         self._logos_cache = self.storage.load_logos()
         self._m3u_accounts_cache = self.storage.load_m3u_accounts()
-        self._channel_profiles_cache = self.storage.load_channel_profiles() if hasattr(self.storage, 'load_channel_profiles') else []
+        self._channel_profiles_cache = self.storage.load_channel_profiles()
         
         # Build index caches
         self._build_indexes()
@@ -428,8 +428,7 @@ class UDIManager:
             self.storage.save_channel_groups(self._channel_groups_cache)
             self.storage.save_logos(self._logos_cache)
             self.storage.save_m3u_accounts(self._m3u_accounts_cache)
-            if hasattr(self.storage, 'save_channel_profiles'):
-                self.storage.save_channel_profiles(self._channel_profiles_cache)
+            self.storage.save_channel_profiles(self._channel_profiles_cache)
             
             # Update metadata
             now = datetime.now()
