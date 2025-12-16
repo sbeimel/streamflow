@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI } from '@/services/api.js'
+import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI } from '@/services/api.js'
 import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
 import {
   DndContext,
@@ -569,8 +569,63 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
-        channelsAPI.getChannels(),
+      
+      // First, load profile configuration to see if we should filter channels
+      const profileConfigResponse = await profileAPI.getConfig().catch((err) => {
+        console.error('Failed to load profile configuration:', err)
+        return { data: null }
+      })
+      const profileConfig = profileConfigResponse.data
+      
+      // Determine which channels to load
+      let channelsToLoad = []
+      let shouldFilterByProfile = false
+      
+      if (profileConfig?.use_profile && profileConfig?.selected_profile_id) {
+        // User is using a specific profile - fetch only enabled channels from that profile
+        shouldFilterByProfile = true
+        try {
+          const profileResponse = await profileAPI.getProfileChannels(profileConfig.selected_profile_id)
+          const profileData = profileResponse.data
+          
+          // Get all channels first
+          const allChannelsResponse = await channelsAPI.getChannels()
+          const allChannels = allChannelsResponse.data || []
+          
+          // Filter to only include channels that are enabled in the profile
+          const enabledChannelIds = new Set()
+          if (profileData && profileData.channels) {
+            for (const ch of profileData.channels) {
+              if (ch.enabled && ch.channel_id) {
+                enabledChannelIds.add(ch.channel_id)
+              }
+            }
+          }
+          
+          channelsToLoad = allChannels.filter(ch => enabledChannelIds.has(ch.id))
+          
+          toast({
+            title: "Profile Filter Active",
+            description: `Showing ${channelsToLoad.length} enabled channels from profile "${profileConfig.selected_profile_name}"`,
+          })
+        } catch (err) {
+          console.error('Failed to load profile channels:', err)
+          toast({
+            title: "Warning",
+            description: "Failed to filter by profile, showing all channels",
+            variant: "destructive"
+          })
+          // Fall back to loading all channels
+          const channelsResponse = await channelsAPI.getChannels()
+          channelsToLoad = channelsResponse.data || []
+        }
+      } else {
+        // Not using a specific profile - load all channels
+        const channelsResponse = await channelsAPI.getChannels()
+        channelsToLoad = channelsResponse.data || []
+      }
+      
+      const [patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
         regexAPI.getPatterns(),
         channelSettingsAPI.getAllSettings(),
         channelsAPI.getGroups(),
@@ -578,14 +633,14 @@ export default function ChannelConfiguration() {
         channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })) // Handle case where no order is saved
       ])
       
-      setChannels(channelsResponse.data)
+      setChannels(channelsToLoad)
       setPatterns(patternsResponse.data.patterns || {})
       setChannelSettings(settingsResponse.data || {})
       setGroups(groupsResponse.data || [])
       setGroupSettings(groupSettingsResponse.data || {})
       
       // Initialize ordered channels
-      const channelData = channelsResponse.data || []
+      const channelData = channelsToLoad
       const savedOrder = orderResponse.data?.order || []
       
       let orderedList = []
@@ -595,10 +650,10 @@ export default function ChannelConfiguration() {
         // Create a map for quick lookup
         const channelMap = new Map(channelData.map(ch => [ch.id, ch]))
         
-        // First, add channels in the saved order
+        // First, add channels in the saved order (only if they're in our filtered list)
         orderedList = savedOrder
           .map(id => channelMap.get(id))
-          .filter(ch => ch !== undefined) // Filter out any channels that no longer exist
+          .filter(ch => ch !== undefined) // Filter out any channels that don't exist or are filtered out
         
         // Then add any new channels that weren't in the saved order (sorted by channel number)
         const orderedIds = new Set(orderedList.map(ch => ch.id))
