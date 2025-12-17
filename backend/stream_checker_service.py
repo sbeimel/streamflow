@@ -2688,7 +2688,8 @@ class StreamCheckerService:
                     automation_manager = AutomatedStreamManager()
                     
                     # Run full discovery (this will add new matching streams but skip dead ones)
-                    assignments = automation_manager.discover_and_assign_streams(force=True)
+                    # Skip automatic check trigger since we'll perform the check explicitly in Step 5
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
                     if assignments:
                         logger.info(f"✓ Stream matching completed")
                     else:

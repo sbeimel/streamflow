@@ -642,12 +642,14 @@ class AutomatedStreamManager:
                 })
             return False
     
-    def discover_and_assign_streams(self, force: bool = False) -> Dict[str, int]:
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
             force: If True, bypass the auto_stream_discovery feature flag check.
                    Used for manual/quick action triggers from the UI.
+            skip_check_trigger: If True, don't trigger immediate stream quality check.
+                   Used when the caller will handle the check itself (e.g., check_single_channel).
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
@@ -930,7 +932,11 @@ class AutomatedStreamManager:
                             stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts)
                             logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for stream quality checking")
                             # Trigger immediate check instead of waiting for scheduled interval
-                            stream_checker.trigger_check_updated_channels()
+                            # Skip if caller will handle the check (e.g., check_single_channel)
+                            if not skip_check_trigger:
+                                stream_checker.trigger_check_updated_channels()
+                            else:
+                                logger.debug("Skipping automatic check trigger (will be handled by caller)")
                         except Exception as sc_error:
                             logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
                 except Exception as mark_error:
