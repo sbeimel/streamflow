@@ -26,6 +26,10 @@ import {
   List
 } from 'lucide-react'
 
+// Pagination constants
+const DEAD_STREAMS_PER_PAGE = 20
+const PAGINATION_MAX_VISIBLE_PAGES = 5
+
 export default function StreamChecker() {
   const [status, setStatus] = useState(null)
   const [progress, setProgress] = useState(null)
@@ -38,7 +42,7 @@ export default function StreamChecker() {
   const [deadStreamsLoading, setDeadStreamsLoading] = useState(false)
   const [deadStreamsPagination, setDeadStreamsPagination] = useState({
     page: 1,
-    per_page: 20,
+    per_page: DEAD_STREAMS_PER_PAGE,
     total_pages: 0,
     has_next: false,
     has_prev: false
@@ -175,7 +179,13 @@ export default function StreamChecker() {
       
       // Validate that backend returned the page we requested
       if (paginationData.page && paginationData.page !== page) {
-        console.warn(`Requested page ${page} but received page ${paginationData.page}`)
+        // Page mismatch - backend returned different page than requested
+        // This could happen if the requested page is out of bounds
+        toast({
+          title: "Warning",
+          description: `Requested page ${page} but received page ${paginationData.page}`,
+          variant: "default"
+        })
       }
       
       setDeadStreams(deadStreamsData)
@@ -911,7 +921,7 @@ export default function StreamChecker() {
                                   {(() => {
                                     const currentPage = deadStreamsPagination.page
                                     const totalPages = deadStreamsPagination.total_pages
-                                    const maxVisiblePages = 5
+                                    const maxVisiblePages = PAGINATION_MAX_VISIBLE_PAGES
                                     let startPage, endPage
                                     
                                     if (totalPages <= maxVisiblePages) {

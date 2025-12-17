@@ -58,6 +58,10 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
 CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
+# Dead streams pagination constants
+DEAD_STREAMS_DEFAULT_PER_PAGE = 20
+DEAD_STREAMS_MAX_PER_PAGE = 100
+
 # EPG refresh processor constants
 EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
 EPG_REFRESH_ERROR_RETRY_SECONDS = 300  # Retry interval after errors (5 minutes)
@@ -1437,13 +1441,13 @@ def get_dead_streams():
     try:
         # Get pagination parameters
         page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
+        per_page = int(request.args.get('per_page', DEAD_STREAMS_DEFAULT_PER_PAGE))
         
         # Validate pagination parameters
         if page < 1:
             page = 1
-        if per_page < 1 or per_page > 100:
-            per_page = 20
+        if per_page < 1 or per_page > DEAD_STREAMS_MAX_PER_PAGE:
+            per_page = DEAD_STREAMS_DEFAULT_PER_PAGE
         
         checker = get_stream_checker_service()
         if not checker or not checker.dead_streams_tracker:
