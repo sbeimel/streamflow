@@ -64,7 +64,8 @@ class M3UPriorityConfig:
             else:
                 # Initialize with default config
                 self._config = {
-                    'accounts': {}  # account_id -> priority_mode mapping
+                    'accounts': {},  # account_id -> priority_mode mapping
+                    'global_priority_mode': 'disabled'  # Global priority mode setting
                 }
                 self._save_config()
                 logger.info("Created default M3U priority configuration")
@@ -140,6 +141,34 @@ class M3UPriorityConfig:
         """
         with self._lock:
             return self._config.copy()
+    
+    def get_global_priority_mode(self) -> str:
+        """Get the global priority mode setting.
+        
+        Returns:
+            Global priority mode string ("disabled", "same_resolution", or "all_streams")
+        """
+        with self._lock:
+            return self._config.get('global_priority_mode', 'disabled')
+    
+    def set_global_priority_mode(self, priority_mode: str) -> bool:
+        """Set the global priority mode.
+        
+        Args:
+            priority_mode: Priority mode ("disabled", "same_resolution", or "all_streams")
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        valid_modes = ['disabled', 'same_resolution', 'all_streams']
+        if priority_mode not in valid_modes:
+            logger.error(f"Invalid global priority_mode: {priority_mode}. Must be one of: {', '.join(valid_modes)}")
+            return False
+        
+        with self._lock:
+            self._config['global_priority_mode'] = priority_mode
+            logger.info(f"Set global priority_mode to {priority_mode}")
+            return self._save_config()
 
 
 # Singleton instance

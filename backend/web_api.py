@@ -1835,7 +1835,7 @@ def refresh_playlist():
 def get_m3u_accounts_endpoint():
     """Get all M3U accounts from Dispatcharr, filtering out 'custom' account if no custom streams exist and non-active accounts.
     
-    Also merges priority_mode settings from local configuration.
+    Also merges priority_mode settings from local configuration and returns global priority mode.
     """
     try:
         from api_utils import get_m3u_accounts, has_custom_streams
@@ -1847,6 +1847,7 @@ def get_m3u_accounts_endpoint():
             return jsonify({"error": "Failed to fetch M3U accounts"}), 500
         
         # Filter out non-active accounts per Dispatcharr API spec
+        # Only show enabled/active playlists in the priority UI
         accounts = [acc for acc in accounts if acc.get('is_active', True)]
         
         # Check if there are any custom streams using efficient method
@@ -1862,15 +1863,15 @@ def get_m3u_accounts_endpoint():
                 if acc.get('name', '').lower() != 'custom'
             ]
         
-        # Merge priority_mode from local configuration
+        # Get global priority mode
         priority_config = get_m3u_priority_config()
-        for account in accounts:
-            account_id = account.get('id')
-            if account_id:
-                # Add priority_mode from local config (defaults to 'disabled')
-                account['priority_mode'] = priority_config.get_priority_mode(account_id)
+        global_priority_mode = priority_config.get_global_priority_mode()
         
-        return jsonify(accounts)
+        # Return accounts with global priority mode
+        return jsonify({
+            "accounts": accounts,
+            "global_priority_mode": global_priority_mode
+        })
     except Exception as e:
         logger.error(f"Error fetching M3U accounts: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1945,6 +1946,37 @@ def update_m3u_account_priority(account_id):
         
     except Exception as e:
         logger.error(f"Error updating M3U account priority: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/m3u-priority/global-mode', methods=['PUT'])
+@log_function_call
+def update_global_priority_mode():
+    """Update the global priority mode for all M3U accounts.
+    
+    Request body:
+        {
+            "priority_mode": str ("disabled", "same_resolution", "all_streams")
+        }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'priority_mode' not in data:
+            return jsonify({"error": "priority_mode is required"}), 400
+        
+        priority_mode = data.get('priority_mode')
+        
+        from m3u_priority_config import get_m3u_priority_config
+        priority_config = get_m3u_priority_config()
+        
+        if not priority_config.set_global_priority_mode(priority_mode):
+            return jsonify({"error": "Failed to save global priority_mode"}), 500
+        
+        logger.info(f"Updated global priority_mode to {priority_mode}")
+        return jsonify({"message": "Global priority mode updated successfully", "priority_mode": priority_mode})
+        
+    except Exception as e:
+        logger.error(f"Error updating global priority mode: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/setup-wizard', methods=['GET'])

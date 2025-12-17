@@ -87,6 +87,7 @@ export const streamAPI = {
 export const m3uAPI = {
   getAccounts: () => api.get('/m3u-accounts'),
   updateAccountPriority: (accountId, data) => api.patch(`/m3u-accounts/${accountId}/priority`, data),
+  updateGlobalPriorityMode: (data) => api.put('/m3u-priority/global-mode', data),
 };
 
 export const streamCheckerAPI = {
