@@ -187,6 +187,25 @@ class TestProfileConfig(unittest.TestCase):
         self.assertFalse(ds_config['enabled'])
         self.assertEqual(ds_config['target_profile_id'], 1)
         self.assertFalse(ds_config['use_snapshot'])
+    
+    def test_disable_profile_usage(self):
+        """Test that disabling profile usage clears the selected profile."""
+        # Set a profile first
+        self.config.set_selected_profile(3, "Test Profile")
+        self.assertEqual(self.config.get_selected_profile(), 3)
+        self.assertTrue(self.config.is_using_profile())
+        
+        # Disable profile usage by setting to None
+        self.config.set_selected_profile(None, None)
+        
+        # Verify profile is cleared and use_profile is False
+        self.assertIsNone(self.config.get_selected_profile())
+        self.assertFalse(self.config.is_using_profile())
+        
+        config_data = self.config.get_config()
+        self.assertIsNone(config_data['selected_profile_id'])
+        self.assertIsNone(config_data['selected_profile_name'])
+        self.assertFalse(config_data['use_profile'])
 
 
 if __name__ == '__main__':
