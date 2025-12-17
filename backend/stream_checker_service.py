@@ -92,6 +92,7 @@ class StreamCheckConfig:
         'stream_analysis': {
             'ffmpeg_duration': 30,  # seconds to analyze each stream
             'timeout': 30,  # timeout for operations
+            'stream_startup_buffer': 10,  # seconds buffer for stream startup (max time before stream starts)
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
             'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
@@ -1128,8 +1129,22 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
-            # Step 4: Match and assign streams (including previously dead ones since tracker was cleared)
-            logger.info("Step 4/6: Matching and assigning streams...")
+            # Step 4: Validate existing streams against regex patterns (remove non-matching)
+            logger.info("Step 4/6: Validating existing streams against regex patterns...")
+            try:
+                if automation_manager is not None:
+                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
+                    if validation_results.get("streams_removed", 0) > 0:
+                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
+                    else:
+                        logger.info("✓ No non-matching streams found")
+                else:
+                    logger.warning("⚠ Skipping stream validation - automation manager not available")
+            except Exception as e:
+                logger.error(f"✗ Failed to validate streams: {e}")
+            
+            # Step 5: Match and assign streams (including previously dead ones since tracker was cleared)
+            logger.info("Step 5/6: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1142,16 +1157,11 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to match streams: {e}")
             
-            # Step 5: Check all channels (force check to bypass immunity)
-            logger.info("Step 5/6: Queueing all channels for checking...")
+            # Step 6: Check all channels (force check to bypass immunity)
+            logger.info("Step 6/6: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
-            # Step 6: After all channels are queued, disable empty channels if configured
-            # Note: This will be triggered after the batch finalization in _finalize_batch_changelog
-            # but we also trigger it here in case the batch finalization doesn't run
-            # (e.g., if there are no channels to check or if checking is disabled)
-            logger.info("Step 6/6: Checking for empty channels to disable...")
-            self._trigger_empty_channel_disabling()
+            # Note: Empty channel disabling will be triggered after batch finalization
             
             logger.info("=" * 80)
             logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
@@ -1691,7 +1701,8 @@ class StreamCheckerService:
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                 )
                 
                 # Process results - ALL checks are complete at this point
@@ -2117,7 +2128,8 @@ class StreamCheckerService:
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                 )
                 
                 # Update stream stats on dispatcharr with ffmpeg-extracted data
@@ -2230,7 +2242,8 @@ class StreamCheckerService:
                         timeout=analysis_params.get('timeout', 30),
                         retries=analysis_params.get('retries', 1),
                         retry_delay=analysis_params.get('retry_delay', 10),
-                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                     )
                     self._update_stream_stats(analyzed)
                     score = self._calculate_stream_score(analyzed)

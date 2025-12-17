@@ -517,6 +517,7 @@ function GroupCard({ group, channels, groupSettings, onUpdateSettings }) {
 // M3U Priority Management Component
 function M3UPriorityManagement() {
   const [accounts, setAccounts] = useState([])
+  const [globalPriorityMode, setGlobalPriorityMode] = useState('disabled')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
@@ -529,7 +530,14 @@ function M3UPriorityManagement() {
     try {
       setLoading(true)
       const response = await m3uAPI.getAccounts()
-      setAccounts(response.data || [])
+      // API returns { accounts: [], global_priority_mode: '' }
+      if (response.data && Array.isArray(response.data.accounts)) {
+        setAccounts(response.data.accounts)
+        setGlobalPriorityMode(response.data.global_priority_mode || 'disabled')
+      } else {
+        // Fallback for backwards compatibility if API returns array directly
+        setAccounts(Array.isArray(response.data) ? response.data : [])
+      }
     } catch (err) {
       console.error('Failed to load M3U accounts:', err)
       toast({
@@ -568,6 +576,29 @@ function M3UPriorityManagement() {
     }
   }
 
+  const handleGlobalPriorityModeChange = async (value) => {
+    try {
+      setSaving(true)
+      await m3uAPI.updateGlobalPriorityMode({ priority_mode: value })
+      
+      setGlobalPriorityMode(value)
+      
+      toast({
+        title: "Success",
+        description: "Global priority mode updated successfully"
+      })
+    } catch (err) {
+      console.error('Failed to update global priority mode:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to update global priority mode",
+        variant: "destructive"
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -588,20 +619,44 @@ function M3UPriorityManagement() {
         {accounts.length === 0 ? (
           <Alert>
             <AlertDescription>
-              No M3U accounts found. Add M3U accounts in Dispatcharr to configure their priority.
+              No enabled M3U accounts found. Add and enable M3U accounts in Dispatcharr to configure their priority.
             </AlertDescription>
           </Alert>
         ) : (
           <>
+            {/* Global Priority Mode Selector */}
+            <div className="space-y-3 rounded-lg border p-4 bg-muted/50">
+              <Label htmlFor="global-priority-mode" className="text-base font-semibold">Global Priority Mode</Label>
+              <Select
+                value={globalPriorityMode}
+                onValueChange={handleGlobalPriorityModeChange}
+                disabled={saving}
+              >
+                <SelectTrigger id="global-priority-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                  <SelectItem value="same_resolution">Same Resolution Only</SelectItem>
+                  <SelectItem value="all_streams">All Streams</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {globalPriorityMode === 'disabled' && 'Priority system is disabled. Streams are selected based on quality only.'}
+                {globalPriorityMode === 'same_resolution' && 'Priority applied within same resolution groups. Among streams with the same resolution, prefer streams from higher priority accounts.'}
+                {globalPriorityMode === 'all_streams' && 'Priority applied to all streams. Always prefer streams from higher priority accounts, even if lower quality.'}
+              </p>
+            </div>
+
+            {/* Account Priority Table */}
             <div className="space-y-4">
               <div className="rounded-lg border">
-                <div className="grid grid-cols-4 gap-4 p-4 bg-muted font-medium text-sm">
+                <div className="grid grid-cols-2 gap-4 p-4 bg-muted font-medium text-sm">
                   <div>Account Name</div>
                   <div>Priority (0-100)</div>
-                  <div className="col-span-2">Priority Mode</div>
                 </div>
                 {accounts.map((account) => (
-                  <div key={account.id} className="grid grid-cols-4 gap-4 p-4 border-t items-center">
+                  <div key={account.id} className="grid grid-cols-2 gap-4 p-4 border-t items-center">
                     <div className="font-medium">{account.name}</div>
                     <div>
                       <Input
@@ -610,29 +665,8 @@ function M3UPriorityManagement() {
                         max="100"
                         value={account.priority || 0}
                         onChange={(e) => handlePriorityChange(account.id, 'priority', parseInt(e.target.value) || 0)}
-                        disabled={saving}
+                        disabled={saving || globalPriorityMode === 'disabled'}
                       />
-                    </div>
-                    <div className="col-span-2">
-                      <Select
-                        value={account.priority_mode || 'disabled'}
-                        onValueChange={(value) => handlePriorityChange(account.id, 'priority_mode', value)}
-                        disabled={saving}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="disabled">Disabled</SelectItem>
-                          <SelectItem value="same_resolution">Same Resolution Only</SelectItem>
-                          <SelectItem value="all_streams">All Streams</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {account.priority_mode === 'disabled' && 'Priority is not applied'}
-                        {account.priority_mode === 'same_resolution' && 'Priority applied within same resolution group'}
-                        {account.priority_mode === 'all_streams' && 'Priority applied to all streams regardless of quality'}
-                      </p>
                     </div>
                   </div>
                 ))}
@@ -643,10 +677,11 @@ function M3UPriorityManagement() {
               <AlertDescription>
                 <strong>How it works:</strong>
                 <ul className="list-disc list-inside mt-2 space-y-1">
-                  <li><strong>Disabled:</strong> Priority value is ignored, streams are selected based on quality only</li>
+                  <li><strong>Disabled:</strong> Priority values are ignored, streams are selected based on quality only</li>
                   <li><strong>Same Resolution Only:</strong> Among streams with the same resolution, prefer streams from higher priority accounts</li>
                   <li><strong>All Streams:</strong> Always prefer streams from higher priority accounts, even if lower quality</li>
                 </ul>
+                <p className="mt-2"><strong>Note:</strong> Only enabled M3U accounts are shown in this list.</p>
               </AlertDescription>
             </Alert>
           </>
