@@ -452,7 +452,8 @@ class AutomatedStreamManager:
                 "auto_playlist_update": True,
                 "auto_stream_discovery": True,
                 "changelog_tracking": True
-            }
+            },
+            "validate_existing_streams": False  # Validate existing streams in channels against regex patterns
         }
         
         self._save_config(default_config)
@@ -999,6 +1000,174 @@ class AutomatedStreamManager:
                     "error": str(e)
                 })
             return {}
+    
+    def validate_and_remove_non_matching_streams(self) -> Dict[str, Any]:
+        """
+        Validate existing streams in channels against regex patterns.
+        Remove streams that no longer match their channel's patterns.
+        
+        Returns:
+            Dict containing validation statistics:
+            - channels_checked: Number of channels checked
+            - streams_removed: Total streams removed
+            - channels_modified: Number of channels that had streams removed
+            - details: List of channel details with removed streams
+        """
+        log_function_call(logger, "validate_and_remove_non_matching_streams")
+        
+        if not self.config.get("validate_existing_streams", False):
+            logger.debug("Stream validation is disabled in config")
+            return {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": []
+            }
+        
+        try:
+            logger.info("=" * 80)
+            logger.info("Starting validation of existing streams against regex patterns")
+            logger.info("=" * 80)
+            
+            udi = get_udi_manager()
+            all_channels = udi.get_all_channels()
+            
+            if not all_channels:
+                logger.info("No channels found")
+                return {
+                    "channels_checked": 0,
+                    "streams_removed": 0,
+                    "channels_modified": 0,
+                    "details": []
+                }
+            
+            # Get channel settings manager to respect matching mode settings
+            channel_settings = get_channel_settings_manager()
+            
+            # Filter channels with matching enabled (similar logic to match_streams_to_channels)
+            matching_enabled_channel_ids = []
+            for channel in all_channels:
+                channel_id = channel.get('id')
+                channel_group_id = channel.get('group')
+                
+                # Get effective settings
+                channel_explicit_settings = channel_settings.get_channel_settings(channel_id)
+                has_explicit_matching = 'matching_mode' in channel_explicit_settings
+                
+                if has_explicit_matching:
+                    if channel_settings.is_matching_enabled(channel_id):
+                        matching_enabled_channel_ids.append(channel_id)
+                else:
+                    if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='matching'):
+                        matching_enabled_channel_ids.append(channel_id)
+            
+            validation_results = {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": []
+            }
+            
+            # Get all streams from UDI for lookup
+            all_streams = udi.get_all_streams()
+            stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
+            
+            # Validate each channel's streams
+            for channel in all_channels:
+                channel_id = channel.get('id')
+                
+                # Skip channels with matching disabled
+                if channel_id not in matching_enabled_channel_ids:
+                    continue
+                
+                validation_results["channels_checked"] += 1
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get streams for this channel
+                channel_streams = udi.get_channel_streams(channel_id)
+                if not channel_streams:
+                    continue
+                
+                streams_to_keep = []
+                streams_to_remove = []
+                
+                for stream in channel_streams:
+                    if not isinstance(stream, dict) or 'id' not in stream:
+                        continue
+                    
+                    stream_id = stream['id']
+                    stream_name = stream.get('name', '')
+                    
+                    # Look up full stream data
+                    full_stream = stream_lookup.get(stream_id)
+                    if not full_stream:
+                        logger.warning(f"Stream {stream_id} not found in UDI for channel {channel_name}")
+                        streams_to_keep.append(stream_id)
+                        continue
+                    
+                    # Check if stream matches any pattern for this channel
+                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
+                    
+                    if str(channel_id) in matching_channels:
+                        # Stream still matches, keep it
+                        streams_to_keep.append(stream_id)
+                    else:
+                        # Stream no longer matches, remove it
+                        streams_to_remove.append({
+                            "stream_id": stream_id,
+                            "stream_name": stream_name
+                        })
+                        logger.info(f"  Removing non-matching stream from {channel_name}: {stream_name}")
+                
+                # Update channel if streams need to be removed
+                if streams_to_remove:
+                    try:
+                        from api_utils import update_channel_streams
+                        success = update_channel_streams(channel_id, streams_to_keep)
+                        
+                        if success:
+                            validation_results["streams_removed"] += len(streams_to_remove)
+                            validation_results["channels_modified"] += 1
+                            validation_results["details"].append({
+                                "channel_id": channel_id,
+                                "channel_name": channel_name,
+                                "removed_count": len(streams_to_remove),
+                                "removed_streams": streams_to_remove[:10]  # Limit to first 10 for logging
+                            })
+                            
+                            # Refresh channel in UDI after update
+                            time.sleep(0.3)
+                            udi.refresh_channel_by_id(channel_id)
+                            
+                            logger.info(f"✓ Removed {len(streams_to_remove)} non-matching stream(s) from {channel_name}")
+                        else:
+                            logger.error(f"Failed to update channel {channel_name} after validation")
+                    except Exception as e:
+                        logger.error(f"Error removing streams from channel {channel_name}: {e}")
+            
+            logger.info(f"Stream validation completed: Checked {validation_results['channels_checked']} channels, " +
+                       f"removed {validation_results['streams_removed']} streams from {validation_results['channels_modified']} channels")
+            
+            # Add changelog entry if there were changes
+            if validation_results['streams_removed'] > 0 and self.config.get("enabled_features", {}).get("changelog_tracking", True):
+                self.changelog.add_entry("stream_validation", {
+                    "channels_checked": validation_results['channels_checked'],
+                    "streams_removed": validation_results['streams_removed'],
+                    "channels_modified": validation_results['channels_modified'],
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            return validation_results
+            
+        except Exception as e:
+            logger.error(f"Stream validation failed: {e}", exc_info=True)
+            return {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": [],
+                "error": str(e)
+            }
     
     def should_run_playlist_update(self) -> bool:
         """Check if it's time to run playlist update."""
