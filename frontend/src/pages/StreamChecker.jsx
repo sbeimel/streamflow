@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
 import { 
@@ -25,6 +26,10 @@ import {
   List
 } from 'lucide-react'
 
+// Pagination constants
+const DEAD_STREAMS_PER_PAGE = 20
+const PAGINATION_MAX_VISIBLE_PAGES = 5
+
 export default function StreamChecker() {
   const [status, setStatus] = useState(null)
   const [progress, setProgress] = useState(null)
@@ -35,6 +40,14 @@ export default function StreamChecker() {
   const [editedConfig, setEditedConfig] = useState(null)
   const [deadStreams, setDeadStreams] = useState([])
   const [deadStreamsLoading, setDeadStreamsLoading] = useState(false)
+  const [deadStreamsPagination, setDeadStreamsPagination] = useState({
+    page: 1,
+    per_page: DEAD_STREAMS_PER_PAGE,
+    total_pages: 0,
+    has_next: false,
+    has_prev: false
+  })
+  const [totalDeadStreams, setTotalDeadStreams] = useState(0)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -157,11 +170,33 @@ export default function StreamChecker() {
     })
   }
 
-  const loadDeadStreams = async () => {
+  const loadDeadStreams = async (page = deadStreamsPagination.page) => {
     try {
       setDeadStreamsLoading(true)
-      const response = await deadStreamsAPI.getDeadStreams()
-      setDeadStreams(response.data.dead_streams || [])
+      const response = await deadStreamsAPI.getDeadStreams(page, deadStreamsPagination.per_page)
+      const deadStreamsData = response.data.dead_streams || []
+      const paginationData = response.data.pagination || {}
+      
+      // Validate that backend returned the page we requested
+      if (paginationData.page && paginationData.page !== page) {
+        // Page mismatch - backend returned different page than requested
+        // This could happen if the requested page is out of bounds
+        toast({
+          title: "Warning",
+          description: `Requested page ${page} but received page ${paginationData.page}`,
+          variant: "default"
+        })
+      }
+      
+      setDeadStreams(deadStreamsData)
+      setTotalDeadStreams(response.data.total_dead_streams || 0)
+      setDeadStreamsPagination({
+        page: paginationData.page || page,
+        per_page: paginationData.per_page || deadStreamsPagination.per_page,
+        total_pages: paginationData.total_pages || 0,
+        has_next: paginationData.has_next || false,
+        has_prev: paginationData.has_prev || false
+      })
     } catch (err) {
       console.error('Failed to load dead streams:', err)
       toast({
@@ -827,44 +862,118 @@ export default function StreamChecker() {
                           </AlertDescription>
                         </Alert>
                       ) : (
-                        <div className="space-y-2">
-                          {deadStreams.map((stream) => (
-                            <Card key={stream.url} className="p-4">
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="flex-1 space-y-1">
-                                  <div className="flex items-center gap-2">
-                                    <Badge variant="destructive">Dead</Badge>
-                                    <span className="font-medium">{stream.stream_name}</span>
-                                  </div>
-                                  <div className="text-sm text-muted-foreground space-y-1">
+                        <>
+                          <div className="space-y-2">
+                            {deadStreams.map((stream) => (
+                              <Card key={stream.url} className="p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="flex-1 space-y-1">
                                     <div className="flex items-center gap-2">
-                                      <span className="font-mono text-xs">{stream.url}</span>
+                                      <Badge variant="destructive">Dead</Badge>
+                                      <span className="font-medium">{stream.stream_name}</span>
                                     </div>
-                                    {stream.marked_dead_at && (
+                                    <div className="text-sm text-muted-foreground space-y-1">
                                       <div className="flex items-center gap-2">
-                                        <Clock className="h-3 w-3" />
-                                        <span>Marked dead: {new Date(stream.marked_dead_at).toLocaleString()}</span>
+                                        <span className="font-mono text-xs">{stream.url}</span>
                                       </div>
-                                    )}
+                                      {stream.marked_dead_at && (
+                                        <div className="flex items-center gap-2">
+                                          <Clock className="h-3 w-3" />
+                                          <span>Marked dead: {new Date(stream.marked_dead_at).toLocaleString()}</span>
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleReviveStream(stream.url)}
+                                    disabled={actionLoading === `revive-${stream.url}`}
+                                  >
+                                    {actionLoading === `revive-${stream.url}` ? (
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                                    )}
+                                    Revive
+                                  </Button>
                                 </div>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleReviveStream(stream.url)}
-                                  disabled={actionLoading === `revive-${stream.url}`}
-                                >
-                                  {actionLoading === `revive-${stream.url}` ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <CheckCircle2 className="mr-2 h-4 w-4" />
-                                  )}
-                                  Revive
-                                </Button>
+                              </Card>
+                            ))}
+                          </div>
+                          
+                          {/* Pagination */}
+                          {deadStreamsPagination.total_pages > 1 && (
+                            <div className="flex flex-col items-center gap-2 pt-4">
+                              <div className="text-sm text-muted-foreground">
+                                Showing page {deadStreamsPagination.page} of {deadStreamsPagination.total_pages} ({totalDeadStreams} total)
                               </div>
-                            </Card>
-                          ))}
-                        </div>
+                              <Pagination>
+                                <PaginationContent>
+                                  <PaginationItem>
+                                    <PaginationPrevious 
+                                      onClick={() => deadStreamsPagination.has_prev && loadDeadStreams(deadStreamsPagination.page - 1)}
+                                      className={!deadStreamsPagination.has_prev ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    />
+                                  </PaginationItem>
+                                  
+                                  {/* Show page numbers with smart windowing */}
+                                  {(() => {
+                                    const currentPage = deadStreamsPagination.page
+                                    const totalPages = deadStreamsPagination.total_pages
+                                    const maxVisiblePages = PAGINATION_MAX_VISIBLE_PAGES
+                                    let startPage, endPage
+                                    
+                                    if (totalPages <= maxVisiblePages) {
+                                      // Show all pages if total is less than max
+                                      startPage = 1
+                                      endPage = totalPages
+                                    } else {
+                                      // Calculate range to show current page in the middle when possible
+                                      const halfVisible = Math.floor(maxVisiblePages / 2)
+                                      
+                                      if (currentPage <= halfVisible + 1) {
+                                        // Near the start
+                                        startPage = 1
+                                        endPage = maxVisiblePages
+                                      } else if (currentPage >= totalPages - halfVisible) {
+                                        // Near the end
+                                        startPage = totalPages - maxVisiblePages + 1
+                                        endPage = totalPages
+                                      } else {
+                                        // In the middle
+                                        startPage = currentPage - halfVisible
+                                        endPage = currentPage + halfVisible
+                                      }
+                                    }
+                                    
+                                    return Array.from({ length: endPage - startPage + 1 }, (_, i) => {
+                                      const pageNum = startPage + i
+                                      return (
+                                        <PaginationItem key={pageNum}>
+                                          <PaginationLink
+                                            onClick={() => loadDeadStreams(pageNum)}
+                                            isActive={pageNum === currentPage}
+                                            className="cursor-pointer"
+                                          >
+                                            {pageNum}
+                                          </PaginationLink>
+                                        </PaginationItem>
+                                      )
+                                    })
+                                  })()}
+                                  
+                                  <PaginationItem>
+                                    <PaginationNext 
+                                      onClick={() => deadStreamsPagination.has_next && loadDeadStreams(deadStreamsPagination.page + 1)}
+                                      className={!deadStreamsPagination.has_next ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    />
+                                  </PaginationItem>
+                                </PaginationContent>
+                              </Pagination>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>

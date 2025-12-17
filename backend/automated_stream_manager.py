@@ -606,12 +606,15 @@ class AutomatedStreamManager:
             # This ensures deleted/added streams are reflected in the cache
             # Also refresh M3U accounts to detect any new accounts added in Dispatcharr
             # And refresh channel groups to detect any group changes (splits, merges, etc.)
+            # Profile refresh is critical: ensures channel profiles stay synced with Dispatcharr
+            # (deletions, modifications, new profiles) to prevent orphaned profile references
             logger.info("Refreshing UDI cache after playlist update...")
             udi = get_udi_manager()
             udi.refresh_m3u_accounts()  # Check for new M3U accounts
             udi.refresh_streams()
             udi.refresh_channels()
             udi.refresh_channel_groups()  # Check for new/updated channel groups
+            udi.refresh_channel_profiles()  # Sync profiles with Dispatcharr to prevent orphaned references
             logger.info("UDI cache refreshed successfully")
             
             # Trigger EPG refresh to pick up any EPG/tvg-id changes made in Dispatcharr
@@ -1216,7 +1219,18 @@ class AutomatedStreamManager:
                 # Small delay to allow playlist processing
                 time.sleep(10)
                 
-                # 2. Discover and assign new streams (uses cached M3U accounts)
+                # 2. Validate existing streams against regex patterns (remove non-matching)
+                # This should happen during matching periods, not during stream checks
+                try:
+                    validation_results = self.validate_and_remove_non_matching_streams()
+                    if validation_results.get("streams_removed", 0) > 0:
+                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
+                    else:
+                        logger.debug("No non-matching streams found to remove")
+                except Exception as e:
+                    logger.error(f"✗ Failed to validate streams against regex: {e}")
+                
+                # 3. Discover and assign new streams (uses cached M3U accounts)
                 assignments = self.discover_and_assign_streams()
             
             logger.info("Automation cycle completed")

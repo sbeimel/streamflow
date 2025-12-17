@@ -58,6 +58,10 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
 CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
+# Dead streams pagination constants
+DEAD_STREAMS_DEFAULT_PER_PAGE = 20
+DEAD_STREAMS_MAX_PER_PAGE = 100
+
 # EPG refresh processor constants
 EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
 EPG_REFRESH_ERROR_RETRY_SECONDS = 300  # Retry interval after errors (5 minutes)
@@ -1433,8 +1437,18 @@ def get_changelog():
 
 @app.route('/api/dead-streams', methods=['GET'])
 def get_dead_streams():
-    """Get dead streams statistics and list."""
+    """Get dead streams statistics and list with pagination."""
     try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', DEAD_STREAMS_DEFAULT_PER_PAGE))
+        
+        # Validate pagination parameters
+        if page < 1:
+            page = 1
+        if per_page < 1 or per_page > DEAD_STREAMS_MAX_PER_PAGE:
+            per_page = DEAD_STREAMS_DEFAULT_PER_PAGE
+        
         checker = get_stream_checker_service()
         if not checker or not checker.dead_streams_tracker:
             return jsonify({"error": "Dead streams tracker not available"}), 503
@@ -1454,9 +1468,23 @@ def get_dead_streams():
         # Sort by marked_dead_at (newest first)
         dead_streams_list.sort(key=lambda x: x.get('marked_dead_at', ''), reverse=True)
         
+        # Calculate pagination
+        total_count = len(dead_streams_list)
+        start_index = (page - 1) * per_page
+        end_index = start_index + per_page
+        paginated_streams = dead_streams_list[start_index:end_index]
+        total_pages = (total_count + per_page - 1) // per_page
+        
         return jsonify({
-            "total_dead_streams": len(dead_streams_list),
-            "dead_streams": dead_streams_list
+            "total_dead_streams": total_count,
+            "dead_streams": paginated_streams,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+                "has_next": end_index < total_count,
+                "has_prev": page > 1
+            }
         })
     except Exception as e:
         logger.error(f"Error getting dead streams: {e}")
