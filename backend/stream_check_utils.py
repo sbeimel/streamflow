@@ -721,7 +721,8 @@ def analyze_stream(
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.info(f"  Retry attempt {attempt} of {retries} (attempt {attempt + 1} of {total_attempts}) for {stream_name}")
                 else:
-                    logger.info(f"  ↻ Retry {attempt}/{retries} for {stream_name}")
+                    # Show current attempt out of total attempts
+                    logger.info(f"  ↻ Retry {attempt + 1}/{total_attempts} for {stream_name}")
                 time.sleep(retry_delay)
 
             try:
@@ -791,7 +792,8 @@ def analyze_stream(
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... (attempt {attempt + 1} of {total_attempts})")
                         else:
-                            logger.warning(f"  ↻ Retrying {stream_name} in {retry_delay}s (attempt {attempt + 2} of {total_attempts})")
+                            # Show next attempt number correctly
+                            logger.warning(f"  ↻ Retrying {stream_name} in {retry_delay}s (attempt {attempt + 2}/{total_attempts})")
             except Exception as inner_e:
                 logger.error(f"  Exception during stream analysis (attempt {attempt + 1} of {total_attempts}): {inner_e}")
                 # Continue to next retry if available, otherwise use the default error result
