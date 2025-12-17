@@ -606,14 +606,15 @@ class AutomatedStreamManager:
             # This ensures deleted/added streams are reflected in the cache
             # Also refresh M3U accounts to detect any new accounts added in Dispatcharr
             # And refresh channel groups to detect any group changes (splits, merges, etc.)
-            # Also refresh channel profiles to detect profile changes (additions, deletions, modifications)
+            # Profile refresh is critical: ensures channel profiles stay synced with Dispatcharr
+            # (deletions, modifications, new profiles) to prevent orphaned profile references
             logger.info("Refreshing UDI cache after playlist update...")
             udi = get_udi_manager()
             udi.refresh_m3u_accounts()  # Check for new M3U accounts
             udi.refresh_streams()
             udi.refresh_channels()
             udi.refresh_channel_groups()  # Check for new/updated channel groups
-            udi.refresh_channel_profiles()  # Check for profile changes (additions, deletions, modifications)
+            udi.refresh_channel_profiles()  # Sync profiles with Dispatcharr to prevent orphaned references
             logger.info("UDI cache refreshed successfully")
             
             # Trigger EPG refresh to pick up any EPG/tvg-id changes made in Dispatcharr

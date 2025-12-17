@@ -1473,6 +1473,7 @@ def get_dead_streams():
         start_index = (page - 1) * per_page
         end_index = start_index + per_page
         paginated_streams = dead_streams_list[start_index:end_index]
+        total_pages = (total_count + per_page - 1) // per_page
         
         return jsonify({
             "total_dead_streams": total_count,
@@ -1480,7 +1481,7 @@ def get_dead_streams():
             "pagination": {
                 "page": page,
                 "per_page": per_page,
-                "total_pages": (total_count + per_page - 1) // per_page if per_page > 0 else 0,
+                "total_pages": total_pages,
                 "has_next": end_index < total_count,
                 "has_prev": page > 1
             }
