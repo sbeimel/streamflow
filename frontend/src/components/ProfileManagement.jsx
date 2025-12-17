@@ -354,7 +354,14 @@ export default function ProfileManagement() {
               <Switch
                 id="use_profile"
                 checked={profileConfig?.use_profile || false}
-                onCheckedChange={(checked) => handleProfileConfigChange('use_profile', checked)}
+                onCheckedChange={(checked) => {
+                  handleProfileConfigChange('use_profile', checked)
+                  // Clear selected profile when disabling the feature
+                  if (!checked) {
+                    handleProfileConfigChange('selected_profile_id', null)
+                    handleProfileConfigChange('selected_profile_name', null)
+                  }
+                }}
               />
               <Label htmlFor="use_profile" className="text-base font-medium">
                 Use Specific Profile

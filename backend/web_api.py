@@ -982,11 +982,17 @@ def update_profile_config():
         data = request.get_json()
         
         # Update selected profile
-        if 'selected_profile_id' in data:
-            profile_config.set_selected_profile(
-                data.get('selected_profile_id'),
-                data.get('selected_profile_name')
-            )
+        if 'selected_profile_id' in data or 'use_profile' in data:
+            # Get the profile IDs from the request, defaulting to current values if not provided
+            profile_id = data.get('selected_profile_id')
+            profile_name = data.get('selected_profile_name')
+            
+            # If use_profile is explicitly set to False, clear the selected profile
+            if 'use_profile' in data and not data['use_profile']:
+                profile_id = None
+                profile_name = None
+            
+            profile_config.set_selected_profile(profile_id, profile_name)
         
         # Update dead stream config
         if 'dead_streams' in data:
