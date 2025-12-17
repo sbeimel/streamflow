@@ -1129,22 +1129,10 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
-            # Step 4: Validate existing streams against regex patterns (remove non-matching)
-            logger.info("Step 4/6: Validating existing streams against regex patterns...")
-            try:
-                if automation_manager is not None:
-                    validation_results = automation_manager.validate_and_remove_non_matching_streams()
-                    if validation_results.get("streams_removed", 0) > 0:
-                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
-                    else:
-                        logger.info("✓ No non-matching streams found")
-                else:
-                    logger.warning("⚠ Skipping stream validation - automation manager not available")
-            except Exception as e:
-                logger.error(f"✗ Failed to validate streams: {e}")
-            
-            # Step 5: Match and assign streams (including previously dead ones since tracker was cleared)
-            logger.info("Step 5/6: Matching and assigning streams...")
+            # Step 4: Match and assign streams (including previously dead ones since tracker was cleared)
+            # Note: Stream validation against regex is now done during matching periods (automation cycle)
+            # instead of during global checks, as per requirements
+            logger.info("Step 4/5: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1157,8 +1145,8 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to match streams: {e}")
             
-            # Step 6: Check all channels (force check to bypass immunity)
-            logger.info("Step 6/6: Queueing all channels for checking...")
+            # Step 5: Check all channels (force check to bypass immunity)
+            logger.info("Step 5/5: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
             # Note: Empty channel disabling will be triggered after batch finalization

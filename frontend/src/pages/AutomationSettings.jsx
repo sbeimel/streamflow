@@ -650,19 +650,6 @@ export default function AutomationSettings() {
                   <Label htmlFor="check_on_update">Check Channels on M3U Update</Label>
                 </div>
                 <p className="text-sm text-muted-foreground">Automatically queue channels for checking when they receive M3U playlist updates.</p>
-                
-                <div className="flex items-center space-x-2 pt-4">
-                  <Switch
-                    id="validate_existing_streams"
-                    checked={config?.validate_existing_streams === true}
-                    onCheckedChange={(checked) => handleConfigChange('validate_existing_streams', checked)}
-                  />
-                  <Label htmlFor="validate_existing_streams">Validate Existing Streams Against Regex</Label>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Before checking streams in automations, remove streams from channels that no longer match their regex patterns. 
-                  Useful when stream names change from the provider.
-                </p>
               </CardContent>
             </Card>
           )}

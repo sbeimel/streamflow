@@ -113,7 +113,7 @@ export const changelogAPI = {
 };
 
 export const deadStreamsAPI = {
-  getDeadStreams: () => api.get('/dead-streams'),
+  getDeadStreams: (page = 1, per_page = 20) => api.get('/dead-streams', { params: { page, per_page } }),
   reviveStream: (streamUrl) => api.post('/dead-streams/revive', { stream_url: streamUrl }),
   clearAllDeadStreams: () => api.post('/dead-streams/clear'),
 };
