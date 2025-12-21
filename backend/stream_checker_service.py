@@ -1175,6 +1175,33 @@ class StreamCheckerService:
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
+                # Filter by profile if one is selected
+                from profile_config import get_profile_config
+                profile_config = get_profile_config()
+                
+                if profile_config.is_using_profile():
+                    selected_profile_id = profile_config.get_selected_profile()
+                    if selected_profile_id:
+                        try:
+                            # Get channels that are enabled in this profile from UDI
+                            profile_data = udi.get_profile_channels(selected_profile_id)
+                            
+                            # According to Dispatcharr API, profile_data.channels is a list of channel IDs
+                            profile_channel_ids = set()
+                            if profile_data and 'channels' in profile_data and isinstance(profile_data['channels'], list):
+                                for channel_id in profile_data['channels']:
+                                    if isinstance(channel_id, int):
+                                        profile_channel_ids.add(channel_id)
+                            
+                            # Filter channels to only those in the profile
+                            channels = [ch for ch in channels if ch.get('id') in profile_channel_ids]
+                            channel_ids = [ch['id'] for ch in channels]
+                            
+                            profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
+                            logger.info(f"Profile filter active: Using {len(channel_ids)} channels from profile '{profile_name}'")
+                        except Exception as e:
+                            logger.error(f"Failed to load profile channels, using all channels: {e}")
+                
                 # Filter channels by checking_mode setting (channel-level overrides group-level)
                 channel_settings = get_channel_settings_manager()
                 filtered_channel_ids = []

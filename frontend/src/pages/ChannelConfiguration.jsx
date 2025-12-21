@@ -1204,7 +1204,8 @@ export default function ChannelConfiguration() {
   }
 
   // Filter channels based on search query and group settings
-  const filteredChannels = channels.filter(channel => {
+  // Use orderedChannels as the base to ensure consistent ordering between tabs
+  const filteredChannels = orderedChannels.filter(channel => {
     // First check group visibility
     if (!isChannelVisibleByGroup(channel)) return false
     
