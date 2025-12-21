@@ -79,7 +79,7 @@ class MatchProfilesManager:
         new_id = max([p.get('id', 0) for p in profiles], default=0) + 1
         
         # Create profile data
-        now = datetime.utcnow().isoformat()
+        now = datetime.now().isoformat()
         profile_data = {
             'id': new_id,
             'name': name,
@@ -128,7 +128,7 @@ class MatchProfilesManager:
         if enabled is not None:
             profile_data['enabled'] = enabled
         
-        profile_data['updated_at'] = datetime.utcnow().isoformat()
+        profile_data['updated_at'] = datetime.now().isoformat()
         
         # Save to storage
         self.storage.update_match_profile(profile_id, profile_data)
