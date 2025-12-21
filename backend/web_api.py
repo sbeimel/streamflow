@@ -99,22 +99,18 @@ def get_regex_matcher():
     return regex_matcher
 
 def check_wizard_complete():
-    """Check if the setup wizard has been completed."""
+    """Check if the setup wizard has been completed.
+    
+    Note: As of recent changes, regex patterns are now optional and not required
+    for wizard completion. This allows users to complete the wizard and start
+    using the system even if they haven't configured any channel patterns yet.
+    """
     try:
         config_file = CONFIG_DIR / 'automation_config.json'
         regex_file = CONFIG_DIR / 'channel_regex_config.json'
         
         # Check if configuration files exist
         if not config_file.exists() or not regex_file.exists():
-            return False
-        
-        # Check if we have patterns configured
-        if regex_file.exists():
-            matcher = get_regex_matcher()
-            patterns = matcher.get_patterns()
-            if not patterns.get('patterns'):
-                return False
-        else:
             return False
         
         # Check if we can connect to Dispatcharr (optional - use cached result)
@@ -1270,16 +1266,54 @@ def create_profile_snapshot(profile_id):
         if not profile:
             return jsonify({"error": "Profile not found"}), 404
         
-        # Get channels for this profile
-        # NOTE: To properly snapshot only the channels in this profile, we would need to:
-        # 1. Query Dispatcharr for channel-profile associations
-        # 2. Use an endpoint like GET /api/channels/profiles/{id}/channels/
-        # Since the Dispatcharr API's ChannelProfile.channels field is read-only and
-        # the bulk-update endpoint exists for managing associations, we currently
-        # snapshot all channels. The frontend can filter based on profile.channels when needed.
-        # TODO: Update this to query profile-specific channels when Dispatcharr API supports it
-        all_channels = udi.get_channels()
-        channel_ids = [ch['id'] for ch in all_channels if ch.get('id')]
+        # Get channels for this profile - only enabled channels
+        # First try to get from cache
+        profile_channels_data = udi.get_profile_channels(profile_id)
+        
+        if profile_channels_data:
+            # Use cached data - filter for enabled channels only
+            channels = profile_channels_data.get('channels', [])
+            channel_ids = [
+                ch.get('channel_id') 
+                for ch in channels 
+                if ch.get('enabled', False) and ch.get('channel_id')
+            ]
+            logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from cache")
+        else:
+            # Fall back to direct API call if not in cache
+            logger.info("Profile channels not in cache, fetching from Dispatcharr API")
+            base_url = _get_base_url()
+            if not base_url:
+                return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+            
+            from udi.fetcher import _get_auth_headers
+            
+            # Get profile details directly from Dispatcharr
+            profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
+            resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
+            resp.raise_for_status()
+            profile_data = resp.json()
+            
+            # Parse the channels field
+            channels_data = profile_data.get('channels', '')
+            
+            # Try to parse if it's a JSON string
+            if isinstance(channels_data, str) and channels_data.strip():
+                try:
+                    channels_data = json.loads(channels_data)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
+                    channels_data = []
+            elif not isinstance(channels_data, list):
+                channels_data = []
+            
+            # Filter for enabled channels only
+            channel_ids = [
+                ch.get('channel_id') 
+                for ch in channels_data 
+                if ch.get('enabled', False) and ch.get('channel_id')
+            ]
+            logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from API")
         
         # Create snapshot
         profile_config = get_profile_config()
@@ -2051,10 +2085,11 @@ def get_setup_wizard_status():
                 except:
                     pass
         
+        # Patterns are now optional - wizard can be completed without them
         status["setup_complete"] = all([
             status["automation_config_exists"],
             status["regex_config_exists"],
-            status["has_patterns"],
+            # Removed has_patterns requirement - it's now optional
             status["has_channels"],
             status["dispatcharr_connection"]
         ])
