@@ -647,7 +647,7 @@ class UDIManager:
             return False
     
     def refresh_channel_profiles(self) -> bool:
-        """Refresh only channel profiles data.
+        """Refresh only channel profiles data and their channel associations.
         
         Returns:
             True if refresh successful
@@ -660,6 +660,16 @@ class UDIManager:
             if hasattr(self.storage, 'save_channel_profiles'):
                 self.storage.save_channel_profiles(profiles)
             self.cache.mark_refreshed('channel_profiles')
+            
+            # Also refresh profile channel associations
+            profile_ids = [p.get('id') for p in profiles if p.get('id')]
+            if profile_ids:
+                logger.info(f"Fetching channel data for {len(profile_ids)} profiles...")
+                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids)
+                if hasattr(self.storage, 'save_profile_channels'):
+                    self.storage.save_profile_channels(self._profile_channels_cache)
+                self.cache.mark_refreshed('profile_channels')
+            
             return True
         except Exception as e:
             logger.error(f"Error refreshing channel profiles: {e}")
