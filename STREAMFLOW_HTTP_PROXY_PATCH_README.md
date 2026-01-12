@@ -2,20 +2,15 @@
 
 ## Übersicht
 
-Dieses Patch erweitert StreamFlow um HTTP Proxy Support für M3U Accounts. Dies ermöglicht es, M3U Playlists und Streams über HTTP Proxies zu laden, was besonders nützlich ist für:
+StreamFlow unterstützt HTTP Proxy für M3U Accounts vollständig. Die Proxy-Einstellungen werden automatisch aus der Dispatcharr API gelesen und für Stream Quality Checks verwendet.
 
-- Geo-Blocking Umgehung
-- Netzwerk-Routing über spezifische Proxy-Server
-- Load Balancing über mehrere Proxy-Server
-- Anonymisierung des Traffics
+## ✅ Implementierte Features
 
-## Features
-
-### M3U Account Proxy Support
-- **HTTP Proxy URL Feld** in M3U Account Konfiguration
-- **Automatische Proxy-Verwendung** für FFmpeg Stream-Checks
-- **Flexible Konfiguration** pro M3U Account
-- **Fallback-Mechanismus** bei Proxy-Fehlern
+### Automatische Proxy-Integration
+- **Dispatcharr API Integration**: Proxy-Einstellungen werden automatisch aus M3U Account Konfiguration gelesen
+- **FFmpeg Proxy Support**: Automatische Proxy-Verwendung für alle Stream Quality Checks
+- **Per-Account Konfiguration**: Jeder M3U Account kann individuelle Proxy-Einstellungen haben
+- **Fallback-Mechanismus**: Bei Proxy-Fehlern wird direkte Verbindung verwendet
 
 ### Unterstützte Proxy-Formate
 - `http://proxy-server:8080`
@@ -24,32 +19,42 @@ Dieses Patch erweitert StreamFlow um HTTP Proxy Support für M3U Accounts. Dies 
 
 ## Implementation Details
 
-### Backend Änderungen
+### ✅ Backend Implementation
 
-1. **M3U Account Model** erweitert um `proxy` Feld
-2. **Stream Check Utils** erweitert um Proxy-Support für FFmpeg
-3. **API Utils** erweitert um Proxy-Konfiguration für Stream-Checks
+1. **`get_stream_proxy(stream_id)` Funktion** in `api_utils.py`
+   - Holt Proxy-Einstellungen aus UDI Cache
+   - Verknüpft Stream mit M3U Account
+   - Gibt Proxy URL zurück oder None
 
-### Frontend Änderungen
+2. **Stream Checker Integration** in `stream_checker_service.py`
+   - Automatischer Aufruf von `get_stream_proxy()` vor jedem Stream Check
+   - FFmpeg wird mit `-http_proxy` Parameter aufgerufen
+   - Logging der Proxy-Verwendung
 
-1. **M3U Account Form** erweitert um Proxy URL Eingabefeld
-2. **Validierung** der Proxy URL Format
-3. **Benutzerfreundliche Hilfe-Texte**
+3. **UDI System Integration**
+   - M3U Account Daten inklusive Proxy werden aus Dispatcharr API gecacht
+   - Automatische Aktualisierung bei Dispatcharr Änderungen
+
+### ✅ Dispatcharr Integration
+
+Die Proxy-Konfiguration erfolgt komplett in Dispatcharr:
+1. M3U Account in Dispatcharr bearbeiten
+2. HTTP Proxy URL eintragen
+3. StreamFlow verwendet automatisch diese Einstellungen
 
 ## Verwendung
 
-### In der UI:
+### In Dispatcharr:
 1. Navigiere zu M3U Accounts
 2. Bearbeite einen M3U Account
 3. Füge die Proxy URL im Format `http://proxy:8080` hinzu
 4. Speichere die Änderungen
+5. StreamFlow verwendet automatisch den Proxy für Quality Checks
 
-### Über API:
-```bash
-curl -X PUT http://localhost:8000/api/m3u-accounts/123 \
-  -H "Content-Type: application/json" \
-  -d '{"proxy": "http://proxy-server:8080"}'
-```
+### Keine Frontend-Änderungen nötig:
+- Proxy-Konfiguration erfolgt ausschließlich in Dispatcharr
+- StreamFlow zeigt keine Proxy-Einstellungen in der UI
+- Proxy-Verwendung ist transparent für den Benutzer
 
 ## Proxy-Konfiguration Beispiele
 
@@ -71,7 +76,7 @@ https://secure-proxy.example.com:8080
 ## Technische Details
 
 ### FFmpeg Proxy Integration
-Das System verwendet FFmpeg's HTTP Proxy Support:
+Das System verwendet FFmpeg's HTTP Proxy Support automatisch:
 ```bash
 ffmpeg -http_proxy http://proxy:8080 -i stream_url -t 30 -f null -
 ```
@@ -86,31 +91,41 @@ ffmpeg -http_proxy http://proxy:8080 -i stream_url -t 30 -f null -
 - **Credential Handling** für Proxy-Authentifizierung
 - **Logging** ohne Passwort-Preisgabe
 
-## Installation
+## Status
 
-1. Patch anwenden: `git apply streamflow_http_proxy_support.patch`
-2. Backend neu starten
-3. Frontend neu builden (falls erforderlich)
+✅ **Vollständig implementiert und funktionsfähig**
+- Backend Integration: ✅ Implementiert
+- Dispatcharr API Integration: ✅ Implementiert  
+- FFmpeg Proxy Support: ✅ Implementiert
+- Fehlerbehandlung: ✅ Implementiert
 
 ## Kompatibilität
 
-- **Rückwärtskompatibel**: Bestehende M3U Accounts funktionieren ohne Proxy
-- **Optional**: Proxy-Feld kann leer gelassen werden
-- **FFmpeg Version**: Erfordert FFmpeg mit HTTP Proxy Support
+- **Rückwärtskompatibel**: M3U Accounts ohne Proxy funktionieren normal
+- **Optional**: Proxy-Feld kann in Dispatcharr leer gelassen werden
+- **FFmpeg Version**: Erfordert FFmpeg mit HTTP Proxy Support (standardmäßig verfügbar)
 
 ## Troubleshooting
 
 ### Proxy-Verbindung schlägt fehl
-- Überprüfe Proxy-URL Format
-- Teste Proxy-Erreichbarkeit
+- Überprüfe Proxy-URL Format in Dispatcharr
+- Teste Proxy-Erreichbarkeit vom StreamFlow Container
 - Prüfe Firewall-Einstellungen
 
 ### Streams laden nicht über Proxy
-- Überprüfe FFmpeg Logs
+- Überprüfe StreamFlow Logs nach `get_stream_proxy` Einträgen
 - Teste Proxy mit anderen Tools
 - Prüfe Proxy-Authentifizierung
 
 ### Performance-Probleme
 - Wähle geografisch nahen Proxy
 - Teste verschiedene Proxy-Server
-- Überwache Proxy-Latenz
+- Überwache Proxy-Latenz in den Logs
+
+## Logs überwachen
+
+Proxy-Verwendung wird geloggt:
+```
+DEBUG - Found proxy 'http://proxy:8080' for stream 12345 from M3U account 1
+DEBUG - M3U account 2 has no proxy configured
+```

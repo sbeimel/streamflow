@@ -439,10 +439,32 @@ export default function Dashboard() {
                         <Badge variant={isEnabled ? "default" : "secondary"}>
                           {isEnabled ? "Enabled" : "Disabled"}
                         </Badge>
+                        {/* Proxy Status Badge */}
+                        {playlist.proxy && playlist.proxy.trim() ? (
+                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                            Proxy: {(() => {
+                              try {
+                                return new URL(playlist.proxy).hostname
+                              } catch {
+                                return 'Invalid URL'
+                              }
+                            })()}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs bg-gray-50 text-gray-600 border-gray-200">
+                            Direct
+                          </Badge>
+                        )}
                       </div>
                       {playlist.url && (
                         <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
                           {playlist.url}
+                        </p>
+                      )}
+                      {/* Show full proxy URL on hover/second line if configured */}
+                      {playlist.proxy && playlist.proxy.trim() && (
+                        <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
+                          Proxy: {playlist.proxy}
                         </p>
                       )}
                     </div>

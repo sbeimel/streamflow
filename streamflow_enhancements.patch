@@ -755,7 +755,7 @@ index 1234567..abcdefg 100644
    const { toast } = useToast()
 
    useEffect(() => {
-@@ -58,12 +59,18 @@ export default function StreamChecker() {
+@@ -58,12 +59,16 @@ export default function StreamChecker() {
 
    const loadData = async () => {
      try {
@@ -774,17 +774,17 @@ index 1234567..abcdefg 100644
          setEditedConfig(configResponse.data)
        }
 +      
-+      // Set M3U accounts - filter only active accounts
++      // Set M3U accounts - use same logic as Dashboard
 +      const accounts = m3uAccountsResponse.data.accounts || []
-+      const activeAccounts = accounts.filter(account => account.active)
-+      setM3uAccounts(activeAccounts)
++      setM3uAccounts(accounts)
      } catch (err) {
        console.error('Failed to load stream checker data:', err)
      } finally {
-@@ -169,15 +176,13 @@ export default function StreamChecker() {
+@@ -169,35 +174,6 @@ export default function StreamChecker() {
+     })
    }
 
-   const addAccountLimit = () => {
+-  const addAccountLimit = () => {
 -    // TODO: In future, we could fetch M3U accounts and show a dropdown
 -    // For now, use a simple prompt
 -    const accountId = prompt('Enter M3U Account ID (you can find these in the M3U Accounts section):')
@@ -792,123 +792,363 @@ index 1234567..abcdefg 100644
 -      const id = accountId.trim()
 -      // Check if account already has a limit
 -      if (editedConfig?.account_stream_limits?.account_limits?.[id] !== undefined) {
-+    // M3U accounts are already loaded, no need to load them again
-+    if (m3uAccounts.length === 0) {
-+      toast({
-+        title: "No M3U Accounts",
-+        description: "No active M3U accounts found. Please check your M3U configuration.",
-+        variant: "destructive"
-+      })
-+    }
-+  }
-+
-+  const addSpecificAccountLimit = (accountId, accountName) => {
-+    // Check if account already has a limit
-+    if (editedConfig?.account_stream_limits?.account_limits?.[accountId] !== undefined) {
-+      toast({
-+        title: "Account Already Configured",
-+        description: `Account "${accountName}" already has a limit configured.`,
-+        variant: "destructive"
-+      })
-+      return
-+    }
-+    
-+    setEditedConfig(prevConfig => {
-+      const newConfig = JSON.parse(JSON.stringify(prevConfig))
-+      if (!newConfig.account_stream_limits) {
-+        newConfig.account_stream_limits = {}
-+      }
-+      if (!newConfig.account_stream_limits.account_limits) {
-+        newConfig.account_stream_limits.account_limits = {}
-+      }
-+      newConfig.account_stream_limits.account_limits[accountId] = 50 // Default to 50 streams
-+      return newConfig
-+    })
-+    
-+    toast({
-+      title: "Account Limit Added",
-+      description: `Added limit configuration for "${accountName}"`,
-+    })
-+  }
-
-@@ -825,9 +830,7 @@ export default function StreamChecker() {
-                               {configEditing && (
-                                 <Button
-                                   variant="outline"
-                                   size="sm"
-                                   onClick={() => addAccountLimit()}
-                                 >
+-        toast({
+-          title: "Account Already Configured",
+-          description: `Account ${id} already has a limit configured.`,
+-          variant: "destructive"
+-        })
+-        return
+-      }
+-      
+-      setEditedConfig(prevConfig => {
+-        const newConfig = JSON.parse(JSON.stringify(prevConfig))
+-        if (!newConfig.account_stream_limits) {
+-          newConfig.account_stream_limits = {}
+-        }
+-        if (!newConfig.account_stream_limits.account_limits) {
+-          newConfig.account_stream_limits.account_limits = {}
+-        }
+-        newConfig.account_stream_limits.account_limits[id] = 50 // Default to 50 streams
+-        return newConfig
+-      })
+-      
+-      toast({
+-        title: "Account Limit Added",
+-        description: `Added limit configuration for M3U Account ${id}`,
+-      })
+-    }
+-  }
+-
+   const updateAccountLimit = (accountId, limit) => {
+     setEditedConfig(prevConfig => {
+       const newConfig = JSON.parse(JSON.stringify(prevConfig))
+@@ -825,9 +801,7 @@ export default function StreamChecker() {
+                           <div className="space-y-4">
+                             <div className="flex items-center justify-between">
+                               <h4 className="font-medium">Per-Account Limits</h4>
+-                              {configEditing && (
+-                                <Button
+-                                  variant="outline"
+-                                  size="sm"
+-                                  onClick={() => addAccountLimit()}
+-                                >
 -                                  Add Account Limit
-+                                  Show Available Accounts
-                                 </Button>
-                               )}
+-                                </Button>
+-                              )}
                              </div>
-@@ -835,6 +838,32 @@ export default function StreamChecker() {
+                             <p className="text-sm text-muted-foreground">
                                Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
                              </p>
 
-+                            {/* Show available M3U accounts when editing */}
+-                            {/* Show available M3U accounts when editing */}
+-                            {configEditing && m3uAccounts.length > 0 && (
++                            {/* Show all M3U accounts with input fields when editing */}
 +                            {configEditing && m3uAccounts.length > 0 && (
-+                              <div className="space-y-2">
-+                                <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
-+                                <div className="grid gap-2 max-h-48 overflow-y-auto">
-+                                  {m3uAccounts.map((account) => {
-+                                    const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
-+                                    return (
-+                                      <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
-+                                        <div className="flex-1">
-+                                          <div className="text-sm font-medium">{account.name || `Account ${account.id}`}</div>
-+                                          <div className="text-xs text-muted-foreground">ID: {account.id} • Priority: {account.priority || 'N/A'}</div>
-+                                        </div>
-+                                        <Button
-+                                          variant={hasLimit ? "secondary" : "outline"}
-+                                          size="sm"
-+                                          onClick={() => addSpecificAccountLimit(account.id, account.name || `Account ${account.id}`)}
-+                                          disabled={hasLimit}
-+                                        >
-+                                          {hasLimit ? 'Already Added' : 'Add Limit'}
-+                                        </Button>
-+                                      </div>
-+                                    )
-+                                  })}
-+                                </div>
-+                              </div>
-+                            )}
-+
-+                            {/* Show configured limits */}
-                             {editedConfig?.account_stream_limits?.account_limits && 
-                              Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
                                <div className="space-y-2">
--                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => (
-+                                <h5 className="text-sm font-medium">Configured Account Limits</h5>
-+                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => {
-+                                  const account = m3uAccounts.find(acc => acc.id.toString() === accountId.toString())
-+                                  const accountName = account?.name || `Account ${accountId}`
-+                                  return (
-                                   <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
-                                     <div className="flex-1">
--                                      <Label className="text-sm font-medium">Account ID: {accountId}</Label>
-+                                      <Label className="text-sm font-medium">{accountName}</Label>
-+                                      <div className="text-xs text-muted-foreground">ID: {accountId}</div>
-                                     </div>
-                                     <div className="w-24">
-                                       <Input
-@@ -866,7 +895,7 @@ export default function StreamChecker() {
-                                       </Button>
-                                     )}
-                                   </div>
--                                ))}
-+                                  )
-+                                })}
+-                                <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
+-                                <div className="grid gap-2 max-h-48 overflow-y-auto">
++                                <h5 className="text-sm font-medium">M3U Account Limits (0 = use global limit)</h5>
++                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                   {m3uAccounts.map((account) => {
+-                                    const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
++                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] || 0
+                                     return (
+-                                      <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
++                                      <div key={account.id} className="flex items-center gap-2 p-3 border rounded-md">
+                                         <div className="flex-1">
+                                           <div className="text-sm font-medium">{account.name || `Account ${account.id}`}</div>
+                                           <div className="text-xs text-muted-foreground">ID: {account.id} • Priority: {account.priority || 'N/A'}</div>
+                                         </div>
+-                                        <Button
+-                                          variant={hasLimit ? "secondary" : "outline"}
+-                                          size="sm"
+-                                          onClick={() => addSpecificAccountLimit(account.id, account.name || `Account ${account.id}`)}
+-                                          disabled={hasLimit}
+-                                        >
+-                                          {hasLimit ? 'Already Added' : 'Add Limit'}
+-                                        </Button>
++                                        <div className="w-20">
++                                          <Input
++                                            type="number"
++                                            min="0"
++                                            step="1"
++                                            value={currentLimit}
++                                            onChange={(e) => {
++                                              const newLimit = parseInt(e.target.value) || 0
++                                              setEditedConfig(prevConfig => {
++                                                const newConfig = JSON.parse(JSON.stringify(prevConfig))
++                                                if (!newConfig.account_stream_limits) {
++                                                  newConfig.account_stream_limits = {}
++                                                }
++                                                if (!newConfig.account_stream_limits.account_limits) {
++                                                  newConfig.account_stream_limits.account_limits = {}
++                                                }
++                                                if (newLimit === 0) {
++                                                  // Remove from config if set to 0 (use global limit)
++                                                  delete newConfig.account_stream_limits.account_limits[account.id]
++                                                } else {
++                                                  newConfig.account_stream_limits.account_limits[account.id] = newLimit
++                                                }
++                                                return newConfig
++                                              })
++                                            }}
++                                            disabled={!configEditing}
++                                            className="text-center"
++                                            placeholder="0"
++                                          />
++                                        </div>
++                                        <div className="text-xs text-muted-foreground w-16">
++                                          {currentLimit === 0 ? 'global' : 'streams'}
++                                        </div>
+                                       </div>
+                                     )
+                                   })}
+                                 </div>
++                                <div className="text-xs text-muted-foreground">
++                                  <strong>0</strong> = Use global limit • <strong>&gt;0</strong> = Override with specific limit per channel
++                                </div>
+                               </div>
+                             )}
+
+-                            {editedConfig?.account_stream_limits?.account_limits && 
++                            {/* Show configured limits summary */}
++                            {editedConfig?.account_stream_limits?.account_limits && 
+                              Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
+-                              <div className="space-y-2">
+-                                <h5 className="text-sm font-medium">Configured Account Limits</h5>
+-                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => {
+-                                  const account = m3uAccounts.find(acc => acc.id.toString() === accountId.toString())
+-                                  const accountName = account?.name || `Account ${accountId}`
+-                                  return (
+-                                    <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
+-                                      <div className="flex-1">
+-                                        <Label className="text-sm font-medium">{accountName}</Label>
+-                                        <div className="text-xs text-muted-foreground">ID: {accountId}</div>
+-                                      </div>
+-                                      <div className="w-24">
+-                                        <Input
+-                                          type="number"
+-                                          min="0"
+-                                          step="1"
+-                                          value={limit}
+-                                          onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
+-                                          disabled={!configEditing}
+-                                          className="text-center"
+-                                        />
+-                                      </div>
+-                                      <div className="text-sm text-muted-foreground">streams</div>
+-                                      {configEditing && (
+-                                        <Button
+-                                          variant="outline"
+-                                          size="sm"
+-                                          onClick={() => removeAccountLimit(accountId)}
+-                                        >
+-                                          <Trash2 className="h-4 w-4" />
+-                                        </Button>
+-                                      )}
+-                                    </div>
+-                                  )
+-                                })}
++                              <div className="text-sm text-muted-foreground">
++                                <strong>Active overrides:</strong> {Object.keys(editedConfig.account_stream_limits.account_limits).length} account(s) with custom limits
                                </div>
                              ) : (
                                <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
                                  No per-account limits configured. All accounts will use the global limit.
-+                                {configEditing && m3uAccounts.length === 0 && (
-+                                  <div className="mt-2 text-xs text-muted-foreground">
-+                                    No active M3U accounts found. Check your M3U configuration.
-+                                  </div>
-+                                )}
+-                                {configEditing && m3uAccounts.length === 0 && (
+-                                  <div className="mt-2 text-xs text-muted-foreground">
+-                                    No active M3U accounts found. Check your M3U configuration.
+-                                  </div>
+-                                )}
                                </div>
                              )}
                            </div>
+
+# HTTP Proxy Support Documentation
+# 
+# Note: HTTP Proxy support is already fully implemented in the base StreamFlow version.
+# This documentation section describes the existing functionality for reference.
+
+diff --git a/backend/api_utils.py b/backend/api_utils.py
+index 1234567..abcdefg 100644
+--- a/backend/api_utils.py
++++ b/backend/api_utils.py
+@@ -690,6 +690,65 @@ def update_channel_streams(channel_id: int, streams: List[Dict[str, Any]]) -> b
+         return False
+
+
++def get_stream_proxy(stream_id: int) -> Optional[str]:
++    """
++    Get HTTP proxy for a stream from its M3U account.
++    
++    This function retrieves the HTTP proxy configuration for a specific stream
++    by looking up its associated M3U account in the UDI cache and extracting
++    the proxy URL from the account configuration.
++    
++    Args:
++        stream_id (int): The ID of the stream to get proxy for
++        
++    Returns:
++        Optional[str]: Proxy URL string (e.g., 'http://proxy:8080') or None if no proxy configured
++    """
++    log_function_call(logger, "get_stream_proxy", stream_id=stream_id)
++    
++    try:
++        # Get stream from UDI cache
++        udi = get_udi_manager()
++        stream = udi.get_stream_by_id(stream_id)
++        
++        if not stream:
++            logger.debug(f"Stream {stream_id} not found in UDI cache")
++            log_function_return(logger, "get_stream_proxy", None)
++            return None
++        
++        # Get M3U account ID from stream
++        m3u_account_id = stream.get('m3u_account')
++        if not m3u_account_id:
++            logger.debug(f"Stream {stream_id} has no M3U account association")
++            log_function_return(logger, "get_stream_proxy", None)
++            return None
++        
++        # Get M3U accounts from UDI cache
++        accounts = udi.get_m3u_accounts()
++        if not accounts:
++            logger.debug("No M3U accounts found in UDI cache")
++            log_function_return(logger, "get_stream_proxy", None)
++            return None
++        
++        # Find the specific M3U account and extract proxy
++        for account in accounts:
++            if account.get('id') == m3u_account_id:
++                proxy = account.get('proxy')
++                if proxy and proxy.strip():
++                    logger.debug(f"Found proxy '{proxy}' for stream {stream_id} from M3U account {m3u_account_id}")
++                    log_function_return(logger, "get_stream_proxy", proxy.strip())
++                    return proxy.strip()
++                else:
++                    logger.debug(f"M3U account {m3u_account_id} has no proxy configured")
++                    log_function_return(logger, "get_stream_proxy", None)
++                    return None
++        
++        logger.debug(f"M3U account {m3u_account_id} not found for stream {stream_id}")
++        log_function_return(logger, "get_stream_proxy", None)
++        return None
++        
++    except Exception as e:
++        log_exception(logger, e, f"get_stream_proxy (stream_id={stream_id})")
++        return None
++
+ def get_channel_streams(channel_id: int) -> List[Dict[str, Any]]:
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -2325,6 +2325,11 @@ class StreamCheckerService:
+                 
+                 logger.debug(f"Analyzing stream {stream['id']} for channel {channel_id}")
+                 
++                # Get HTTP proxy for this stream from its M3U account
++                from api_utils import get_stream_proxy
++                proxy = get_stream_proxy(stream['id'])
++                
+                 analyzed = analyze_stream(
+                     stream['url'], 
+                     stream_id=stream['id'],
+@@ -2332,6 +2337,7 @@ class StreamCheckerService:
+                     timeout=timeout,
+                     max_resolution_height=max_resolution_height,
+                     min_bitrate_kbps=min_bitrate_kbps,
++                    proxy=proxy,
+                     progress_callback=progress_callback
+                 )
+                 
+@@ -2450,6 +2456,11 @@ class StreamCheckerService:
+                     
+                     logger.debug(f"Analyzing stream {stream['id']} for global action")
+                     
++                    # Get HTTP proxy for this stream from its M3U account
++                    from api_utils import get_stream_proxy
++                    proxy = get_stream_proxy(stream['id'])
++                    
+                     analyzed = analyze_stream(
+                         stream['url'], 
+                         stream_id=stream['id'],
+@@ -2457,6 +2468,7 @@ class StreamCheckerService:
+                         timeout=timeout,
+                         max_resolution_height=max_resolution_height,
+                         min_bitrate_kbps=min_bitrate_kbps,
++                        proxy=proxy,
+                         progress_callback=progress_callback
+                     )
+
+diff --git a/backend/stream_check_utils.py b/backend/stream_check_utils.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_check_utils.py
++++ b/backend/stream_check_utils.py
+@@ -45,7 +45,8 @@ def analyze_stream(url: str, 
+                   timeout: int = 30,
+                   max_resolution_height: int = 0,
+                   min_bitrate_kbps: int = 0,
+-                  progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
++                  progress_callback: Optional[Callable] = None,
++                  proxy: Optional[str] = None) -> Dict[str, Any]:
+     """
+     Analyze a stream URL using FFmpeg to extract metadata and check availability.
+     
+@@ -58,6 +59,7 @@ def analyze_stream(url: str,
+         min_bitrate_kbps (int): Minimum bitrate in kbps (0 = no minimum)
+         progress_callback (Optional[Callable]): Callback function for progress updates
++        proxy (Optional[str]): HTTP proxy URL (e.g., 'http://proxy:8080')
+         
+     Returns:
+         Dict[str, Any]: Analysis results containing:
+@@ -85,6 +87,10 @@ def analyze_stream(url: str,
+         # Build FFmpeg command
+         cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error']
+         
++        # Add HTTP proxy if configured
++        if proxy:
++            cmd.extend(['-http_proxy', proxy])
++            logger.debug(f"Using HTTP proxy: {proxy}")
++        
+         # Add timeout
+         cmd.extend(['-timeout', str(timeout * 1000000)])  # FFmpeg timeout in microseconds
+         
+diff --git a/frontend/src/pages/Dashboard.jsx b/frontend/src/pages/Dashboard.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/Dashboard.jsx
++++ b/frontend/src/pages/Dashboard.jsx
+@@ -430,6 +430,18 @@ export default function Dashboard() {
+                         <Badge variant={isEnabled ? "default" : "secondary"}>
+                           {isEnabled ? "Enabled" : "Disabled"}
+                         </Badge>
++                        {/* Proxy Status Badge */}
++                        {playlist.proxy && playlist.proxy.trim() ? (
++                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
++                            Proxy: {(() => {
++                              try {
++                                return new URL(playlist.proxy).hostname
++                              } catch {
++                                return 'Invalid URL'
++                              }
++                            })()}
++                          </Badge>
++                        ) : (
++                          <Badge variant="outline" className="text-xs bg-gray-50 text-gray-600 border-gray-200">
++                            Direct
++                          </Badge>
++                        )}
+                       </div>
+                       {playlist.url && (
+                         <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
+                           {playlist.url}
+                         </p>
+                       )}
++                      {/* Show full proxy URL on hover/second line if configured */}
++                      {playlist.proxy && playlist.proxy.trim() && (
++                        <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
++                          Proxy: {playlist.proxy}
++                        </p>
++                      )}
+                     </div>

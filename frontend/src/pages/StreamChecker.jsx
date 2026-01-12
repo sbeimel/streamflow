@@ -795,6 +795,8 @@ export default function StreamChecker() {
                             </div>
                             <p className="text-sm text-muted-foreground">
                               Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
+                              <br />
+                              <strong>How it works:</strong> Account limits &gt;0 override global limit, account limits =0 use global limit.
                             </p>
 
                             {/* Show all M3U accounts with input fields when editing */}
@@ -849,6 +851,8 @@ export default function StreamChecker() {
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   <strong>0</strong> = Use global limit • <strong>&gt;0</strong> = Override with specific limit per channel
+                                  <br />
+                                  <strong>Example:</strong> Global=2, Account A=5, Account B=0 → Channel gets max 5 from A + max 2 from B
                                 </div>
                               </div>
                             )}
