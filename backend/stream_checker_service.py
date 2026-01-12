@@ -3499,7 +3499,9 @@ class StreamCheckerService:
             analyzed_streams = []
             for stream in current_streams:
                 stream_stats = stream.get('stream_stats', {})
-                if isinstance(stream_stats, str):
+                if stream_stats is None:
+                    stream_stats = {}
+                elif isinstance(stream_stats, str):
                     try:
                         stream_stats = json.loads(stream_stats)
                     except json.JSONDecodeError:
