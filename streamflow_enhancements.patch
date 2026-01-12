@@ -1289,3 +1289,35 @@ index 1234567..abcdefg 100644
 +        </DialogContent>
 +      </Dialog>
      </div>
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -1885,8 +1885,21 @@ class StreamCheckerService:
+                     step_detail=f'Using smart scheduler with per-account limits'
+                 )
+                 
++                # Create a wrapper function that includes proxy support
++                def analyze_stream_with_proxy(stream_url, stream_id, stream_name, **kwargs):
++                    """Wrapper function that adds proxy support to analyze_stream for concurrent checking."""
++                    # Get HTTP proxy for this stream from its M3U account
++                    from api_utils import get_stream_proxy
++                    proxy = get_stream_proxy(stream_id)
++                    
++                    # Call analyze_stream with proxy parameter
++                    return analyze_stream(
++                        stream_url=stream_url,
++                        stream_id=stream_id,
++                        stream_name=stream_name,
++                        proxy=proxy,
++                        **kwargs
++                    )
++                
+                 # Check streams in parallel with account-aware limits
+                 results = smart_scheduler.check_streams_with_limits(
+                     streams=streams_to_check,
+-                    check_function=analyze_stream,
++                    check_function=analyze_stream_with_proxy,
+                     progress_callback=progress_callback,
+                     stagger_delay=stagger_delay,

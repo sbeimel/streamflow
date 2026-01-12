@@ -14,6 +14,7 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=5000
       - CONFIG_DIR=/app/data
+      - DEBUG_MODE=true
       # Alternative: Specify environment variables directly instead of using .env file
       # Uncomment the lines below and comment out 'env_file' section to use env vars only
       # - DISPATCHARR_BASE_URL=http://your-dispatcharr-instance.com:9191
