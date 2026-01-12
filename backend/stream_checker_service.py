@@ -3336,9 +3336,6 @@ class StreamCheckerService:
         # Apply the configuration update
         self.config.update(updates)
         
-        # Save the configuration to disk
-        self._save_config()
-        
         # Log the changes
         if config_changes:
             logger.info(f"Configuration updated: {'; '.join(config_changes)}")
