@@ -851,7 +851,9 @@ index 1234567..abcdefg 100644
 +                                <div className="space-y-2 max-h-64 overflow-y-auto">
                                    {m3uAccounts.map((account) => {
 -                                    const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
-+                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] || 0
++                                    // Use String(account.id) for consistent key lookup (JSON keys are always strings)
++                                    const accountIdStr = String(account.id)
++                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[accountIdStr] ?? ''
                                      return (
 -                                      <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
 +                                      <div key={account.id} className="flex items-center gap-2 p-3 border rounded-md">
@@ -874,7 +876,8 @@ index 1234567..abcdefg 100644
 +                                            step="1"
 +                                            value={currentLimit}
 +                                            onChange={(e) => {
-+                                              const newLimit = parseInt(e.target.value) || 0
++                                              const inputValue = e.target.value
++                                              const newLimit = inputValue === '' ? null : parseInt(inputValue) || 0
 +                                              setEditedConfig(prevConfig => {
 +                                                const newConfig = JSON.parse(JSON.stringify(prevConfig))
 +                                                if (!newConfig.account_stream_limits) {
@@ -883,11 +886,11 @@ index 1234567..abcdefg 100644
 +                                                if (!newConfig.account_stream_limits.account_limits) {
 +                                                  newConfig.account_stream_limits.account_limits = {}
 +                                                }
-+                                                if (newLimit === 0) {
-+                                                  // Remove from config if set to 0 (use global limit)
-+                                                  delete newConfig.account_stream_limits.account_limits[account.id]
++                                                if (newLimit === null || newLimit === 0) {
++                                                  // Remove from config if empty or 0 (use global limit)
++                                                  delete newConfig.account_stream_limits.account_limits[accountIdStr]
 +                                                } else {
-+                                                  newConfig.account_stream_limits.account_limits[account.id] = newLimit
++                                                  newConfig.account_stream_limits.account_limits[accountIdStr] = newLimit
 +                                                }
 +                                                return newConfig
 +                                              })
@@ -898,7 +901,7 @@ index 1234567..abcdefg 100644
 +                                          />
 +                                        </div>
 +                                        <div className="text-xs text-muted-foreground w-16">
-+                                          {currentLimit === 0 ? 'global' : 'streams'}
++                                          {currentLimit === '' || currentLimit === 0 ? 'global' : 'streams'}
 +                                        </div>
                                        </div>
                                      )

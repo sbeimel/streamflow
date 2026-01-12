@@ -843,7 +843,7 @@ export default function StreamChecker() {
                                   {m3uAccounts.map((account) => {
                                     // Use String(account.id) for consistent key lookup (JSON keys are always strings)
                                     const accountIdStr = String(account.id)
-                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[accountIdStr] || 0
+                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[accountIdStr] ?? ''
                                     return (
                                       <div key={account.id} className="flex items-center gap-2 p-3 border rounded-md">
                                         <div className="flex-1">
@@ -857,7 +857,8 @@ export default function StreamChecker() {
                                             step="1"
                                             value={currentLimit}
                                             onChange={(e) => {
-                                              const newLimit = parseInt(e.target.value) || 0
+                                              const inputValue = e.target.value
+                                              const newLimit = inputValue === '' ? null : parseInt(inputValue) || 0
                                               setEditedConfig(prevConfig => {
                                                 const newConfig = JSON.parse(JSON.stringify(prevConfig))
                                                 if (!newConfig.account_stream_limits) {
@@ -866,8 +867,8 @@ export default function StreamChecker() {
                                                 if (!newConfig.account_stream_limits.account_limits) {
                                                   newConfig.account_stream_limits.account_limits = {}
                                                 }
-                                                if (newLimit === 0) {
-                                                  // Remove from config if set to 0 (use global limit)
+                                                if (newLimit === null || newLimit === 0) {
+                                                  // Remove from config if empty or 0 (use global limit)
                                                   delete newConfig.account_stream_limits.account_limits[accountIdStr]
                                                 } else {
                                                   newConfig.account_stream_limits.account_limits[accountIdStr] = newLimit
@@ -881,7 +882,7 @@ export default function StreamChecker() {
                                           />
                                         </div>
                                         <div className="text-xs text-muted-foreground w-16">
-                                          {currentLimit === 0 ? 'global' : 'streams'}
+                                          {currentLimit === '' || currentLimit === 0 ? 'global' : 'streams'}
                                         </div>
                                       </div>
                                     )
