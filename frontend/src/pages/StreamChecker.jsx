@@ -77,9 +77,19 @@ export default function StreamChecker() {
       }
       
       // Set M3U accounts - filter only active accounts
-      const accounts = m3uAccountsResponse.data.accounts || []
-      const activeAccounts = accounts.filter(account => account.active)
+      let accounts = []
+      if (m3uAccountsResponse.data) {
+        // Handle API response structure: { accounts: [], global_priority_mode: '' }
+        if (Array.isArray(m3uAccountsResponse.data.accounts)) {
+          accounts = m3uAccountsResponse.data.accounts
+        } else if (Array.isArray(m3uAccountsResponse.data)) {
+          accounts = m3uAccountsResponse.data
+        }
+      }
+      const activeAccounts = accounts.filter(account => account && account.active)
       setM3uAccounts(activeAccounts)
+      console.log('M3U API Response:', m3uAccountsResponse.data) // Debug log
+      console.log('Filtered active M3U accounts:', activeAccounts) // Debug log
     } catch (err) {
       console.error('Failed to load stream checker data:', err)
     } finally {
@@ -194,17 +204,6 @@ export default function StreamChecker() {
       current[safeKeys[safeKeys.length - 1]] = value
       return newConfig
     })
-  }
-
-  const addAccountLimit = () => {
-    // M3U accounts are already loaded, no need to load them again
-    if (m3uAccounts.length === 0) {
-      toast({
-        title: "No M3U Accounts",
-        description: "No active M3U accounts found. Please check your M3U configuration.",
-        variant: "destructive"
-      })
-    }
   }
 
   const addSpecificAccountLimit = (accountId, accountName) => {
@@ -833,45 +832,44 @@ export default function StreamChecker() {
                           <div className="space-y-4">
                             <div className="flex items-center justify-between">
                               <h4 className="font-medium">Per-Account Limits</h4>
-                              {configEditing && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => addAccountLimit()}
-                                >
-                                  Show Available Accounts
-                                </Button>
-                              )}
                             </div>
                             <p className="text-sm text-muted-foreground">
                               Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
                             </p>
 
                             {/* Show available M3U accounts when editing */}
-                            {configEditing && m3uAccounts.length > 0 && (
+                            {configEditing && (
                               <div className="space-y-2">
-                                <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
-                                <div className="grid gap-2 max-h-48 overflow-y-auto">
-                                  {m3uAccounts.map((account) => {
-                                    const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
-                                    return (
-                                      <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
-                                        <div className="flex-1">
-                                          <div className="text-sm font-medium">{account.name || `Account ${account.id}`}</div>
-                                          <div className="text-xs text-muted-foreground">ID: {account.id} • Priority: {account.priority || 'N/A'}</div>
-                                        </div>
-                                        <Button
-                                          variant={hasLimit ? "secondary" : "outline"}
-                                          size="sm"
-                                          onClick={() => addSpecificAccountLimit(account.id, account.name || `Account ${account.id}`)}
-                                          disabled={hasLimit}
-                                        >
-                                          {hasLimit ? 'Already Added' : 'Add Limit'}
-                                        </Button>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
+                                {m3uAccounts.length > 0 ? (
+                                  <>
+                                    <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
+                                    <div className="grid gap-2 max-h-48 overflow-y-auto">
+                                      {m3uAccounts.map((account) => {
+                                        const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
+                                        return (
+                                          <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
+                                            <div className="flex-1">
+                                              <div className="text-sm font-medium">{account.name || `Account ${account.id}`}</div>
+                                              <div className="text-xs text-muted-foreground">ID: {account.id} • Priority: {account.priority || 'N/A'}</div>
+                                            </div>
+                                            <Button
+                                              variant={hasLimit ? "secondary" : "outline"}
+                                              size="sm"
+                                              onClick={() => addSpecificAccountLimit(account.id, account.name || `Account ${account.id}`)}
+                                              disabled={hasLimit}
+                                            >
+                                              {hasLimit ? 'Already Added' : 'Add Limit'}
+                                            </Button>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
+                                    No active M3U accounts found. Please check your M3U configuration in the Dashboard.
+                                  </div>
+                                )}
                               </div>
                             )}
 
@@ -917,11 +915,6 @@ export default function StreamChecker() {
                             ) : (
                               <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
                                 No per-account limits configured. All accounts will use the global limit.
-                                {configEditing && m3uAccounts.length === 0 && (
-                                  <div className="mt-2 text-xs text-muted-foreground">
-                                    No active M3U accounts found. Check your M3U configuration.
-                                  </div>
-                                )}
                               </div>
                             )}
                           </div>
