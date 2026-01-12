@@ -1,0 +1,56 @@
+# Multi-stage build for StreamFlow application
+# Stage 1: Build frontend
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci --only=production
+
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Build backend with frontend
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create working directory for backend
+WORKDIR /app
+
+# Copy backend requirements first for better caching
+COPY backend/requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+
+# Copy backend application code
+COPY backend/ ./
+
+# Copy built frontend from stage 1
+COPY --from=frontend-builder /frontend/build ./static
+
+# Create necessary directories
+RUN mkdir -p csv logs data
+
+# Set environment variable for config directory
+ENV CONFIG_DIR=/app/data
+
+# Set permissions for entrypoint
+RUN chmod +x entrypoint.sh
+
+# Create default configuration files in the data directory
+RUN python3 create_default_configs.py
+
+# Expose the Flask port
+EXPOSE 5000
+
+# Health check for Flask API
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:5000/api/health || exit 1
+
+# Use entrypoint script to start Flask API
+ENTRYPOINT ["/app/entrypoint.sh"]
