@@ -3310,6 +3310,29 @@ class StreamCheckerService:
                 if old_value != value:
                     config_changes.append(f"Automation control '{key}': {old_value} → {value}")
         
+        if 'account_stream_limits' in updates:
+            limits_changes = []
+            limits = updates['account_stream_limits']
+            if 'enabled' in limits:
+                old_enabled = self.config.get('account_stream_limits', {}).get('enabled', True)
+                new_enabled = limits['enabled']
+                if old_enabled != new_enabled:
+                    limits_changes.append(f"Enabled: {old_enabled} → {new_enabled}")
+            if 'global_limit' in limits:
+                old_global = self.config.get('account_stream_limits', {}).get('global_limit', 0)
+                new_global = limits['global_limit']
+                if old_global != new_global:
+                    limits_changes.append(f"Global limit: {old_global} → {new_global}")
+            if 'account_limits' in limits:
+                old_account_limits = self.config.get('account_stream_limits', {}).get('account_limits', {})
+                new_account_limits = limits['account_limits']
+                if old_account_limits != new_account_limits:
+                    old_count = len(old_account_limits)
+                    new_count = len(new_account_limits)
+                    limits_changes.append(f"Account-specific limits: {old_count} → {new_count} accounts")
+            if limits_changes:
+                config_changes.append(f"Account stream limits: {', '.join(limits_changes)}")
+        
         if 'global_check_schedule' in updates:
             schedule_changes = []
             schedule = updates['global_check_schedule']
