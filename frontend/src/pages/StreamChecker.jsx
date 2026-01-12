@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
+import { streamCheckerAPI, deadStreamsAPI, m3uAPI } from '@/services/api.js'
 import { 
   Activity, 
   CheckCircle2, 
@@ -48,6 +48,7 @@ export default function StreamChecker() {
     has_prev: false
   })
   const [totalDeadStreams, setTotalDeadStreams] = useState(0)
+  const [m3uAccounts, setM3uAccounts] = useState([])
   const { toast } = useToast()
 
   useEffect(() => {
@@ -62,10 +63,11 @@ export default function StreamChecker() {
 
   const loadData = async () => {
     try {
-      const [statusResponse, progressResponse, configResponse] = await Promise.all([
+      const [statusResponse, progressResponse, configResponse, m3uAccountsResponse] = await Promise.all([
         streamCheckerAPI.getStatus(),
         streamCheckerAPI.getProgress(),
-        streamCheckerAPI.getConfig()
+        streamCheckerAPI.getConfig(),
+        m3uAPI.getAccounts().catch(() => ({ data: { accounts: [] } })) // Load M3U accounts
       ])
       setStatus(statusResponse.data)
       setProgress(progressResponse.data)
@@ -73,10 +75,34 @@ export default function StreamChecker() {
       if (!editedConfig && configResponse.data) {
         setEditedConfig(configResponse.data)
       }
+      
+      // Set M3U accounts - filter only active accounts
+      const accounts = m3uAccountsResponse.data.accounts || []
+      const activeAccounts = accounts.filter(account => account.active)
+      setM3uAccounts(activeAccounts)
     } catch (err) {
       console.error('Failed to load stream checker data:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadM3uAccounts = async () => {
+    try {
+      setM3uAccountsLoading(true)
+      const response = await m3uAPI.getAccounts()
+      // Filter only active accounts
+      const activeAccounts = response.data.filter(account => account.active)
+      setM3uAccounts(activeAccounts)
+    } catch (err) {
+      console.error('Failed to load M3U accounts:', err)
+      toast({
+        title: "Warning",
+        description: "Failed to load M3U accounts for account limits",
+        variant: "destructive"
+      })
+    } finally {
+      setM3uAccountsLoading(false)
     }
   }
 
@@ -171,38 +197,43 @@ export default function StreamChecker() {
   }
 
   const addAccountLimit = () => {
-    // TODO: In future, we could fetch M3U accounts and show a dropdown
-    // For now, use a simple prompt
-    const accountId = prompt('Enter M3U Account ID (you can find these in the M3U Accounts section):')
-    if (accountId && accountId.trim()) {
-      const id = accountId.trim()
-      // Check if account already has a limit
-      if (editedConfig?.account_stream_limits?.account_limits?.[id] !== undefined) {
-        toast({
-          title: "Account Already Configured",
-          description: `Account ${id} already has a limit configured.`,
-          variant: "destructive"
-        })
-        return
-      }
-      
-      setEditedConfig(prevConfig => {
-        const newConfig = JSON.parse(JSON.stringify(prevConfig))
-        if (!newConfig.account_stream_limits) {
-          newConfig.account_stream_limits = {}
-        }
-        if (!newConfig.account_stream_limits.account_limits) {
-          newConfig.account_stream_limits.account_limits = {}
-        }
-        newConfig.account_stream_limits.account_limits[id] = 50 // Default to 50 streams
-        return newConfig
-      })
-      
+    // M3U accounts are already loaded, no need to load them again
+    if (m3uAccounts.length === 0) {
       toast({
-        title: "Account Limit Added",
-        description: `Added limit configuration for M3U Account ${id}`,
+        title: "No M3U Accounts",
+        description: "No active M3U accounts found. Please check your M3U configuration.",
+        variant: "destructive"
       })
     }
+  }
+
+  const addSpecificAccountLimit = (accountId, accountName) => {
+    // Check if account already has a limit
+    if (editedConfig?.account_stream_limits?.account_limits?.[accountId] !== undefined) {
+      toast({
+        title: "Account Already Configured",
+        description: `Account "${accountName}" already has a limit configured.`,
+        variant: "destructive"
+      })
+      return
+    }
+    
+    setEditedConfig(prevConfig => {
+      const newConfig = JSON.parse(JSON.stringify(prevConfig))
+      if (!newConfig.account_stream_limits) {
+        newConfig.account_stream_limits = {}
+      }
+      if (!newConfig.account_stream_limits.account_limits) {
+        newConfig.account_stream_limits.account_limits = {}
+      }
+      newConfig.account_stream_limits.account_limits[accountId] = 50 // Default to 50 streams
+      return newConfig
+    })
+    
+    toast({
+      title: "Account Limit Added",
+      description: `Added limit configuration for "${accountName}"`,
+    })
   }
 
   const updateAccountLimit = (accountId, limit) => {
@@ -808,7 +839,7 @@ export default function StreamChecker() {
                                   size="sm"
                                   onClick={() => addAccountLimit()}
                                 >
-                                  Add Account Limit
+                                  Show Available Accounts
                                 </Button>
                               )}
                             </div>
@@ -816,41 +847,81 @@ export default function StreamChecker() {
                               Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
                             </p>
 
+                            {/* Show available M3U accounts when editing */}
+                            {configEditing && m3uAccounts.length > 0 && (
+                              <div className="space-y-2">
+                                <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
+                                <div className="grid gap-2 max-h-48 overflow-y-auto">
+                                  {m3uAccounts.map((account) => {
+                                    const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
+                                    return (
+                                      <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
+                                        <div className="flex-1">
+                                          <div className="text-sm font-medium">{account.name || `Account ${account.id}`}</div>
+                                          <div className="text-xs text-muted-foreground">ID: {account.id} • Priority: {account.priority || 'N/A'}</div>
+                                        </div>
+                                        <Button
+                                          variant={hasLimit ? "secondary" : "outline"}
+                                          size="sm"
+                                          onClick={() => addSpecificAccountLimit(account.id, account.name || `Account ${account.id}`)}
+                                          disabled={hasLimit}
+                                        >
+                                          {hasLimit ? 'Already Added' : 'Add Limit'}
+                                        </Button>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Show configured limits */}
                             {editedConfig?.account_stream_limits?.account_limits && 
                              Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
                               <div className="space-y-2">
-                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => (
-                                  <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
-                                    <div className="flex-1">
-                                      <Label className="text-sm font-medium">Account ID: {accountId}</Label>
+                                <h5 className="text-sm font-medium">Configured Account Limits</h5>
+                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => {
+                                  const account = m3uAccounts.find(acc => acc.id.toString() === accountId.toString())
+                                  const accountName = account?.name || `Account ${accountId}`
+                                  return (
+                                    <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
+                                      <div className="flex-1">
+                                        <Label className="text-sm font-medium">{accountName}</Label>
+                                        <div className="text-xs text-muted-foreground">ID: {accountId}</div>
+                                      </div>
+                                      <div className="w-24">
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          step="1"
+                                          value={limit}
+                                          onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
+                                          disabled={!configEditing}
+                                          className="text-center"
+                                        />
+                                      </div>
+                                      <div className="text-sm text-muted-foreground">streams</div>
+                                      {configEditing && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => removeAccountLimit(accountId)}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      )}
                                     </div>
-                                    <div className="w-24">
-                                      <Input
-                                        type="number"
-                                        min="0"
-                                        step="1"
-                                        value={limit}
-                                        onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
-                                        disabled={!configEditing}
-                                        className="text-center"
-                                      />
-                                    </div>
-                                    <div className="text-sm text-muted-foreground">streams</div>
-                                    {configEditing && (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => removeAccountLimit(accountId)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    )}
-                                  </div>
-                                ))}
+                                  )
+                                })}
                               </div>
                             ) : (
                               <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
                                 No per-account limits configured. All accounts will use the global limit.
+                                {configEditing && m3uAccounts.length === 0 && (
+                                  <div className="mt-2 text-xs text-muted-foreground">
+                                    No active M3U accounts found. Check your M3U configuration.
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

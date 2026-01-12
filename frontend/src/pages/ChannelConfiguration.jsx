@@ -737,29 +737,6 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
                 {isQualityPrefInherited && ' (inherited from group)'}
               </p>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor={`checking-mode-${channel.id}`} className="text-sm font-medium">
-                Stream Checking
-                {isCheckingInherited && (
-                  <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
-                )}
-              </Label>
-              <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
-                <SelectTrigger id={`checking-mode-${channel.id}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="enabled">Enabled</SelectItem>
-                  <SelectItem value="disabled">Disabled</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {checkingMode === 'enabled'
-                  ? 'Channel streams will be quality checked'
-                  : 'Channel streams will not be quality checked'}
-                {isCheckingInherited && ' (inherited from group)'}
-              </p>
-            </div>
           </div>
 
           {/* Regex Patterns */}
