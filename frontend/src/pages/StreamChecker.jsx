@@ -76,20 +76,9 @@ export default function StreamChecker() {
         setEditedConfig(configResponse.data)
       }
       
-      // Set M3U accounts - filter only active accounts
-      let accounts = []
-      if (m3uAccountsResponse.data) {
-        // Handle API response structure: { accounts: [], global_priority_mode: '' }
-        if (Array.isArray(m3uAccountsResponse.data.accounts)) {
-          accounts = m3uAccountsResponse.data.accounts
-        } else if (Array.isArray(m3uAccountsResponse.data)) {
-          accounts = m3uAccountsResponse.data
-        }
-      }
-      const activeAccounts = accounts.filter(account => account && account.active)
-      setM3uAccounts(activeAccounts)
-      console.log('M3U API Response:', m3uAccountsResponse.data) // Debug log
-      console.log('Filtered active M3U accounts:', activeAccounts) // Debug log
+      // Set M3U accounts - use same logic as Dashboard
+      const accounts = m3uAccountsResponse.data.accounts || []
+      setM3uAccounts(accounts)
     } catch (err) {
       console.error('Failed to load stream checker data:', err)
     } finally {
@@ -842,7 +831,7 @@ export default function StreamChecker() {
                               <div className="space-y-2">
                                 {m3uAccounts.length > 0 ? (
                                   <>
-                                    <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
+                                    <h5 className="text-sm font-medium">Available M3U Accounts</h5>
                                     <div className="grid gap-2 max-h-48 overflow-y-auto">
                                       {m3uAccounts.map((account) => {
                                         const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
@@ -867,7 +856,7 @@ export default function StreamChecker() {
                                   </>
                                 ) : (
                                   <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
-                                    No active M3U accounts found. Please check your M3U configuration in the Dashboard.
+                                    No M3U accounts found. Please check your M3U configuration in the Dashboard.
                                   </div>
                                 )}
                               </div>
