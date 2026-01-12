@@ -737,8 +737,6 @@ function RegexTableRow({ channel, group, groups, patterns, channelSettings, sele
                 {isQualityPrefInherited && ' (inherited from group)'}
               </p>
             </div>
-          </div>
-            </div>
             <div className="space-y-2">
               <Label htmlFor={`checking-mode-${channel.id}`} className="text-sm font-medium">
                 Stream Checking
