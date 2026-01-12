@@ -3357,7 +3357,19 @@ class StreamCheckerService:
                 config_changes.append(f"Global check schedule: {', '.join(schedule_changes)}")
         
         # Apply the configuration update
-        self.config.update(updates)
+        # For account_stream_limits, we need to completely replace the section
+        # to handle deleted account limits properly
+        if 'account_stream_limits' in updates:
+            self.config['account_stream_limits'] = updates['account_stream_limits']
+            # Remove account_stream_limits from updates to avoid double-processing
+            updates_copy = updates.copy()
+            del updates_copy['account_stream_limits']
+            self.config.update(updates_copy)
+        else:
+            self.config.update(updates)
+        
+        # Save configuration to file
+        self._save_config()
         
         # Log the changes
         if config_changes:

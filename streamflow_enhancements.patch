@@ -909,6 +909,10 @@ index 1234567..abcdefg 100644
 +                                                  }
 +                                                  return newConfig
 +                                                })
++                                                toast({
++                                                  title: "Account Limit Reset",
++                                                  description: `Account ${account.id} will now use the global limit`,
++                                                })
 +                                              }}
 +                                              disabled={!configEditing}
 +                                              className="h-8 w-8 p-0"

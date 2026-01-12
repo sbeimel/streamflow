@@ -890,6 +890,10 @@ export default function StreamChecker() {
                                                   }
                                                   return newConfig
                                                 })
+                                                toast({
+                                                  title: "Account Limit Reset",
+                                                  description: `Account ${account.id} will now use the global limit`,
+                                                })
                                               }}
                                               disabled={!configEditing}
                                               className="h-8 w-8 p-0"
