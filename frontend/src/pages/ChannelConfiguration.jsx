@@ -351,15 +351,6 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                 </p>
               </div>
             </div>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  {checkingMode === 'enabled'
-                    ? 'Channel streams will be quality checked'
-                    : 'Channel streams will not be quality checked'}
-                  {isCheckingInherited && ' (inherited from group)'}
-                </p>
-              </div>
-            </div>
 
             {/* Regex Patterns */}
             <div>
