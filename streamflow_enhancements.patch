@@ -1691,3 +1691,23 @@ index 1234567..abcdefg 100644
 +                        </div>
                        </>
                      )}
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -2710,6 +2710,14 @@ class StreamCheckerService:
+         if self._is_stream_dead(stream_data):
+             return 0.0
+         
++        # Fallback scoring for streams without bitrate but with resolution/FPS
++        # These streams work but FFmpeg couldn't extract all metadata (e.g., due to packet corruption)
++        if (stream_data.get('bitrate_kbps', 0) == 0 and 
++            stream_data.get('resolution') not in ['0x0', 'N/A', ''] and
++            stream_data.get('fps', 0) > 0):
++            
++            logger.debug(f"Stream without bitrate info but functional: {stream_data.get('resolution')}@{stream_data.get('fps')}fps - assigning fallback score: 40")
++            return 40.0  # Medium score - better than dead streams (0), worse than complete streams (60-100)
++        
+         weights = self.config.get('scoring.weights', {})
+         score = 0.0
