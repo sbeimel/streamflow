@@ -148,6 +148,11 @@ export default function StreamChecker() {
   const handleSaveConfig = async () => {
     try {
       setActionLoading('save-config')
+      
+      // Debug: Log what we're sending
+      console.log('Saving config:', JSON.stringify(editedConfig, null, 2))
+      console.log('Account limits:', editedConfig?.account_stream_limits?.account_limits)
+      
       await streamCheckerAPI.updateConfig(editedConfig)
       toast({
         title: "Success",

@@ -2698,6 +2698,12 @@ def update_stream_checker_config():
                 else:
                     logger.warning("croniter not available - cron expression validation skipped")
         
+        # Debug: Log what we received
+        logger.info(f"Received config update with keys: {list(data.keys())}")
+        if 'account_stream_limits' in data:
+            limits_config = data['account_stream_limits']
+            logger.info(f"Account stream limits received: enabled={limits_config.get('enabled')}, global_limit={limits_config.get('global_limit')}, account_limits={limits_config.get('account_limits')}")
+        
         # Validate account stream limits if provided
         if 'account_stream_limits' in data:
             limits_config = data['account_stream_limits']
