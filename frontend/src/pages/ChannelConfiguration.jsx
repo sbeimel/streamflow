@@ -2191,7 +2191,7 @@ export default function ChannelConfiguration() {
                   </div>
                   
                   {/* Selection Actions */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="secondary">
                       {selectedChannels.size} selected
                     </Badge>
@@ -2217,7 +2217,7 @@ export default function ChannelConfiguration() {
                       disabled={selectedChannels.size === 0}
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Add Regex to Selected
+                      Add Regex
                     </Button>
                     <Button
                       size="sm"
@@ -2227,7 +2227,7 @@ export default function ChannelConfiguration() {
                       variant="outline"
                     >
                       <Settings className="h-4 w-4 mr-2" />
-                      Set Quality Preference
+                      Quality
                     </Button>
                     <Button
                       size="sm"
@@ -2241,7 +2241,7 @@ export default function ChannelConfiguration() {
                       ) : (
                         <Activity className="h-4 w-4 mr-2" />
                       )}
-                      Health Check Selected
+                      Health Check
                     </Button>
                   </div>
                 </div>
