@@ -299,6 +299,37 @@ export default function StreamChecker() {
     }
   }
 
+  const handleApplyAccountLimits = async () => {
+    try {
+      setActionLoading('apply-limits')
+      const response = await fetch('/api/stream-checker/apply-account-limits', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to apply account limits')
+      }
+      
+      const data = await response.json()
+      toast({
+        title: "Account Limits Applied",
+        description: `${data.channels_modified} channels modified, ${data.streams_removed} streams removed`
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to apply account limits",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -887,6 +918,34 @@ export default function StreamChecker() {
                             </ul>
                           </AlertDescription>
                         </Alert>
+                        
+                        {/* Apply Account Limits Button */}
+                        <div className="pt-4 border-t">
+                          <div className="space-y-2">
+                            <h4 className="font-medium">Apply Limits to Existing Channels</h4>
+                            <p className="text-sm text-muted-foreground">
+                              Apply current account stream limits to all existing channels without running a full quality check. 
+                              This will remove excess streams per account, keeping only the highest-scored streams.
+                            </p>
+                            <Button
+                              onClick={handleApplyAccountLimits}
+                              disabled={actionLoading === 'apply-limits' || !editedConfig?.account_stream_limits?.enabled}
+                              className="w-full"
+                            >
+                              {actionLoading === 'apply-limits' ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Applying Limits...
+                                </>
+                              ) : (
+                                <>
+                                  <Settings className="mr-2 h-4 w-4" />
+                                  Apply Account Limits to All Channels
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
                       </>
                     )}
                   </div>

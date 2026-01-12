@@ -1068,9 +1068,8 @@ class AutomatedStreamManager:
             # Get dead stream removal config once for this discovery run
             dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
             
-            # Apply account stream limits before assignment
-            if account_limits_config.get('enabled', True):
-                assignments = self._apply_account_stream_limits(assignments, all_streams, account_limits_config)
+            # Note: Account stream limits are now applied AFTER quality check in stream_checker_service.py
+            # This ensures only the BEST streams (by quality score) are kept, not just the first matched ones
             
             # Assign streams to channels
             for channel_id, stream_ids in assignments.items():

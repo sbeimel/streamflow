@@ -2911,6 +2911,47 @@ def trigger_global_action():
         logger.error(f"Error triggering global action: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/stream-checker/apply-account-limits', methods=['POST'])
+def apply_account_limits_to_channels():
+    """Apply current account stream limits to all existing channels.
+    
+    This removes excess streams per account from all channels, keeping only the 
+    highest-scored streams based on existing quality data. Useful for applying 
+    new limits without running a full quality check.
+    """
+    try:
+        service = get_stream_checker_service()
+        
+        # Check if account limits are enabled
+        account_limits_config = service.config.get('account_stream_limits', {})
+        if not account_limits_config.get('enabled', True):
+            return jsonify({"error": "Account stream limits are disabled"}), 400
+        
+        global_limit = account_limits_config.get('global_limit', 0)
+        account_specific_limits = account_limits_config.get('account_limits', {})
+        
+        if global_limit == 0 and not account_specific_limits:
+            return jsonify({"error": "No account limits configured"}), 400
+        
+        # Apply limits to existing channels
+        results = service.apply_account_limits_to_existing_channels()
+        
+        if results['success']:
+            return jsonify({
+                "message": "Account limits applied successfully",
+                "channels_processed": results['channels_processed'],
+                "channels_modified": results['channels_modified'],
+                "streams_removed": results['streams_removed'],
+                "details": results['details'][:10]  # Limit details to first 10 channels
+            })
+        else:
+            return jsonify({"error": results.get('error', 'Unknown error')}), 500
+    
+    except Exception as e:
+        logger.error(f"Error applying account limits: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ============================================================================
 # Scheduling API Endpoints
 # ============================================================================

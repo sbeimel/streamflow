@@ -3364,6 +3364,200 @@ class StreamCheckerService:
         except Exception as e:
             logger.error(f"Failed to trigger global action: {e}")
             return False
+    
+    def _apply_account_limits_after_scoring(self, analyzed_streams: List[Dict], account_limits_config: Dict, 
+                                          channel_id: int, channel_name: str) -> List[Dict]:
+        """Apply account stream limits AFTER quality scoring to keep only the BEST streams per account.
+        
+        This ensures that when limits are applied, we keep the highest-quality streams from each account
+        rather than just the first ones found during matching.
+        
+        Args:
+            analyzed_streams: List of analyzed streams sorted by score (highest first)
+            account_limits_config: Account limits configuration
+            channel_id: Channel ID for logging
+            channel_name: Channel name for logging
+            
+        Returns:
+            Filtered list of streams respecting account limits
+        """
+        if not account_limits_config.get('enabled', True):
+            return analyzed_streams
+        
+        global_limit = account_limits_config.get('global_limit', 0)
+        account_specific_limits = account_limits_config.get('account_limits', {})
+        
+        # If no limits are configured, return unchanged
+        if global_limit == 0 and not account_specific_limits:
+            return analyzed_streams
+        
+        # Get UDI manager to look up stream M3U accounts
+        udi = get_udi_manager()
+        
+        # Track streams per account for this channel
+        account_counts = defaultdict(int)
+        limited_streams = []
+        removed_count = 0
+        
+        logger.info(f"Applying account stream limits to {len(analyzed_streams)} analyzed streams for channel {channel_name}")
+        
+        # Process streams in score order (best first)
+        for stream_data in analyzed_streams:
+            stream_id = stream_data.get('stream_id')
+            if not stream_id:
+                limited_streams.append(stream_data)
+                continue
+            
+            # Get stream to find its M3U account
+            stream = udi.get_stream_by_id(stream_id)
+            if not stream:
+                limited_streams.append(stream_data)
+                continue
+            
+            m3u_account = stream.get('m3u_account')
+            
+            # Skip custom streams (no m3u_account)
+            if m3u_account is None:
+                limited_streams.append(stream_data)
+                continue
+            
+            # Determine limit for this account
+            account_limit = account_specific_limits.get(str(m3u_account), global_limit)
+            
+            # If limit is 0, no limit applies
+            if account_limit == 0:
+                limited_streams.append(stream_data)
+                continue
+            
+            # Check if we're within the limit for this account
+            if account_counts[m3u_account] < account_limit:
+                limited_streams.append(stream_data)
+                account_counts[m3u_account] += 1
+                logger.debug(f"Keeping stream {stream_id} from account {m3u_account} (score: {stream_data.get('score', 0):.2f}, {account_counts[m3u_account]}/{account_limit})")
+            else:
+                # Stream exceeds limit - remove it (keeping only the best ones)
+                removed_count += 1
+                logger.debug(f"Removing stream {stream_id} from account {m3u_account} (score: {stream_data.get('score', 0):.2f}) - exceeds limit ({account_limit})")
+        
+        if removed_count > 0:
+            logger.info(f"Applied account stream limits: kept {len(limited_streams)} streams, removed {removed_count} lower-quality streams from channel {channel_name}")
+            
+            # Log per-account statistics
+            for account_id, count in account_counts.items():
+                account_limit = account_specific_limits.get(str(account_id), global_limit)
+                if account_limit > 0:
+                    logger.debug(f"  Account {account_id}: {count}/{account_limit} streams kept (best quality)")
+        
+        return limited_streams
+    
+    def apply_account_limits_to_existing_channels(self) -> Dict[str, Any]:
+        """Apply current account stream limits to all existing channels without full quality check.
+        
+        This function goes through all channels and removes excess streams per account,
+        keeping only the highest-scored streams based on existing quality data.
+        Useful for applying new limits without running a full quality check.
+        
+        Returns:
+            Dict with operation results and statistics
+        """
+        logger.info("Applying account stream limits to existing channels...")
+        
+        account_limits_config = self.config.get('account_stream_limits', {})
+        if not account_limits_config.get('enabled', True):
+            return {'success': False, 'error': 'Account stream limits are disabled'}
+        
+        global_limit = account_limits_config.get('global_limit', 0)
+        account_specific_limits = account_limits_config.get('account_limits', {})
+        
+        if global_limit == 0 and not account_specific_limits:
+            return {'success': False, 'error': 'No account limits configured'}
+        
+        udi = get_udi_manager()
+        channels = udi.get_channels()
+        
+        results = {
+            'success': True,
+            'channels_processed': 0,
+            'streams_removed': 0,
+            'channels_modified': 0,
+            'details': []
+        }
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            channel_name = channel.get('name', f'Channel {channel_id}')
+            
+            if not channel_id:
+                continue
+            
+            # Get current streams for this channel
+            current_streams = udi.get_channel_streams(channel_id)
+            if not current_streams or len(current_streams) <= 1:
+                continue  # Skip channels with 0 or 1 streams
+            
+            # Convert to analyzed format with existing scores/stats
+            analyzed_streams = []
+            for stream in current_streams:
+                stream_stats = stream.get('stream_stats', {})
+                if isinstance(stream_stats, str):
+                    try:
+                        stream_stats = json.loads(stream_stats)
+                    except json.JSONDecodeError:
+                        stream_stats = {}
+                
+                analyzed = {
+                    'stream_id': stream['id'],
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'stream_url': stream.get('url', ''),
+                    'resolution': stream_stats.get('resolution', '0x0'),
+                    'fps': stream_stats.get('source_fps', 0),
+                    'video_codec': stream_stats.get('video_codec', 'N/A'),
+                    'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                    'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                }
+                
+                # Calculate score based on existing data
+                score = self._calculate_stream_score(analyzed, channel_id)
+                analyzed['score'] = score
+                analyzed_streams.append(analyzed)
+            
+            # Sort by score (highest first)
+            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Apply account limits
+            original_count = len(analyzed_streams)
+            limited_streams = self._apply_account_limits_after_scoring(analyzed_streams, account_limits_config, channel_id, channel_name)
+            
+            if len(limited_streams) < original_count:
+                # Update channel with limited streams
+                limited_ids = [s['stream_id'] for s in limited_streams]
+                
+                try:
+                    from api_utils import update_channel_streams
+                    update_channel_streams(channel_id, limited_ids)
+                    
+                    removed_count = original_count - len(limited_streams)
+                    results['streams_removed'] += removed_count
+                    results['channels_modified'] += 1
+                    
+                    results['details'].append({
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'original_streams': original_count,
+                        'remaining_streams': len(limited_streams),
+                        'removed_streams': removed_count
+                    })
+                    
+                    logger.info(f"Applied limits to channel {channel_name}: {original_count} → {len(limited_streams)} streams")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to update channel {channel_id}: {e}")
+                    continue
+            
+            results['channels_processed'] += 1
+        
+        logger.info(f"Account limits application completed: {results['channels_modified']} channels modified, {results['streams_removed']} streams removed")
+        return results
 
 
 # Global service instance
