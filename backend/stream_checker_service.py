@@ -3360,16 +3360,22 @@ class StreamCheckerService:
         # For account_stream_limits, we need to completely replace the section
         # to handle deleted account limits properly
         if 'account_stream_limits' in updates:
-            self.config['account_stream_limits'] = updates['account_stream_limits']
+            # Directly access the config dictionary and replace the entire section
+            self.config.config['account_stream_limits'] = updates['account_stream_limits']
             # Remove account_stream_limits from updates to avoid double-processing
             updates_copy = updates.copy()
             del updates_copy['account_stream_limits']
-            self.config.update(updates_copy)
+            if updates_copy:  # Only update if there are other changes
+                self.config.update(updates_copy)
+            # Save the config manually since we bypassed the update method
+            self.config._save_config()
         else:
+            # Use the normal update method for other changes
             self.config.update(updates)
         
-        # Save configuration to file
-        self._save_config()
+        # Save configuration to file (only if we didn't already save it above)
+        if 'account_stream_limits' not in updates:
+            self._save_config()
         
         # Log the changes
         if config_changes:
