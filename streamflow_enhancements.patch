@@ -872,36 +872,55 @@ index 1234567..abcdefg 100644
 +                                        <div className="w-20">
 +                                          <Input
 +                                            type="number"
-+                                            min="0"
++                                            min="1"
 +                                            step="1"
-+                                            value={currentLimit}
++                                            value={currentLimit || ''}
 +                                            onChange={(e) => {
-+                                              const inputValue = e.target.value
-+                                              const newLimit = inputValue === '' ? null : parseInt(inputValue) || 0
-+                                              setEditedConfig(prevConfig => {
-+                                                const newConfig = JSON.parse(JSON.stringify(prevConfig))
-+                                                if (!newConfig.account_stream_limits) {
-+                                                  newConfig.account_stream_limits = {}
-+                                                }
-+                                                if (!newConfig.account_stream_limits.account_limits) {
-+                                                  newConfig.account_stream_limits.account_limits = {}
-+                                                }
-+                                                if (newLimit === null || newLimit === 0) {
-+                                                  // Remove from config if empty or 0 (use global limit)
-+                                                  delete newConfig.account_stream_limits.account_limits[accountIdStr]
-+                                                } else {
++                                              const newLimit = parseInt(e.target.value) || null
++                                              if (newLimit && newLimit > 0) {
++                                                setEditedConfig(prevConfig => {
++                                                  const newConfig = JSON.parse(JSON.stringify(prevConfig))
++                                                  if (!newConfig.account_stream_limits) {
++                                                    newConfig.account_stream_limits = {}
++                                                  }
++                                                  if (!newConfig.account_stream_limits.account_limits) {
++                                                    newConfig.account_stream_limits.account_limits = {}
++                                                  }
 +                                                  newConfig.account_stream_limits.account_limits[accountIdStr] = newLimit
-+                                                }
-+                                                return newConfig
-+                                              })
++                                                  return newConfig
++                                                })
++                                              }
 +                                            }}
 +                                            disabled={!configEditing}
 +                                            className="text-center"
-+                                            placeholder="0"
++                                            placeholder="Global"
 +                                          />
 +                                        </div>
-+                                        <div className="text-xs text-muted-foreground w-16">
-+                                          {currentLimit === '' || currentLimit === 0 ? 'global' : 'streams'}
++                                        <div className="flex items-center gap-1">
++                                          {currentLimit ? (
++                                            <Button
++                                              variant="outline"
++                                              size="sm"
++                                              onClick={() => {
++                                                setEditedConfig(prevConfig => {
++                                                  const newConfig = JSON.parse(JSON.stringify(prevConfig))
++                                                  if (newConfig.account_stream_limits?.account_limits) {
++                                                    delete newConfig.account_stream_limits.account_limits[accountIdStr]
++                                                  }
++                                                  return newConfig
++                                                })
++                                              }}
++                                              disabled={!configEditing}
++                                              className="h-8 w-8 p-0"
++                                              title="Reset to global limit"
++                                            >
++                                              ×
++                                            </Button>
++                                          ) : (
++                                            <div className="text-xs text-muted-foreground w-12 text-center">
++                                              global
++                                            </div>
++                                          )}
 +                                        </div>
                                        </div>
                                      )
