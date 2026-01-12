@@ -1711,3 +1711,17 @@ index 1234567..abcdefg 100644
 +        
          weights = self.config.get('scoring.weights', {})
          score = 0.0
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -3335,6 +3335,9 @@ class StreamCheckerService:
+         # Apply the configuration update
+         self.config.update(updates)
+         
++        # Save the configuration to disk
++        self._save_config()
++        
+         # Log the changes
+         if config_changes:
+             logger.info(f"Configuration updated: {'; '.join(config_changes)}")
