@@ -45,7 +45,6 @@ class UDIStorage:
         self.channel_profiles_file = self.storage_dir / 'channel_profiles.json'
         self.profile_channels_file = self.storage_dir / 'profile_channels.json'
         self.metadata_file = self.storage_dir / 'metadata.json'
-        self.match_profiles_file = self.storage_dir / 'match_profiles.json'
         
         # Thread locks for each data type
         self._channels_lock = threading.Lock()
@@ -56,7 +55,6 @@ class UDIStorage:
         self._channel_profiles_lock = threading.Lock()
         self._profile_channels_lock = threading.Lock()
         self._metadata_lock = threading.Lock()
-        self._match_profiles_lock = threading.Lock()
         
         logger.info(f"UDI storage initialized at {self.storage_dir}")
     
@@ -361,9 +359,21 @@ class UDIStorage:
         """
         with self._profile_channels_lock:
             data = self._load_json(self.profile_channels_file)
-            # Convert string keys back to integers
+            # Convert string keys back to integers and validate values are dictionaries
             if isinstance(data, dict):
-                return {int(k): v for k, v in data.items() if k.isdigit() or isinstance(k, int)}
+                result = {}
+                for k, v in data.items():
+                    try:
+                        # Convert key to integer
+                        key = int(k) if isinstance(k, str) else k
+                        # Validate value is a dictionary, skip if not
+                        if isinstance(v, dict):
+                            result[key] = v
+                        else:
+                            logger.warning(f"Skipping invalid profile_channels data for profile {k}: value is {type(v).__name__}, not dict")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Skipping invalid profile_channels key {k}: {e}")
+                return result
             return {}
     
     def save_profile_channels(self, profile_channels: Dict[int, Dict[str, Any]]) -> bool:
@@ -454,83 +464,6 @@ class UDIStorage:
         metadata = self.load_metadata()
         return metadata.get(f'{entity_type}_last_updated')
     
-    # Match Profiles
-    def load_match_profiles(self) -> List[Dict[str, Any]]:
-        """Load all match profiles from storage.
-        
-        Returns:
-            List of match profile dictionaries
-        """
-        with self._match_profiles_lock:
-            data = self._load_json(self.match_profiles_file)
-            return data if isinstance(data, list) else []
-    
-    def save_match_profiles(self, profiles: List[Dict[str, Any]]) -> bool:
-        """Save match profiles to storage.
-        
-        Args:
-            profiles: List of match profile dictionaries
-            
-        Returns:
-            True if successful
-        """
-        with self._match_profiles_lock:
-            return self._save_json(self.match_profiles_file, profiles)
-    
-    def get_match_profile(self, profile_id: int) -> Optional[Dict[str, Any]]:
-        """Get a specific match profile from storage.
-        
-        Args:
-            profile_id: The profile ID
-            
-        Returns:
-            Match profile dictionary or None if not found
-        """
-        profiles = self.load_match_profiles()
-        for profile in profiles:
-            if profile.get('id') == profile_id:
-                return profile
-        return None
-    
-    def update_match_profile(self, profile_id: int, profile_data: Dict[str, Any]) -> bool:
-        """Update a specific match profile in storage.
-        
-        Args:
-            profile_id: The profile ID
-            profile_data: Updated profile data
-            
-        Returns:
-            True if successful, False if profile not found
-        """
-        with self._match_profiles_lock:
-            profiles = self._load_json(self.match_profiles_file) or []
-            updated = False
-            for i, profile in enumerate(profiles):
-                if profile.get('id') == profile_id:
-                    profiles[i] = profile_data
-                    updated = True
-                    break
-            
-            if not updated:
-                logger.warning(f"Match profile {profile_id} not found for update")
-                return False
-            
-            return self._save_json(self.match_profiles_file, profiles)
-    
-    def delete_match_profile(self, profile_id: int) -> bool:
-        """Delete a specific match profile from storage.
-        
-        Args:
-            profile_id: The profile ID to delete
-            
-        Returns:
-            True if successful
-        """
-        with self._match_profiles_lock:
-            profiles = self._load_json(self.match_profiles_file) or []
-            profiles = [p for p in profiles if p.get('id') != profile_id]
-            return self._save_json(self.match_profiles_file, profiles)
-    
     def clear_all(self) -> bool:
         """Clear all stored data.
         
@@ -544,8 +477,7 @@ class UDIStorage:
                 self.channel_groups_file,
                 self.logos_file,
                 self.m3u_accounts_file,
-                self.metadata_file,
-                self.match_profiles_file
+                self.metadata_file
             ]:
                 if file_path.exists():
                     file_path.unlink()

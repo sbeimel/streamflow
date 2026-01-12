@@ -36,6 +36,13 @@ class ChannelSettingsManager:
     MODE_ENABLED = 'enabled'
     MODE_DISABLED = 'disabled'
     
+    # Quality preference constants
+    QUALITY_DEFAULT = 'default'
+    QUALITY_PREFER_4K = 'prefer_4k'
+    QUALITY_AVOID_4K = 'avoid_4k'
+    QUALITY_MAX_1080P = 'max_1080p'
+    QUALITY_MAX_720P = 'max_720p'
+    
     def __init__(self):
         """Initialize the channel settings manager."""
         self._lock = threading.Lock()
@@ -86,14 +93,15 @@ class ChannelSettingsManager:
             channel_id: The channel ID
             
         Returns:
-            Dictionary with channel settings (matching_mode, checking_mode)
-            Defaults to 'enabled' for both if not set
+            Dictionary with channel settings (matching_mode, checking_mode, quality_preference)
+            Defaults to 'enabled' for modes and 'default' for quality_preference if not set
         """
         with self._lock:
             settings = self._settings.get(channel_id, {})
             return {
                 'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
-                'checking_mode': settings.get('checking_mode', self.MODE_ENABLED)
+                'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
+                'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
             }
     
     def get_channel_effective_settings(self, channel_id: int, channel_group_id: Optional[int] = None) -> Dict[str, Any]:
@@ -107,15 +115,19 @@ class ChannelSettingsManager:
             Dictionary with:
             - matching_mode: Effective matching mode
             - checking_mode: Effective checking mode
+            - quality_preference: Effective quality preference
             - matching_mode_source: 'channel' or 'group' or 'default'
             - checking_mode_source: 'channel' or 'group' or 'default'
+            - quality_preference_source: 'channel' or 'group' or 'default'
             - has_explicit_matching: Whether channel has explicit matching setting
             - has_explicit_checking: Whether channel has explicit checking setting
+            - has_explicit_quality_preference: Whether channel has explicit quality preference setting
         """
         with self._lock:
             channel_settings = self._settings.get(channel_id, {})
             has_explicit_matching = 'matching_mode' in channel_settings
             has_explicit_checking = 'checking_mode' in channel_settings
+            has_explicit_quality_preference = 'quality_preference' in channel_settings
             
             # Determine effective matching mode
             if has_explicit_matching:
@@ -141,23 +153,39 @@ class ChannelSettingsManager:
                 checking_mode = self.MODE_ENABLED
                 checking_mode_source = 'default'
             
+            # Determine effective quality preference
+            if has_explicit_quality_preference:
+                quality_preference = channel_settings['quality_preference']
+                quality_preference_source = 'channel'
+            elif channel_group_id is not None:
+                group_settings = self._group_settings.get(channel_group_id, {})
+                quality_preference = group_settings.get('quality_preference', self.QUALITY_DEFAULT)
+                quality_preference_source = 'group'
+            else:
+                quality_preference = self.QUALITY_DEFAULT
+                quality_preference_source = 'default'
+            
             return {
                 'matching_mode': matching_mode,
                 'checking_mode': checking_mode,
+                'quality_preference': quality_preference,
                 'matching_mode_source': matching_mode_source,
                 'checking_mode_source': checking_mode_source,
+                'quality_preference_source': quality_preference_source,
                 'has_explicit_matching': has_explicit_matching,
-                'has_explicit_checking': has_explicit_checking
+                'has_explicit_checking': has_explicit_checking,
+                'has_explicit_quality_preference': has_explicit_quality_preference
             }
     
     def set_channel_settings(self, channel_id: int, matching_mode: Optional[str] = None,
-                            checking_mode: Optional[str] = None) -> bool:
+                            checking_mode: Optional[str] = None, quality_preference: Optional[str] = None) -> bool:
         """Set settings for a specific channel.
         
         Args:
             channel_id: The channel ID
             matching_mode: Matching mode ('enabled' or 'disabled'), None to keep current
             checking_mode: Checking mode ('enabled' or 'disabled'), None to keep current
+            quality_preference: Quality preference ('default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p'), None to keep current
             
         Returns:
             True if successful, False otherwise
@@ -180,12 +208,21 @@ class ChannelSettingsManager:
                     return False
                 self._settings[channel_id]['checking_mode'] = checking_mode
             
+            if quality_preference is not None:
+                valid_preferences = [self.QUALITY_DEFAULT, self.QUALITY_PREFER_4K, self.QUALITY_AVOID_4K, 
+                                   self.QUALITY_MAX_1080P, self.QUALITY_MAX_720P]
+                if quality_preference not in valid_preferences:
+                    logger.error(f"Invalid quality_preference: {quality_preference}")
+                    return False
+                self._settings[channel_id]['quality_preference'] = quality_preference
+            
             # Save to file
             success = self._save_settings()
             if success:
                 logger.info(f"Updated settings for channel {channel_id}: "
                           f"matching={self._settings[channel_id].get('matching_mode', 'enabled')}, "
-                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}")
+                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}, "
+                          f"quality_preference={self._settings[channel_id].get('quality_preference', 'default')}")
             return success
     
     def get_all_settings(self) -> Dict[int, Dict[str, str]]:
@@ -198,7 +235,8 @@ class ChannelSettingsManager:
             return {
                 channel_id: {
                     'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
-                    'checking_mode': settings.get('checking_mode', self.MODE_ENABLED)
+                    'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
+                    'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
                 }
                 for channel_id, settings in self._settings.items()
             }
@@ -288,24 +326,26 @@ class ChannelSettingsManager:
             group_id: The channel group ID
             
         Returns:
-            Dictionary with group settings (matching_mode, checking_mode)
-            Defaults to 'enabled' for both if not set
+            Dictionary with group settings (matching_mode, checking_mode, quality_preference)
+            Defaults to 'enabled' for modes and 'default' for quality_preference if not set
         """
         with self._lock:
             settings = self._group_settings.get(group_id, {})
             return {
                 'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
-                'checking_mode': settings.get('checking_mode', self.MODE_ENABLED)
+                'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
+                'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
             }
     
     def set_group_settings(self, group_id: int, matching_mode: Optional[str] = None,
-                          checking_mode: Optional[str] = None) -> bool:
+                          checking_mode: Optional[str] = None, quality_preference: Optional[str] = None) -> bool:
         """Set settings for a specific channel group.
         
         Args:
             group_id: The channel group ID
             matching_mode: Matching mode ('enabled' or 'disabled'), None to keep current
             checking_mode: Checking mode ('enabled' or 'disabled'), None to keep current
+            quality_preference: Quality preference ('default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p'), None to keep current
             
         Returns:
             True if successful, False otherwise
@@ -328,12 +368,21 @@ class ChannelSettingsManager:
                     return False
                 self._group_settings[group_id]['checking_mode'] = checking_mode
             
+            if quality_preference is not None:
+                valid_preferences = [self.QUALITY_DEFAULT, self.QUALITY_PREFER_4K, self.QUALITY_AVOID_4K, 
+                                   self.QUALITY_MAX_1080P, self.QUALITY_MAX_720P]
+                if quality_preference not in valid_preferences:
+                    logger.error(f"Invalid quality_preference: {quality_preference}")
+                    return False
+                self._group_settings[group_id]['quality_preference'] = quality_preference
+            
             # Save to file
             success = self._save_group_settings()
             if success:
                 logger.info(f"Updated settings for group {group_id}: "
                           f"matching={self._group_settings[group_id].get('matching_mode', 'enabled')}, "
-                          f"checking={self._group_settings[group_id].get('checking_mode', 'enabled')}")
+                          f"checking={self._group_settings[group_id].get('checking_mode', 'enabled')}, "
+                          f"quality_preference={self._group_settings[group_id].get('quality_preference', 'default')}")
             return success
     
     def get_all_group_settings(self) -> Dict[int, Dict[str, str]]:
@@ -346,7 +395,8 @@ class ChannelSettingsManager:
             return {
                 group_id: {
                     'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
-                    'checking_mode': settings.get('checking_mode', self.MODE_ENABLED)
+                    'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
+                    'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
                 }
                 for group_id, settings in self._group_settings.items()
             }

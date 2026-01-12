@@ -21,6 +21,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
+# Pre-compiled regex pattern for whitespace conversion (performance optimization)
+# This pattern matches one or more spaces that are NOT preceded by a backslash
+# Used to convert literal spaces to flexible whitespace while preserving escaped spaces
+_WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
+
+# Placeholder for CHANNEL_NAME variable during regex validation
+# Used to substitute CHANNEL_NAME in patterns before compiling for validation
+_CHANNEL_NAME_PLACEHOLDER = 'PLACEHOLDER'
+
 # Import croniter for cron expression support
 try:
     from croniter import croniter
@@ -278,13 +287,67 @@ class RegexChannelMatcher:
         self.channel_patterns = self._load_patterns()
     
     def _load_patterns(self) -> Dict:
-        """Load regex patterns for channel matching."""
+        """Load regex patterns for channel matching.
+        
+        Handles corrupted JSON and invalid regex patterns gracefully by:
+        - Creating default config if JSON is invalid
+        - Removing patterns with invalid regex on load to prevent persistent errors
+        """
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                logger.warning(f"Could not load {self.config_file}, creating default config")
+                    loaded_config = json.load(f)
+                
+                # Validate and sanitize patterns - remove any with invalid regex
+                if 'patterns' in loaded_config and isinstance(loaded_config['patterns'], dict):
+                    patterns_to_remove = []
+                    for channel_id, pattern_data in loaded_config['patterns'].items():
+                        if not isinstance(pattern_data, dict) or 'regex' not in pattern_data:
+                            patterns_to_remove.append(channel_id)
+                            continue
+                        
+                        regex_list = pattern_data.get('regex', [])
+                        if not isinstance(regex_list, list):
+                            patterns_to_remove.append(channel_id)
+                            continue
+                        
+                        # Check if any regex patterns are invalid
+                        has_invalid = False
+                        for pattern in regex_list:
+                            if not pattern or not isinstance(pattern, str):
+                                has_invalid = True
+                                break
+                            try:
+                                # Temporarily substitute CHANNEL_NAME for validation
+                                validation_pattern = pattern.replace('CHANNEL_NAME', _CHANNEL_NAME_PLACEHOLDER)
+                                re.compile(validation_pattern)
+                            except re.error as e:
+                                logger.warning(
+                                    f"Removing channel {channel_id} with invalid regex pattern '{pattern}': {e}. "
+                                    f"Please reconfigure this channel with valid patterns."
+                                )
+                                has_invalid = True
+                                break
+                        
+                        if has_invalid:
+                            patterns_to_remove.append(channel_id)
+                    
+                    # Remove invalid patterns
+                    if patterns_to_remove:
+                        for channel_id in patterns_to_remove:
+                            del loaded_config['patterns'][channel_id]
+                        
+                        # Save cleaned config back to disk
+                        # Note: We intentionally save during load to prevent invalid patterns
+                        # from persisting and causing repeated errors. This auto-cleanup ensures
+                        # users don't get stuck with corrupted configs even after container restart.
+                        logger.info(f"Removed {len(patterns_to_remove)} pattern(s) with invalid regex")
+                        self._save_patterns(loaded_config)
+                
+                return loaded_config
+                
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                logger.warning(f"Could not load {self.config_file}: {e}. Creating default config")
         
         # Create default configuration
         default_config = {
@@ -326,14 +389,16 @@ class RegexChannelMatcher:
                 return False, f"Pattern must be a non-empty string"
             
             try:
-                # Try to compile the pattern to check if it's valid
-                re.compile(pattern)
+                # Temporarily substitute CHANNEL_NAME with a placeholder for validation
+                # Use a simple placeholder that won't interfere with regex syntax
+                validation_pattern = pattern.replace('CHANNEL_NAME', _CHANNEL_NAME_PLACEHOLDER)
+                re.compile(validation_pattern)
             except re.error as e:
                 return False, f"Invalid regex pattern '{pattern}': {str(e)}"
         
         return True, None
     
-    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: List[str], enabled: bool = True):
+    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: List[str], enabled: bool = True, m3u_accounts: Optional[List[int]] = None):
         """Add or update a channel pattern.
         
         Args:
@@ -341,6 +406,11 @@ class RegexChannelMatcher:
             name: Channel name
             regex_patterns: List of regex patterns
             enabled: Whether the pattern is enabled
+            m3u_accounts: Optional list of M3U account IDs that this regex should apply to.
+                         Examples:
+                         - None: Field not stored, applies to all M3U accounts (backward compatible)
+                         - []: Empty list stored, explicitly means "all M3U accounts"
+                         - [1, 2, 3]: Only match streams from M3U accounts with these IDs
             
         Raises:
             ValueError: If any regex pattern is invalid
@@ -350,13 +420,23 @@ class RegexChannelMatcher:
         if not is_valid:
             raise ValueError(error_msg)
         
-        self.channel_patterns["patterns"][str(channel_id)] = {
+        pattern_data = {
             "name": name,
             "regex": regex_patterns,
             "enabled": enabled
         }
+        
+        # Store m3u_accounts field when explicitly provided
+        # - Not provided (None): field not stored, backward compatible (applies to all)
+        # - Empty list []: stored as [], explicitly means "all M3U accounts"
+        # - Specific IDs [1,2,3]: stored as-is, only those M3U accounts
+        if m3u_accounts is not None:
+            pattern_data["m3u_accounts"] = m3u_accounts
+        
+        self.channel_patterns["patterns"][str(channel_id)] = pattern_data
         self._save_patterns(self.channel_patterns)
-        logger.info(f"Added/updated pattern for channel {channel_id}: {name}")
+        logger.info(f"Added/updated pattern for channel {channel_id}: {name} (M3U accounts: {m3u_accounts or 'all'})")
+    
     
     def reload_patterns(self):
         """Reload patterns from the config file.
@@ -367,8 +447,39 @@ class RegexChannelMatcher:
         self.channel_patterns = self._load_patterns()
         logger.debug("Reloaded regex patterns from config file")
     
-    def match_stream_to_channels(self, stream_name: str) -> List[str]:
-        """Match a stream name to channel IDs based on regex patterns."""
+    def _substitute_channel_variables(self, pattern: str, channel_name: str) -> str:
+        """Substitute channel name variables in a regex pattern.
+        
+        Args:
+            pattern: Regex pattern that may contain CHANNEL_NAME
+            channel_name: Name of the channel to substitute
+            
+        Returns:
+            Pattern with variables substituted
+        """
+        # Replace CHANNEL_NAME with the actual channel name
+        # Escape special regex characters in channel name to avoid issues
+        escaped_channel_name = re.escape(channel_name)
+        return pattern.replace('CHANNEL_NAME', escaped_channel_name)
+    
+    def match_stream_to_channels(self, stream_name: str, stream_m3u_account: Optional[int] = None) -> List[str]:
+        """Match a stream name to channel IDs based on regex patterns.
+        
+        Args:
+            stream_name: Name of the stream to match
+            stream_m3u_account: Optional M3U account ID of the stream.
+                               If provided, only matches patterns that apply to this M3U account.
+                               
+        Examples:
+            - stream_m3u_account=None: Stream source unknown, matches all patterns (no filtering)
+            - stream_m3u_account=5: Stream is from M3U account 5, only matches patterns where:
+              * pattern has no m3u_accounts field (old configs, apply to all)
+              * pattern has m3u_accounts=[] (explicitly applies to all)
+              * pattern has m3u_accounts=[5] or m3u_accounts=[5, 6, ...] (includes account 5)
+        
+        Returns:
+            List of channel IDs that match the stream
+        """
         matches = []
         case_sensitive = self.channel_patterns.get("global_settings", {}).get("case_sensitive", False)
         
@@ -378,13 +489,33 @@ class RegexChannelMatcher:
             if not config.get("enabled", True):
                 continue
             
+            # Check if this regex pattern applies to the stream's M3U account
+            # Backward compatible behavior:
+            # - m3u_accounts not present (None) = old config, applies to all M3U accounts
+            # - m3u_accounts = [] (empty) = new config, explicitly applies to all M3U accounts
+            # - m3u_accounts = [1,2,3] = only applies to those specific M3U accounts
+            pattern_m3u_accounts = config.get("m3u_accounts")
+            if pattern_m3u_accounts is not None and len(pattern_m3u_accounts) > 0:
+                # Pattern is limited to specific M3U accounts
+                if stream_m3u_account is None or stream_m3u_account not in pattern_m3u_accounts:
+                    # Stream's M3U account is not in the allowed list, skip this pattern
+                    continue
+            # If m3u_accounts is None (old config) or empty list (new, all), pattern applies to all M3U accounts
+            
+            channel_name = config.get("name", "")
+            
             for pattern in config.get("regex", []):
-                search_pattern = pattern if case_sensitive else pattern.lower()
+                # Substitute channel name variable if present
+                substituted_pattern = self._substitute_channel_variables(pattern, channel_name)
+                
+                search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
                 
                 # Convert literal spaces in pattern to flexible whitespace regex (\s+)
                 # This allows matching streams with different whitespace characters
                 # (non-breaking spaces, tabs, double spaces, etc.)
-                search_pattern = re.sub(r' +', r'\\s+', search_pattern)
+                # BUT: Don't convert escaped spaces (from re.escape) - they should remain literal
+                # We replace only non-escaped spaces using pre-compiled pattern for performance
+                search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                 
                 try:
                     if re.search(search_pattern, search_name):
@@ -399,6 +530,32 @@ class RegexChannelMatcher:
     def get_patterns(self) -> Dict:
         """Get current patterns configuration."""
         return self.channel_patterns
+    
+    def has_regex_patterns(self, channel_id: str) -> bool:
+        """Check if a channel has regex patterns configured and enabled.
+        
+        A channel is considered to have regex patterns if:
+        1. The channel exists in the patterns configuration
+        2. The pattern configuration is enabled (enabled=True)
+        3. The regex list is non-empty
+        
+        Args:
+            channel_id: Channel ID to check
+            
+        Returns:
+            True if the channel has at least one enabled regex pattern, False otherwise
+        """
+        channel_config = self.channel_patterns.get("patterns", {}).get(str(channel_id))
+        if not channel_config:
+            return False
+        
+        # Check if the pattern is enabled
+        if not channel_config.get("enabled", True):
+            return False
+        
+        # Check if there are any regex patterns
+        regex_patterns = channel_config.get("regex", [])
+        return isinstance(regex_patterns, list) and len(regex_patterns) > 0
 
 
 class AutomatedStreamManager:
@@ -880,8 +1037,11 @@ class AutomatedStreamManager:
                     else:
                         logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
                 
-                # Find matching channels
-                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
+                # Get stream's m3u_account for M3U account filtering
+                stream_m3u_account = stream.get('m3u_account')
+                
+                # Find matching channels (with M3U account filtering if applicable)
+                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
                 
                 for channel_id in matching_channels:
                     # Check if stream is already in this channel
@@ -892,14 +1052,31 @@ class AutomatedStreamManager:
                             "stream_name": stream_name
                         })
             
+            # Get stream checker service for account limits configuration
+            stream_checker_service = None
+            account_limits_config = {}
+            try:
+                from stream_checker_service import get_stream_checker_service
+                stream_checker_service = get_stream_checker_service()
+                account_limits_config = stream_checker_service.config.get('account_stream_limits', {})
+            except Exception as e:
+                logger.warning(f"Could not get stream checker service for account limits: {e}")
+            
             # Prepare detailed changelog data
             detailed_assignments = []
+            
+            # Get dead stream removal config once for this discovery run
+            dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+            
+            # Apply account stream limits before assignment
+            if account_limits_config.get('enabled', True):
+                assignments = self._apply_account_stream_limits(assignments, all_streams, account_limits_config)
             
             # Assign streams to channels
             for channel_id, stream_ids in assignments.items():
                 if stream_ids:
                     try:
-                        added_count = add_streams_to_channel(int(channel_id), stream_ids)
+                        added_count = add_streams_to_channel(int(channel_id), stream_ids, allow_dead_streams=(not dead_stream_removal_enabled))
                         assignment_count[channel_id] = added_count
                         
                         # Verify streams were added correctly
@@ -1004,10 +1181,102 @@ class AutomatedStreamManager:
                 })
             return {}
     
-    def validate_and_remove_non_matching_streams(self) -> Dict[str, Any]:
+    def _apply_account_stream_limits(self, assignments: Dict[str, List[int]], all_streams: List[Dict], 
+                                   account_limits_config: Dict) -> Dict[str, List[int]]:
+        """Apply per-account stream limits to channel assignments.
+        
+        Limits are applied PER CHANNEL, meaning each channel can have up to the limit
+        number of streams from each M3U account.
+        
+        Args:
+            assignments: Dictionary mapping channel_id to list of stream_ids
+            all_streams: List of all available streams
+            account_limits_config: Account limits configuration
+            
+        Returns:
+            Modified assignments dictionary with limits applied
+        """
+        if not account_limits_config.get('enabled', True):
+            return assignments
+        
+        global_limit = account_limits_config.get('global_limit', 0)
+        account_specific_limits = account_limits_config.get('account_limits', {})
+        
+        # If no limits are configured, return unchanged
+        if global_limit == 0 and not account_specific_limits:
+            return assignments
+        
+        # Create stream_id to m3u_account mapping for quick lookup
+        stream_to_account = {}
+        for stream in all_streams:
+            if isinstance(stream, dict) and 'id' in stream:
+                stream_to_account[stream['id']] = stream.get('m3u_account')
+        
+        limited_assignments = defaultdict(list)
+        total_limited_streams = 0
+        total_channels_processed = 0
+        
+        logger.info("Applying account stream limits to channel assignments (per-channel counting)...")
+        
+        # Process assignments channel by channel (each channel gets its own limits)
+        for channel_id, stream_ids in assignments.items():
+            # Track streams per account FOR THIS CHANNEL ONLY
+            channel_account_counts = defaultdict(int)
+            total_channels_processed += 1
+            
+            for stream_id in stream_ids:
+                m3u_account = stream_to_account.get(stream_id)
+                
+                # Skip custom streams (no m3u_account)
+                if m3u_account is None:
+                    limited_assignments[channel_id].append(stream_id)
+                    continue
+                
+                # Determine limit for this account
+                account_limit = account_specific_limits.get(str(m3u_account), global_limit)
+                
+                # If limit is 0, no limit applies
+                if account_limit == 0:
+                    limited_assignments[channel_id].append(stream_id)
+                    continue
+                
+                # Check if we're within the limit FOR THIS CHANNEL
+                if channel_account_counts[m3u_account] < account_limit:
+                    limited_assignments[channel_id].append(stream_id)
+                    channel_account_counts[m3u_account] += 1
+                else:
+                    # Stream exceeds limit for this channel, skip it
+                    total_limited_streams += 1
+                    logger.debug(f"Stream {stream_id} from account {m3u_account} exceeds per-channel limit ({account_limit}) for channel {channel_id}")
+            
+            # Log per-channel statistics
+            if any(count > 0 for count in channel_account_counts.values()):
+                logger.debug(f"Channel {channel_id} account limits applied:")
+                for account_id, count in channel_account_counts.items():
+                    account_limit = account_specific_limits.get(str(account_id), global_limit)
+                    if account_limit > 0:
+                        logger.debug(f"  Account {account_id}: {count}/{account_limit} streams assigned")
+        
+        if total_limited_streams > 0:
+            logger.info(f"Applied per-channel account stream limits: {total_limited_streams} streams were excluded from assignment across {total_channels_processed} channels")
+        
+        return dict(limited_assignments)
+    
+    def validate_and_remove_non_matching_streams(self, force: bool = False) -> Dict[str, Any]:
         """
         Validate existing streams in channels against regex patterns.
         Remove streams that no longer match their channel's patterns.
+        
+        This function respects the automation_controls.remove_non_matching_streams setting
+        unless force=True is passed. This ensures consistent behavior across:
+        - Automation cycles (step 1.5 in the pipeline)
+        - Single channel checks
+        - Global actions
+        
+        Args:
+            force: If True, bypass the automation_controls config check.
+                   Reserved for future use or special cases where removal must happen
+                   regardless of user settings. Default is False to respect user config.
         
         Returns:
             Dict containing validation statistics:
@@ -1018,14 +1287,29 @@ class AutomatedStreamManager:
         """
         log_function_call(logger, "validate_and_remove_non_matching_streams")
         
-        if not self.config.get("validate_existing_streams", False):
-            logger.debug("Stream validation is disabled in config")
-            return {
-                "channels_checked": 0,
-                "streams_removed": 0,
-                "channels_modified": 0,
-                "details": []
-            }
+        # Check if removal is enabled in stream checker config (unless forced)
+        if not force:
+            try:
+                from stream_checker_service import get_stream_checker_service
+                stream_checker = get_stream_checker_service()
+                removal_enabled = stream_checker.config.get('automation_controls', {}).get('remove_non_matching_streams', False)
+                
+                if not removal_enabled:
+                    logger.debug("Stream removal is disabled in automation_controls")
+                    return {
+                        "channels_checked": 0,
+                        "streams_removed": 0,
+                        "channels_modified": 0,
+                        "details": []
+                    }
+            except Exception as e:
+                logger.warning(f"Could not check stream checker config: {e}, skipping validation")
+                return {
+                    "channels_checked": 0,
+                    "streams_removed": 0,
+                    "channels_modified": 0,
+                    "details": []
+                }
         
         try:
             logger.info("=" * 80)
@@ -1033,7 +1317,7 @@ class AutomatedStreamManager:
             logger.info("=" * 80)
             
             udi = get_udi_manager()
-            all_channels = udi.get_all_channels()
+            all_channels = udi.get_channels()
             
             if not all_channels:
                 logger.info("No channels found")
@@ -1071,20 +1355,32 @@ class AutomatedStreamManager:
                 "details": []
             }
             
+            # Get dead stream removal setting to pass to update_channel_streams
+            # This ensures the setting is respected when validating streams
+            dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+            
             # Get all streams from UDI for lookup
-            all_streams = udi.get_all_streams()
+            all_streams = udi.get_streams(log_result=False)
             stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
             
             # Validate each channel's streams
             for channel in all_channels:
                 channel_id = channel.get('id')
+                channel_name = channel.get('name', f'Channel {channel_id}')
                 
-                # Skip channels with matching disabled
+                # Skip channels with matching disabled (respects channel-level and group-level settings)
+                # Even if a channel has regex patterns, we skip it if matching is disabled
                 if channel_id not in matching_enabled_channel_ids:
+                    logger.debug(f"Skipping channel {channel_id} ({channel_name}) - matching disabled")
+                    continue
+                
+                # Skip channels without regex patterns configured
+                # This prevents removing all streams from channels that don't have regex patterns
+                if not self.regex_matcher.has_regex_patterns(str(channel_id)):
+                    logger.debug(f"Skipping channel {channel_id} ({channel_name}) - no regex patterns configured")
                     continue
                 
                 validation_results["channels_checked"] += 1
-                channel_name = channel.get('name', f'Channel {channel_id}')
                 
                 # Get streams for this channel
                 channel_streams = udi.get_channel_streams(channel_id)
@@ -1108,8 +1404,11 @@ class AutomatedStreamManager:
                         streams_to_keep.append(stream_id)
                         continue
                     
-                    # Check if stream matches any pattern for this channel
-                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
+                    # Get stream's m3u_account for M3U account filtering
+                    stream_m3u_account = full_stream.get('m3u_account')
+                    
+                    # Check if stream matches any pattern for this channel (with M3U account filtering)
+                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
                     
                     if str(channel_id) in matching_channels:
                         # Stream still matches, keep it
@@ -1126,7 +1425,8 @@ class AutomatedStreamManager:
                 if streams_to_remove:
                     try:
                         from api_utils import update_channel_streams
-                        success = update_channel_streams(channel_id, streams_to_keep)
+                        # Respect dead stream removal setting when updating channel
+                        success = update_channel_streams(channel_id, streams_to_keep, allow_dead_streams=(not dead_stream_removal_enabled))
                         
                         if success:
                             validation_results["streams_removed"] += len(streams_to_remove)

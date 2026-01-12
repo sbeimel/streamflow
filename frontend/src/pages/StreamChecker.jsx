@@ -170,6 +170,66 @@ export default function StreamChecker() {
     })
   }
 
+  const addAccountLimit = () => {
+    // TODO: In future, we could fetch M3U accounts and show a dropdown
+    // For now, use a simple prompt
+    const accountId = prompt('Enter M3U Account ID (you can find these in the M3U Accounts section):')
+    if (accountId && accountId.trim()) {
+      const id = accountId.trim()
+      // Check if account already has a limit
+      if (editedConfig?.account_stream_limits?.account_limits?.[id] !== undefined) {
+        toast({
+          title: "Account Already Configured",
+          description: `Account ${id} already has a limit configured.`,
+          variant: "destructive"
+        })
+        return
+      }
+      
+      setEditedConfig(prevConfig => {
+        const newConfig = JSON.parse(JSON.stringify(prevConfig))
+        if (!newConfig.account_stream_limits) {
+          newConfig.account_stream_limits = {}
+        }
+        if (!newConfig.account_stream_limits.account_limits) {
+          newConfig.account_stream_limits.account_limits = {}
+        }
+        newConfig.account_stream_limits.account_limits[id] = 50 // Default to 50 streams
+        return newConfig
+      })
+      
+      toast({
+        title: "Account Limit Added",
+        description: `Added limit configuration for M3U Account ${id}`,
+      })
+    }
+  }
+
+  const updateAccountLimit = (accountId, limit) => {
+    setEditedConfig(prevConfig => {
+      const newConfig = JSON.parse(JSON.stringify(prevConfig))
+      if (newConfig.account_stream_limits?.account_limits) {
+        newConfig.account_stream_limits.account_limits[accountId] = limit
+      }
+      return newConfig
+    })
+  }
+
+  const removeAccountLimit = (accountId) => {
+    setEditedConfig(prevConfig => {
+      const newConfig = JSON.parse(JSON.stringify(prevConfig))
+      if (newConfig.account_stream_limits?.account_limits) {
+        delete newConfig.account_stream_limits.account_limits[accountId]
+      }
+      return newConfig
+    })
+    
+    toast({
+      title: "Account Limit Removed",
+      description: `Removed limit configuration for M3U Account ${accountId}`,
+    })
+  }
+
   const loadDeadStreams = async (page = deadStreamsPagination.page) => {
     try {
       setDeadStreamsLoading(true)
@@ -463,10 +523,11 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
+                  <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
                 </TabsList>
 
@@ -698,6 +759,121 @@ export default function StreamChecker() {
                       onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
                       disabled={!configEditing}
                     />
+                  </div>
+                </TabsContent>
+
+                {/* Account Stream Limits Tab */}
+                <TabsContent value="account-limits" className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="account_limits_enabled">Enable Account Stream Limits</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Limit the number of streams per M3U account that can be assigned to channels
+                        </p>
+                      </div>
+                      <Switch
+                        id="account_limits_enabled"
+                        checked={editedConfig?.account_stream_limits?.enabled !== false}
+                        onCheckedChange={(checked) => updateConfigValue('account_stream_limits.enabled', checked)}
+                        disabled={!configEditing}
+                      />
+                    </div>
+
+                    {editedConfig?.account_stream_limits?.enabled !== false && (
+                      <>
+                        <div className="space-y-4 pt-4 border-t">
+                          <div className="space-y-2">
+                            <Label htmlFor="global_stream_limit">Global Stream Limit per Account</Label>
+                            <Input
+                              id="global_stream_limit"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={editedConfig?.account_stream_limits?.global_limit ?? 0}
+                              onChange={(e) => updateConfigValue('account_stream_limits.global_limit', parseInt(e.target.value) || 0)}
+                              disabled={!configEditing}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              Maximum streams per M3U account **per channel** (0 = unlimited). This applies to each channel individually - each channel can have up to this many streams from each account.
+                            </p>
+                          </div>
+
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                              <h4 className="font-medium">Per-Account Limits</h4>
+                              {configEditing && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => addAccountLimit()}
+                                >
+                                  Add Account Limit
+                                </Button>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
+                            </p>
+
+                            {editedConfig?.account_stream_limits?.account_limits && 
+                             Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
+                              <div className="space-y-2">
+                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => (
+                                  <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
+                                    <div className="flex-1">
+                                      <Label className="text-sm font-medium">Account ID: {accountId}</Label>
+                                    </div>
+                                    <div className="w-24">
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={limit}
+                                        onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
+                                        disabled={!configEditing}
+                                        className="text-center"
+                                      />
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">streams</div>
+                                    {configEditing && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => removeAccountLimit(accountId)}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
+                                No per-account limits configured. All accounts will use the global limit.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertTitle>How Account Stream Limits Work</AlertTitle>
+                          <AlertDescription>
+                            <ul className="list-disc list-inside space-y-1 mt-2">
+                              <li>Limits apply **per channel** during channel assignment (stream discovery)</li>
+                              <li>Each channel can have up to the limit number of streams from each M3U account</li>
+                              <li>Custom streams (not from M3U accounts) are not affected by these limits</li>
+                              <li>Per-account limits override the global limit for specific accounts</li>
+                              <li>Set limit to 0 for unlimited streams from that account per channel</li>
+                              <li><strong>Example:</strong> Global limit 2 → Each channel gets max 2 streams per account</li>
+                              <li><strong>With 10 channels:</strong> Account with limit 2 can provide max 20 streams total (2×10)</li>
+                              <li><strong>Provider weighting:</strong> Account A=3, Account B=2, Account C=1 → Each channel gets max 6 streams from these accounts</li>
+                            </ul>
+                          </AlertDescription>
+                        </Alert>
+                      </>
+                    )}
                   </div>
                 </TabsContent>
 

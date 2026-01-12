@@ -1,0 +1,704 @@
+diff --git a/backend/channel_settings_manager.py b/backend/channel_settings_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/channel_settings_manager.py
++++ b/backend/channel_settings_manager.py
+@@ -30,6 +30,13 @@ class ChannelSettingsManager:
+     # Mode constants
+     MODE_ENABLED = 'enabled'
+     MODE_DISABLED = 'disabled'
++    
++    # Quality preference constants
++    QUALITY_DEFAULT = 'default'
++    QUALITY_PREFER_4K = 'prefer_4k'
++    QUALITY_AVOID_4K = 'avoid_4k'
++    QUALITY_MAX_1080P = 'max_1080p'
++    QUALITY_MAX_720P = 'max_720p'
+     
+     def __init__(self):
+         """Initialize the channel settings manager."""
+@@ -60,12 +67,13 @@ class ChannelSettingsManager:
+         Args:
+             channel_id: The channel ID
+             
+         Returns:
+-            Dictionary with channel settings (matching_mode, checking_mode)
+-            Defaults to 'enabled' for both if not set
++            Dictionary with channel settings (matching_mode, checking_mode, quality_preference)
++            Defaults to 'enabled' for modes and 'default' for quality_preference if not set
+         """
+         with self._lock:
+             settings = self._settings.get(channel_id, {})
+             return {
+                 'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
+                 'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
++                'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
+             }
+     
+     def get_channel_effective_settings(self, channel_id: int, channel_group_id: Optional[int] = None) -> Dict[str, Any]:
+@@ -77,12 +85,15 @@ class ChannelSettingsManager:
+             
+         Returns:
+             Dictionary with:
+             - matching_mode: Effective matching mode
+             - checking_mode: Effective checking mode
++            - quality_preference: Effective quality preference
+             - matching_mode_source: 'channel' or 'group' or 'default'
+             - checking_mode_source: 'channel' or 'group' or 'default'
++            - quality_preference_source: 'channel' or 'group' or 'default'
+             - has_explicit_matching: Whether channel has explicit matching setting
+             - has_explicit_checking: Whether channel has explicit checking setting
++            - has_explicit_quality_preference: Whether channel has explicit quality preference setting
+         """
+         with self._lock:
+             channel_settings = self._settings.get(channel_id, {})
+             has_explicit_matching = 'matching_mode' in channel_settings
+             has_explicit_checking = 'checking_mode' in channel_settings
++            has_explicit_quality_preference = 'quality_preference' in channel_settings
+             
+             # Determine effective matching mode
+             if has_explicit_matching:
+@@ -105,11 +116,23 @@ class ChannelSettingsManager:
+             else:
+                 checking_mode = self.MODE_ENABLED
+                 checking_mode_source = 'default'
+             
++            # Determine effective quality preference
++            if has_explicit_quality_preference:
++                quality_preference = channel_settings['quality_preference']
++                quality_preference_source = 'channel'
++            elif channel_group_id is not None:
++                group_settings = self._group_settings.get(channel_group_id, {})
++                quality_preference = group_settings.get('quality_preference', self.QUALITY_DEFAULT)
++                quality_preference_source = 'group'
++            else:
++                quality_preference = self.QUALITY_DEFAULT
++                quality_preference_source = 'default'
++            
+             return {
+                 'matching_mode': matching_mode,
+                 'checking_mode': checking_mode,
++                'quality_preference': quality_preference,
+                 'matching_mode_source': matching_mode_source,
+                 'checking_mode_source': checking_mode_source,
++                'quality_preference_source': quality_preference_source,
+                 'has_explicit_matching': has_explicit_matching,
+                 'has_explicit_checking': has_explicit_checking
++                'has_explicit_quality_preference': has_explicit_quality_preference
+             }
+     
+     def set_channel_settings(self, channel_id: int, matching_mode: Optional[str] = None,
+-                            checking_mode: Optional[str] = None) -> bool:
++                            checking_mode: Optional[str] = None, quality_preference: Optional[str] = None) -> bool:
+         """Set settings for a specific channel.
+         
+         Args:
+             channel_id: The channel ID
+             matching_mode: Matching mode ('enabled' or 'disabled'), None to keep current
+             checking_mode: Checking mode ('enabled' or 'disabled'), None to keep current
++            quality_preference: Quality preference ('default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p'), None to keep current
+             
+         Returns:
+             True if successful, False otherwise
+         """
+         with self._lock:
+             # Get current settings or initialize new ones
+             if channel_id not in self._settings:
+                 self._settings[channel_id] = {}
+             
+             # Update only provided fields
+             if matching_mode is not None:
+                 if matching_mode not in [self.MODE_ENABLED, self.MODE_DISABLED]:
+                     logger.error(f"Invalid matching_mode: {matching_mode}")
+                     return False
+                 self._settings[channel_id]['matching_mode'] = matching_mode
+             
+             if checking_mode is not None:
+                 if checking_mode not in [self.MODE_ENABLED, self.MODE_DISABLED]:
+                     logger.error(f"Invalid checking_mode: {checking_mode}")
+                     return False
+                 self._settings[channel_id]['checking_mode'] = checking_mode
+             
++            if quality_preference is not None:
++                valid_preferences = [self.QUALITY_DEFAULT, self.QUALITY_PREFER_4K, self.QUALITY_AVOID_4K, 
++                                   self.QUALITY_MAX_1080P, self.QUALITY_MAX_720P]
++                if quality_preference not in valid_preferences:
++                    logger.error(f"Invalid quality_preference: {quality_preference}")
++                    return False
++                self._settings[channel_id]['quality_preference'] = quality_preference
++            
+             # Save to file
+             success = self._save_settings()
+             if success:
+                 logger.info(f"Updated settings for channel {channel_id}: "
+                           f"matching={self._settings[channel_id].get('matching_mode', 'enabled')}, "
+-                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}")
++                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}, "
++                          f"quality_preference={self._settings[channel_id].get('quality_preference', 'default')}")
+             return success
+
+diff --git a/backend/web_api.py b/backend/web_api.py
+index 1234567..abcdefg 100644
+--- a/backend/web_api.py
++++ b/backend/web_api.py
+@@ -1820,6 +1820,7 @@ def update_channel_settings_endpoint(channel_id):
+         
+         matching_mode = data.get('matching_mode')
+         checking_mode = data.get('checking_mode')
++        quality_preference = data.get('quality_preference')
+         
+         # Validate modes if provided
+         valid_modes = ['enabled', 'disabled']
+@@ -1828,11 +1829,17 @@ def update_channel_settings_endpoint(channel_id):
+         if checking_mode and checking_mode not in valid_modes:
+             return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
+         
++        # Validate quality preference if provided
++        valid_preferences = ['default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p']
++        if quality_preference and quality_preference not in valid_preferences:
++            return jsonify({"error": f"Invalid quality_preference. Must be one of: {valid_preferences}"}), 400
++        
+         settings_manager = get_channel_settings_manager()
+         success = settings_manager.set_channel_settings(
+             channel_id,
+             matching_mode=matching_mode,
+-            checking_mode=checking_mode
++            checking_mode=checking_mode,
++            quality_preference=quality_preference
+         )
+         
+         if success:
+@@ -2700,6 +2707,21 @@ def update_stream_checker_config():
+                 else:
+                     logger.warning("croniter not available - cron expression validation skipped")
+         
++        # Validate account stream limits if provided
++        if 'account_stream_limits' in data:
++            limits_config = data['account_stream_limits']
++            
++            # Validate global_limit
++            if 'global_limit' in limits_config:
++                global_limit = limits_config['global_limit']
++                if not isinstance(global_limit, int) or global_limit < 0:
++                    return jsonify({"error": "global_limit must be a non-negative integer"}), 400
++            
++            # Validate account_limits
++            if 'account_limits' in limits_config:
++                account_limits = limits_config['account_limits']
++                if not isinstance(account_limits, dict):
++                    return jsonify({"error": "account_limits must be a dictionary"}), 400
++                
++                for account_id, limit in account_limits.items():
++                    if not isinstance(limit, int) or limit < 0:
++                        return jsonify({"error": f"Limit for account {account_id} must be a non-negative integer"}), 400
++        
+         service = get_stream_checker_service()
+         service.update_config(data)
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -135,6 +135,11 @@ class StreamCheckConfig:
+             'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
+             'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
+             'min_score': 0  # Minimum score (0-100, 0 = no minimum)
++        },
++        'account_stream_limits': {
++            'enabled': True,  # Enable per-account stream limits for channel assignment
++            'global_limit': 0,  # Global limit per account (0 = unlimited)
++            'account_limits': {}  # Per-account limits: {account_id: limit}
+         }
+     }
+     
+@@ -2677,7 +2682,12 @@ class StreamCheckerService:
+             self.progress.clear()
+     
+-    def _calculate_stream_score(self, stream_data: Dict) -> float:
++    def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] = None) -> float:
+         """Calculate a quality score for a stream based on analysis.
+         
+-        Applies M3U account priority bonuses according to priority_mode:
++        Applies M3U account priority bonuses according to priority_mode and
++        channel-specific quality preferences.
++        
++        Args:
++            stream_data: Stream analysis data
++            channel_id: Optional channel ID for applying quality preferences
+         """
+         # Dead streams always get a score of 0
+         if self._is_stream_dead(stream_data):
+@@ -2730,6 +2740,11 @@ class StreamCheckerService:
+         if stream_id:
+             priority_boost = self._get_priority_boost(stream_id, stream_data)
+             score += priority_boost
+         
++        # Apply channel-specific quality preference boost/penalty
++        if channel_id:
++            quality_boost = self._get_quality_preference_boost(stream_data, channel_id)
++            score += quality_boost
++        
+         return round(score, 2)
+     
++    def _get_quality_preference_boost(self, stream_data: Dict, channel_id: int) -> float:
++        """Calculate quality preference boost/penalty for a stream based on channel settings.
++        
++        Args:
++            stream_data: Stream data dictionary containing resolution and other info
++            channel_id: The channel ID to get quality preferences for
++            
++        Returns:
++            Quality preference boost/penalty value (-10.0 to 0.5)
++        """
++        try:
++            from channel_settings_manager import get_channel_settings_manager
++            
++            settings_manager = get_channel_settings_manager()
++            
++            # Get channel's group ID for inheritance
++            udi = get_udi_manager()
++            channel = udi.get_channel_by_id(channel_id)
++            channel_group_id = channel.get('channel_group_id') if channel else None
++            
++            # Get effective settings with inheritance
++            effective_settings = settings_manager.get_channel_effective_settings(channel_id, channel_group_id)
++            quality_pref = effective_settings.get('quality_preference', 'default')
++            
++            if quality_pref == 'default':
++                return 0.0
++            
++            resolution = stream_data.get('resolution', 'N/A')
++            if 'x' in str(resolution):
++                try:
++                    width, height = map(int, resolution.split('x'))
++                    
++                    if quality_pref == 'prefer_4k' and height >= 2160:
++                        # Extra bonus for 4K streams
++                        logger.debug(f"Applying 4K preference bonus (+0.5) to stream for channel {channel_id}")
++                        return 0.5
++                    elif quality_pref == 'avoid_4k' and height >= 2160:
++                        # Penalty for 4K streams (prefer Full HD instead)
++                        logger.debug(f"Applying 4K avoidance penalty (-0.5) to stream for channel {channel_id}")
++                        return -0.5
++                    elif quality_pref == 'max_1080p' and height > 1080:
++                        # Heavy penalty for streams above 1080p (effectively exclude them)
++                        logger.debug(f"Applying max 1080p penalty (-10.0) to stream for channel {channel_id}")
++                        return -10.0
++                    elif quality_pref == 'max_720p' and height > 720:
++                        # Heavy penalty for streams above 720p (effectively exclude them)
++                        logger.debug(f"Applying max 720p penalty (-10.0) to stream for channel {channel_id}")
++                        return -10.0
++                        
++                except (ValueError, AttributeError):
++                    pass
++            
++            return 0.0
++        except Exception as e:
++            logger.error(f"Error calculating quality preference boost for channel {channel_id}: {e}")
++            return 0.0
+
+diff --git a/backend/automated_stream_manager.py b/backend/automated_stream_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/automated_stream_manager.py
++++ b/backend/automated_stream_manager.py
+@@ -1055,6 +1055,16 @@ class AutomatedStreamManager:
+                         })
+             
++            # Get stream checker service for account limits configuration
++            stream_checker_service = None
++            account_limits_config = {}
++            try:
++                from stream_checker_service import get_stream_checker_service
++                stream_checker_service = get_stream_checker_service()
++                account_limits_config = stream_checker_service.config.get('account_stream_limits', {})
++            except Exception as e:
++                logger.warning(f"Could not get stream checker service for account limits: {e}")
++            
+             # Prepare detailed changelog data
+             detailed_assignments = []
+             
+@@ -1062,6 +1072,10 @@ class AutomatedStreamManager:
+             dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+             
++            # Apply account stream limits before assignment
++            if account_limits_config.get('enabled', True):
++                assignments = self._apply_account_stream_limits(assignments, all_streams, account_limits_config)
++            
+             # Assign streams to channels
+             for channel_id, stream_ids in assignments.items():
+                 if stream_ids:
+@@ -1180,6 +1194,73 @@ class AutomatedStreamManager:
+                 })
+             return {}
+     
++    def _apply_account_stream_limits(self, assignments: Dict[str, List[int]], all_streams: List[Dict], 
++                                   account_limits_config: Dict) -> Dict[str, List[int]]:
++        """Apply per-account stream limits to channel assignments.
++        
++        Limits are applied PER CHANNEL, meaning each channel can have up to the limit
++        number of streams from each M3U account.
++        
++        Args:
++            assignments: Dictionary mapping channel_id to list of stream_ids
++            all_streams: List of all available streams
++            account_limits_config: Account limits configuration
++            
++        Returns:
++            Modified assignments dictionary with limits applied
++        """
++        if not account_limits_config.get('enabled', True):
++            return assignments
++        
++        global_limit = account_limits_config.get('global_limit', 0)
++        account_specific_limits = account_limits_config.get('account_limits', {})
++        
++        # If no limits are configured, return unchanged
++        if global_limit == 0 and not account_specific_limits:
++            return assignments
++        
++        # Create stream_id to m3u_account mapping for quick lookup
++        stream_to_account = {}
++        for stream in all_streams:
++            if isinstance(stream, dict) and 'id' in stream:
++                stream_to_account[stream['id']] = stream.get('m3u_account')
++        
++        limited_assignments = defaultdict(list)
++        total_limited_streams = 0
++        total_channels_processed = 0
++        
++        logger.info("Applying account stream limits to channel assignments (per-channel counting)...")
++        
++        # Process assignments channel by channel (each channel gets its own limits)
++        for channel_id, stream_ids in assignments.items():
++            # Track streams per account FOR THIS CHANNEL ONLY
++            channel_account_counts = defaultdict(int)
++            total_channels_processed += 1
++            
++            for stream_id in stream_ids:
++                m3u_account = stream_to_account.get(stream_id)
++                
++                # Skip custom streams (no m3u_account)
++                if m3u_account is None:
++                    limited_assignments[channel_id].append(stream_id)
++                    continue
++                
++                # Determine limit for this account
++                account_limit = account_specific_limits.get(str(m3u_account), global_limit)
++                
++                # If limit is 0, no limit applies
++                if account_limit == 0:
++                    limited_assignments[channel_id].append(stream_id)
++                    continue
++                
++                # Check if we're within the limit FOR THIS CHANNEL
++                if channel_account_counts[m3u_account] < account_limit:
++                    limited_assignments[channel_id].append(stream_id)
++                    channel_account_counts[m3u_account] += 1
++                else:
++                    # Stream exceeds limit for this channel, skip it
++                    total_limited_streams += 1
++                    logger.debug(f"Stream {stream_id} from account {m3u_account} exceeds per-channel limit ({account_limit}) for channel {channel_id}")
++            
++            # Log per-channel statistics
++            if any(count > 0 for count in channel_account_counts.values()):
++                logger.debug(f"Channel {channel_id} account limits applied:")
++                for account_id, count in channel_account_counts.items():
++                    account_limit = account_specific_limits.get(str(account_id), global_limit)
++                    if account_limit > 0:
++                        logger.debug(f"  Account {account_id}: {count}/{account_limit} streams assigned")
++        
++        if total_limited_streams > 0:
++            logger.info(f"Applied per-channel account stream limits: {total_limited_streams} streams were excluded from assignment across {total_channels_processed} channels")
++        
++        return dict(limited_assignments)
++    
+     def validate_and_remove_non_matching_streams(self, force: bool = False) -> Dict[str, Any]:
+
+diff --git a/frontend/src/pages/ChannelConfiguration.jsx b/frontend/src/pages/ChannelConfiguration.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/ChannelConfiguration.jsx
++++ b/frontend/src/pages/ChannelConfiguration.jsx
+@@ -58,10 +58,13 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+ 
+   const matchingMode = channelSettings?.matching_mode || 'enabled'
+   const checkingMode = channelSettings?.checking_mode || 'enabled'
++  const qualityPreference = channelSettings?.quality_preference || 'default'
+   const matchingModeSource = channelSettings?.matching_mode_source || 'default'
+   const checkingModeSource = channelSettings?.checking_mode_source || 'default'
++  const qualityPreferenceSource = channelSettings?.quality_preference_source || 'default'
+   const isMatchingInherited = matchingModeSource === 'group'
+   const isCheckingInherited = checkingModeSource === 'group'
++  const isQualityPrefInherited = qualityPreferenceSource === 'group'
+
+@@ -94,6 +97,32 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+     }
+   }
+
++  const handleQualityPreferenceChange = async (value) => {
++    try {
++      await onUpdateSettings(channel.id, { quality_preference: value })
++      toast({
++        title: "Success",
++        description: "Quality preference updated successfully"
++      })
++    } catch (err) {
++      toast({
++        title: "Error",
++        description: "Failed to update quality preference",
++        variant: "destructive"
++      })
++    }
++  }
++
++  const getQualityPreferenceDescription = (preference) => {
++    switch (preference) {
++      case 'default': return 'Standard quality scoring (4K > Full HD > HD)'
++      case 'prefer_4k': return '4K streams get extra bonus points'
++      case 'avoid_4k': return '4K streams get penalty (Full HD preferred)'
++      case 'max_1080p': return 'Streams above 1080p are excluded'
++      case 'max_720p': return 'Streams above 720p are excluded'
++      default: return 'Standard quality scoring'
++    }
++  }
++
+@@ -244,7 +273,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+         {expanded && (
+           <div className="border-t p-4 bg-muted/50 space-y-4">
+             {/* Channel Settings */}
+-            <div className="grid grid-cols-2 gap-4 pb-4 border-b">
++            <div className="grid grid-cols-3 gap-4 pb-4 border-b">
+               <div className="space-y-2">
+                 <Label htmlFor={`matching-mode-${channel.id}`} className="text-sm font-medium">
+                   Stream Matching
+@@ -290,6 +319,29 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+                   {isCheckingInherited && ' (inherited from group)'}
+                 </p>
+               </div>
++              <div className="space-y-2">
++                <Label htmlFor={`quality-preference-${channel.id}`} className="text-sm font-medium">
++                  Quality Preference
++                  {isQualityPrefInherited && (
++                    <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
++                  )}
++                </Label>
++                <Select value={qualityPreference} onValueChange={handleQualityPreferenceChange}>
++                  <SelectTrigger id={`quality-preference-${channel.id}`}>
++                    <SelectValue />
++                  </SelectTrigger>
++                  <SelectContent>
++                    <SelectItem value="default">Default</SelectItem>
++                    <SelectItem value="prefer_4k">Prefer 4K</SelectItem>
++                    <SelectItem value="avoid_4k">Avoid 4K</SelectItem>
++                    <SelectItem value="max_1080p">Max 1080p</SelectItem>
++                    <SelectItem value="max_720p">Max 720p</SelectItem>
++                  </SelectContent>
++                </Select>
++                <p className="text-xs text-muted-foreground">
++                  {getQualityPreferenceDescription(qualityPreference)}
++                  {isQualityPrefInherited && ' (inherited from group)'}
++                </p>
++              </div>
+             </div>
+
+diff --git a/frontend/src/pages/StreamChecker.jsx b/frontend/src/pages/StreamChecker.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/StreamChecker.jsx
++++ b/frontend/src/pages/StreamChecker.jsx
+@@ -169,6 +169,50 @@ export default function StreamChecker() {
+     })
+   }
+
++  const addAccountLimit = () => {
++    // TODO: In future, we could fetch M3U accounts and show a dropdown
++    // For now, use a simple prompt
++    const accountId = prompt('Enter M3U Account ID (you can find these in the M3U Accounts section):')
++    if (accountId && accountId.trim()) {
++      const id = accountId.trim()
++      // Check if account already has a limit
++      if (editedConfig?.account_stream_limits?.account_limits?.[id] !== undefined) {
++        toast({
++          title: "Account Already Configured",
++          description: `Account ${id} already has a limit configured.`,
++          variant: "destructive"
++        })
++        return
++      }
++      
++      setEditedConfig(prevConfig => {
++        const newConfig = JSON.parse(JSON.stringify(prevConfig))
++        if (!newConfig.account_stream_limits) {
++          newConfig.account_stream_limits = {}
++        }
++        if (!newConfig.account_stream_limits.account_limits) {
++          newConfig.account_stream_limits.account_limits = {}
++        }
++        newConfig.account_stream_limits.account_limits[id] = 50 // Default to 50 streams
++        return newConfig
++      })
++      
++      toast({
++        title: "Account Limit Added",
++        description: `Added limit configuration for M3U Account ${id}`,
++      })
++    }
++  }
++
++  const updateAccountLimit = (accountId, limit) => {
++    setEditedConfig(prevConfig => {
++      const newConfig = JSON.parse(JSON.stringify(prevConfig))
++      if (newConfig.account_stream_limits?.account_limits) {
++        newConfig.account_stream_limits.account_limits[accountId] = limit
++      }
++      return newConfig
++    })
++  }
++
++  const removeAccountLimit = (accountId) => {
++    setEditedConfig(prevConfig => {
++      const newConfig = JSON.parse(JSON.stringify(prevConfig))
++      if (newConfig.account_stream_limits?.account_limits) {
++        delete newConfig.account_stream_limits.account_limits[accountId]
++      }
++      return newConfig
++    })
++    
++    toast({
++      title: "Account Limit Removed",
++      description: `Removed limit configuration for M3U Account ${accountId}`,
++    })
++  }
++
+   const handleSaveConfig = async () => {
+     try {
+       setActionLoading('save-config')
+@@ -463,8 +507,8 @@ export default function StreamChecker() {
+               {/* Tabs for Configuration Sections */}
+               <Tabs defaultValue="analysis" className="w-full">
+-                <TabsList className="grid w-full grid-cols-4">
++                <TabsList className="grid w-full grid-cols-5">
+                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
+                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
+                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
++                  <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
+                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
+                 </TabsList>
+
+@@ -703,6 +747,80 @@ export default function StreamChecker() {
+                 </TabsContent>
+
++                {/* Account Stream Limits Tab */}
++                <TabsContent value="account-limits" className="space-y-4">
++                  <div className="space-y-4">
++                    <div className="flex items-center justify-between">
++                      <div className="space-y-0.5">
++                        <Label htmlFor="account_limits_enabled">Enable Account Stream Limits</Label>
++                        <p className="text-sm text-muted-foreground">
++                          Limit the number of streams per M3U account that can be assigned to channels
++                        </p>
++                      </div>
++                      <Switch
++                        id="account_limits_enabled"
++                        checked={editedConfig?.account_stream_limits?.enabled !== false}
++                        onCheckedChange={(checked) => updateConfigValue('account_stream_limits.enabled', checked)}
++                        disabled={!configEditing}
++                      />
++                    </div>
++
++                    {editedConfig?.account_stream_limits?.enabled !== false && (
++                      <>
++                        <div className="space-y-4 pt-4 border-t">
++                          <div className="space-y-2">
++                            <Label htmlFor="global_stream_limit">Global Stream Limit per Account</Label>
++                            <Input
++                              id="global_stream_limit"
++                              type="number"
++                              min="0"
++                              step="1"
++                              value={editedConfig?.account_stream_limits?.global_limit ?? 0}
++                              onChange={(e) => updateConfigValue('account_stream_limits.global_limit', parseInt(e.target.value) || 0)}
++                              disabled={!configEditing}
++                            />
++                            <p className="text-sm text-muted-foreground">
++                              Maximum streams per M3U account **per channel** (0 = unlimited). This applies to each channel individually - each channel can have up to this many streams from each account.
++                            </p>
++                          </div>
++
++                          <div className="space-y-4">
++                            <div className="flex items-center justify-between">
++                              <h4 className="font-medium">Per-Account Limits</h4>
++                              {configEditing && (
++                                <Button
++                                  variant="outline"
++                                  size="sm"
++                                  onClick={() => addAccountLimit()}
++                                >
++                                  Add Account Limit
++                                </Button>
++                              )}
++                            </div>
++                            <p className="text-sm text-muted-foreground">
++                              Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
++                            </p>
++
++                            {editedConfig?.account_stream_limits?.account_limits && 
++                             Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
++                              <div className="space-y-2">
++                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => (
++                                  <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
++                                    <div className="flex-1">
++                                      <Label className="text-sm font-medium">M3U Account ID: {accountId}</Label>
++                                    </div>
++                                    <div className="w-24">
++                                      <Input
++                                        type="number"
++                                        min="0"
++                                        step="1"
++                                        value={limit}
++                                        onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
++                                        disabled={!configEditing}
++                                        className="text-center"
++                                      />
++                                    </div>
++                                    <div className="text-sm text-muted-foreground">streams</div>
++                                    {configEditing && (
++                                      <Button
++                                        variant="outline"
++                                        size="sm"
++                                        onClick={() => removeAccountLimit(accountId)}
++                                      >
++                                        <Trash2 className="h-4 w-4" />
++                                      </Button>
++                                    )}
++                                  </div>
++                                ))}
++                              </div>
++                            ) : (
++                              <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
++                                No per-account limits configured. All accounts will use the global limit.
++                              </div>
++                            )}
++                          </div>
++                        </div>
++
++                        <Alert>
++                          <AlertCircle className="h-4 w-4" />
++                          <AlertTitle>How Account Stream Limits Work</AlertTitle>
++                          <AlertDescription>
++                            <ul className="list-disc list-inside space-y-1 mt-2">
++                              <li>Limits apply **per channel** during channel assignment (stream discovery)</li>
++                              <li>Each channel can have up to the limit number of streams from each M3U account</li>
++                              <li>Custom streams (not from M3U accounts) are not affected by these limits</li>
++                              <li>Per-account limits override the global limit for specific accounts</li>
++                              <li>Set limit to 0 for unlimited streams from that account per channel</li>
++                              <li><strong>Example:</strong> Global limit 2 → Each channel gets max 2 streams per account</li>
++                              <li><strong>With 10 channels:</strong> Account with limit 2 can provide max 20 streams total (2×10)</li>
++                              <li><strong>Provider weighting:</strong> Account A=3, Account B=2, Account C=1 → Each channel gets max 6 streams from these accounts</li>
++                            </ul>
++                          </AlertDescription>
++                        </Alert>
++                      </>
++                    )}
++                  </div>
++                </TabsContent>
++
+                 {/* Dead Streams Tab */}
+                 <TabsContent value="dead-streams" className="space-y-4">

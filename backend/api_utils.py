@@ -688,6 +688,69 @@ def has_custom_streams() -> bool:
     udi = get_udi_manager()
     return udi.has_custom_streams()
 
+
+def get_stream_proxy(stream_id: int) -> Optional[str]:
+    """
+    Get HTTP proxy for a stream from its M3U account.
+    
+    This function retrieves the proxy configuration from the M3U account
+    associated with the given stream. The proxy is used for FFmpeg-based
+    quality checks to ensure they use the same network path as regular
+    channel streaming.
+    
+    Args:
+        stream_id (int): The ID of the stream to get proxy for
+        
+    Returns:
+        Optional[str]: Proxy URL string (e.g., 'http://proxy:8080') or None if no proxy configured
+    """
+    log_function_call(logger, "get_stream_proxy", stream_id=stream_id)
+    
+    try:
+        udi = get_udi_manager()
+        
+        # Get stream data from UDI cache
+        stream = udi.get_stream_by_id(stream_id)
+        if not stream:
+            logger.debug(f"Stream {stream_id} not found in UDI cache")
+            log_function_return(logger, "get_stream_proxy", None)
+            return None
+        
+        # Get M3U account ID from stream
+        m3u_account_id = stream.get('m3u_account_id') or stream.get('m3u_account')
+        if not m3u_account_id:
+            logger.debug(f"Stream {stream_id} has no M3U account association")
+            log_function_return(logger, "get_stream_proxy", None)
+            return None
+        
+        # Get M3U accounts from UDI cache
+        accounts = udi.get_m3u_accounts()
+        if not accounts:
+            logger.debug("No M3U accounts found in UDI cache")
+            log_function_return(logger, "get_stream_proxy", None)
+            return None
+        
+        # Find the specific M3U account and extract proxy
+        for account in accounts:
+            if account.get('id') == m3u_account_id:
+                proxy = account.get('proxy')
+                if proxy and proxy.strip():
+                    logger.debug(f"Found proxy '{proxy}' for stream {stream_id} from M3U account {m3u_account_id}")
+                    log_function_return(logger, "get_stream_proxy", proxy.strip())
+                    return proxy.strip()
+                else:
+                    logger.debug(f"M3U account {m3u_account_id} has no proxy configured")
+                    log_function_return(logger, "get_stream_proxy", None)
+                    return None
+        
+        logger.debug(f"M3U account {m3u_account_id} not found for stream {stream_id}")
+        log_function_return(logger, "get_stream_proxy", None)
+        return None
+        
+    except Exception as e:
+        log_exception(logger, e, f"get_stream_proxy (stream_id={stream_id})")
+        return None
+
 def create_channel_from_stream(
     stream_id: int,
     channel_number: Optional[int] = None,

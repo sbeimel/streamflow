@@ -9,6 +9,7 @@ the automated stream management system.
 import json
 import logging
 import os
+import re
 import requests
 import threading
 import time
@@ -27,7 +28,12 @@ from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
-from match_profiles_manager import get_match_profiles_manager
+from profile_config import ProfileConfig
+
+# Pre-compiled regex pattern for whitespace conversion (performance optimization)
+# This pattern matches one or more spaces that are NOT preceded by a backslash
+# Used to convert literal spaces to flexible whitespace while preserving escaped spaces
+_WHITESPACE_PATTERN = re.compile(r'(?<!\\) +')
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -619,11 +625,16 @@ def get_channel_logo_cached(logo_id):
         if not logo:
             return jsonify({"error": "Logo not found"}), 404
         
-        # Get the logo URL from Dispatcharr
-        # Prefer cache_url if available, otherwise use url
-        dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+        # Get the Dispatcharr base URL from config instead of environment variable
+        # This ensures we use the configured value from the UI
+        dispatcharr_config = get_dispatcharr_config()
+        dispatcharr_base_url = dispatcharr_config.get_base_url()
+        
         if not dispatcharr_base_url:
-            return jsonify({"error": "DISPATCHARR_BASE_URL not configured"}), 500
+            # Fallback to environment variable for backward compatibility
+            dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+            if not dispatcharr_base_url:
+                return jsonify({"error": "DISPATCHARR_BASE_URL not configured"}), 500
             
         logo_url = logo.get('cache_url') or logo.get('url')
         
@@ -694,6 +705,9 @@ def get_regex_patterns():
     """Get all regex patterns for channel matching."""
     try:
         matcher = get_regex_matcher()
+        # Reload patterns from disk to ensure we have the latest configuration
+        # This handles cases where users manually edit the config file
+        matcher.reload_patterns()
         patterns = matcher.get_patterns()
         return jsonify(patterns)
     except Exception as e:
@@ -713,11 +727,13 @@ def add_regex_pattern():
             return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
         
         matcher = get_regex_matcher()
+        m3u_accounts = data.get('m3u_accounts')  # Optional field for M3U account filtering
         matcher.add_channel_pattern(
             data['channel_id'],
             data['name'],
             data['regex'],
-            data.get('enabled', True)
+            data.get('enabled', True),
+            m3u_accounts=m3u_accounts
         )
         
         return jsonify({"message": "Pattern added/updated successfully"})
@@ -734,6 +750,8 @@ def delete_regex_pattern(channel_id):
     """Delete a regex pattern for a channel."""
     try:
         matcher = get_regex_matcher()
+        # Reload patterns from disk to ensure we have the latest configuration
+        matcher.reload_patterns()
         patterns = matcher.get_patterns()
         
         if 'patterns' in patterns and str(channel_id) in patterns['patterns']:
@@ -744,6 +762,103 @@ def delete_regex_pattern(channel_id):
             return jsonify({"error": "Pattern not found"}), 404
     except Exception as e:
         logger.error(f"Error deleting regex pattern: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/bulk', methods=['POST'])
+def add_bulk_regex_patterns():
+    """Add the same regex patterns to multiple channels."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        required_fields = ['channel_ids', 'regex_patterns']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        
+        channel_ids = data['channel_ids']
+        regex_patterns = data['regex_patterns']
+        m3u_accounts = data.get('m3u_accounts')  # Optional M3U account filtering
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        if not isinstance(regex_patterns, list) or len(regex_patterns) == 0:
+            return jsonify({"error": "regex_patterns must be a non-empty list"}), 400
+        
+        # Get UDI manager to fetch channel names
+        udi = get_udi_manager()
+        matcher = get_regex_matcher()
+        
+        # Validate patterns before applying
+        is_valid, error_msg = matcher.validate_regex_patterns(regex_patterns)
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Apply patterns to each channel
+        success_count = 0
+        failed_channels = []
+        
+        for channel_id in channel_ids:
+            try:
+                # Get channel name from UDI
+                channel = udi.get_channel_by_id(channel_id)
+                if not channel:
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Channel not found"
+                    })
+                    continue
+                
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get existing patterns for this channel
+                patterns = matcher.get_patterns()
+                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
+                existing_regex = existing_patterns.get('regex', [])
+                existing_m3u_accounts = existing_patterns.get('m3u_accounts')
+                
+                # Merge with new patterns (avoid duplicates)
+                merged_regex = list(existing_regex)
+                for pattern in regex_patterns:
+                    if pattern not in merged_regex:
+                        merged_regex.append(pattern)
+                
+                # Use provided m3u_accounts or keep existing
+                final_m3u_accounts = m3u_accounts if m3u_accounts is not None else existing_m3u_accounts
+                
+                # Add/update pattern
+                matcher.add_channel_pattern(
+                    str(channel_id),
+                    channel_name,
+                    merged_regex,
+                    existing_patterns.get('enabled', True),
+                    m3u_accounts=final_m3u_accounts
+                )
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Error adding pattern to channel {channel_id}: {e}")
+                failed_channels.append({
+                    "channel_id": channel_id,
+                    "error": str(e)
+                })
+        
+        response_data = {
+            "message": f"Successfully added patterns to {success_count} channel(s)",
+            "success_count": success_count,
+            "total_channels": len(channel_ids)
+        }
+        
+        if failed_channels:
+            response_data["failed_channels"] = failed_channels
+            response_data["failed_count"] = len(failed_channels)
+        
+        return jsonify(response_data)
+    except ValueError as e:
+        logger.warning(f"Validation error in bulk regex pattern addition: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error adding bulk regex patterns: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns/import', methods=['POST'])
@@ -817,7 +932,9 @@ def test_regex_pattern():
         
         # Convert literal spaces in pattern to flexible whitespace regex (\s+)
         # This allows matching streams with different whitespace characters
-        search_pattern = re.sub(r' +', r'\\s+', search_pattern)
+        # BUT: Don't convert escaped spaces - they should remain literal
+        # We replace only non-escaped spaces using pre-compiled pattern for performance
+        search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
         
         try:
             match = re.search(search_pattern, search_name)
@@ -842,7 +959,7 @@ def test_regex_pattern():
 def test_regex_pattern_live():
     """Test regex patterns against all available streams to see what would be matched."""
     try:
-        from api_utils import get_streams
+        from api_utils import get_streams, get_m3u_accounts
         import re
         
         data = request.get_json()
@@ -866,6 +983,11 @@ def test_regex_pattern_live():
                 "message": "No streams available"
             })
         
+        # Get M3U accounts to map account IDs to names
+        m3u_accounts_list = get_m3u_accounts() or []
+        m3u_account_map = {acc.get('id'): acc.get('name', f'Account {acc.get("id")}') 
+                          for acc in m3u_accounts_list if acc.get('id') is not None}
+        
         results = []
         
         # Test each pattern against all streams
@@ -873,13 +995,22 @@ def test_regex_pattern_live():
             channel_id = pattern_info.get('channel_id', 'unknown')
             channel_name = pattern_info.get('channel_name', 'Unknown Channel')
             regex_patterns = pattern_info.get('regex', [])
+            m3u_accounts = pattern_info.get('m3u_accounts')  # Get M3U account filter (None or empty = all accounts)
             
             if not regex_patterns:
                 continue
             
             matched_streams = []
             
-            for stream in all_streams:
+            # Filter streams by M3U account if specified
+            streams_to_test = all_streams
+            if m3u_accounts:
+                logger.debug(f"Filtering streams by M3U accounts {m3u_accounts}: testing against subset of streams")
+                # Filter to only include streams from the specified M3U accounts
+                streams_to_test = [s for s in all_streams if s.get('m3u_account') in m3u_accounts]
+                logger.debug(f"Filtered to {len(streams_to_test)} of {len(all_streams)} streams")
+            
+            for stream in streams_to_test:
                 if not isinstance(stream, dict):
                     continue
                 
@@ -896,11 +1027,19 @@ def test_regex_pattern_live():
                 matched_pattern = None
                 
                 for pattern in regex_patterns:
-                    search_pattern = pattern if case_sensitive else pattern.lower()
+                    # Substitute CHANNEL_NAME variable with actual channel name
+                    # This matches the behavior in automated_stream_manager.py
+                    escaped_channel_name = re.escape(channel_name)
+                    substituted_pattern = pattern.replace('CHANNEL_NAME', escaped_channel_name)
+                    
+                    search_pattern = substituted_pattern if case_sensitive else substituted_pattern.lower()
                     
                     # Convert literal spaces in pattern to flexible whitespace regex (\s+)
                     # This allows matching streams with different whitespace characters
-                    search_pattern = re.sub(r' +', r'\\s+', search_pattern)
+                    # (non-breaking spaces, tabs, double spaces, etc.)
+                    # BUT: Don't convert escaped spaces (from re.escape) - they should remain literal
+                    # We replace only non-escaped spaces using pre-compiled pattern for performance
+                    search_pattern = _WHITESPACE_PATTERN.sub(r'\\s+', search_pattern)
                     
                     try:
                         if re.search(search_pattern, search_name):
@@ -912,18 +1051,23 @@ def test_regex_pattern_live():
                         continue
                 
                 if matched and len(matched_streams) < max_matches_per_pattern:
+                    m3u_account_id = stream.get('m3u_account')
                     matched_streams.append({
                         "stream_id": stream_id,
                         "stream_name": stream_name,
-                        "matched_pattern": matched_pattern
+                        "matched_pattern": matched_pattern,
+                        "m3u_account": m3u_account_id,
+                        "m3u_account_name": m3u_account_map.get(m3u_account_id) if m3u_account_id else None
                     })
             
             results.append({
                 "channel_id": channel_id,
                 "channel_name": channel_name,
                 "patterns": regex_patterns,
+                "m3u_accounts": m3u_accounts,
                 "matched_streams": matched_streams,
-                "match_count": len(matched_streams)
+                "match_count": len(matched_streams),
+                "total_tested_streams": len(streams_to_test)
             })
         
         return jsonify({
@@ -1103,14 +1247,10 @@ def diagnose_profiles():
         base_url = config.get_base_url()
         
         # Check if profiles exist in storage
-        try:
-            storage_profiles = udi.storage.load_channel_profiles()
-            storage_count = len(storage_profiles) if storage_profiles else 0
-        except Exception as e:
-            storage_count = f"Error: {e}"
+        storage_count = udi.get_storage_count('channel_profiles')
         
         # Get last refresh time
-        last_refresh = udi.cache.get_last_refresh('channel_profiles')
+        last_refresh = udi.get_cache_last_refresh('channel_profiles')
         
         diagnostic_info = {
             "udi_initialized": is_initialized,
@@ -1270,8 +1410,7 @@ def get_profile_channels(profile_id):
                 'channels': channels_data
             }
             # Store in UDI for future use
-            udi.storage.save_profile_channels_by_id(profile_id, profile_channels_to_cache)
-            udi._profile_channels_cache[profile_id] = profile_channels_to_cache
+            udi.update_profile_channels(profile_id, profile_channels_to_cache)
             
             return jsonify(profile_channels_to_cache)
     
@@ -1681,6 +1820,7 @@ def update_channel_settings_endpoint(channel_id):
         
         matching_mode = data.get('matching_mode')
         checking_mode = data.get('checking_mode')
+        quality_preference = data.get('quality_preference')
         
         # Validate modes if provided
         valid_modes = ['enabled', 'disabled']
@@ -1689,11 +1829,17 @@ def update_channel_settings_endpoint(channel_id):
         if checking_mode and checking_mode not in valid_modes:
             return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
         
+        # Validate quality preference if provided
+        valid_preferences = ['default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p']
+        if quality_preference and quality_preference not in valid_preferences:
+            return jsonify({"error": f"Invalid quality_preference. Must be one of: {valid_preferences}"}), 400
+        
         settings_manager = get_channel_settings_manager()
         success = settings_manager.set_channel_settings(
             channel_id,
             matching_mode=matching_mode,
-            checking_mode=checking_mode
+            checking_mode=checking_mode,
+            quality_preference=quality_preference
         )
         
         if success:
@@ -1742,6 +1888,7 @@ def update_group_settings_endpoint(group_id):
         
         matching_mode = data.get('matching_mode')
         checking_mode = data.get('checking_mode')
+        quality_preference = data.get('quality_preference')
         cascade_to_channels = data.get('cascade_to_channels', False)  # Default to False to preserve individual channel settings
         
         # Validate modes if provided
@@ -1751,13 +1898,19 @@ def update_group_settings_endpoint(group_id):
         if checking_mode and checking_mode not in valid_modes:
             return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
         
+        # Validate quality preference if provided
+        valid_preferences = ['default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p']
+        if quality_preference and quality_preference not in valid_preferences:
+            return jsonify({"error": f"Invalid quality_preference. Must be one of: {valid_preferences}"}), 400
+        
         settings_manager = get_channel_settings_manager()
         
         # Update the group settings
         success = settings_manager.set_group_settings(
             group_id,
             matching_mode=matching_mode,
-            checking_mode=checking_mode
+            checking_mode=checking_mode,
+            quality_preference=quality_preference
         )
         
         if not success:
@@ -1779,7 +1932,8 @@ def update_group_settings_endpoint(group_id):
                             settings_manager.set_channel_settings(
                                 channel_id,
                                 matching_mode=matching_mode,
-                                checking_mode=checking_mode
+                                checking_mode=checking_mode,
+                                quality_preference=quality_preference
                             )
                             channels_updated += 1
                 
@@ -2119,6 +2273,8 @@ def get_setup_wizard_status():
         # Check if we have patterns configured
         if regex_file.exists():
             matcher = get_regex_matcher()
+            # Reload patterns from disk to ensure we have the latest configuration
+            matcher.reload_patterns()
             patterns = matcher.get_patterns()
             status["has_patterns"] = bool(patterns.get('patterns'))
         
@@ -2473,12 +2629,13 @@ def add_to_stream_checker_queue():
             return jsonify({"error": "No data provided"}), 400
         
         service = get_stream_checker_service()
+        force_check = data.get('force_check', False)
         
         # Handle single channel or multiple channels
         if 'channel_id' in data:
             channel_id = data['channel_id']
             priority = data.get('priority', 10)
-            success = service.queue_channel(channel_id, priority)
+            success = service.queue_channel(channel_id, priority, force_check=force_check)
             if success:
                 return jsonify({"message": f"Channel {channel_id} queued successfully"})
             else:
@@ -2487,7 +2644,7 @@ def add_to_stream_checker_queue():
         elif 'channel_ids' in data:
             channel_ids = data['channel_ids']
             priority = data.get('priority', 10)
-            added = service.queue_channels(channel_ids, priority)
+            added = service.queue_channels(channel_ids, priority, force_check=force_check)
             return jsonify({"message": f"Queued {added} channels successfully", "added": added})
         
         else:
@@ -2541,33 +2698,61 @@ def update_stream_checker_config():
                 else:
                     logger.warning("croniter not available - cron expression validation skipped")
         
+        # Validate account stream limits if provided
+        if 'account_stream_limits' in data:
+            limits_config = data['account_stream_limits']
+            
+            # Validate global_limit
+            if 'global_limit' in limits_config:
+                global_limit = limits_config['global_limit']
+                if not isinstance(global_limit, int) or global_limit < 0:
+                    return jsonify({"error": "global_limit must be a non-negative integer"}), 400
+            
+            # Validate account_limits
+            if 'account_limits' in limits_config:
+                account_limits = limits_config['account_limits']
+                if not isinstance(account_limits, dict):
+                    return jsonify({"error": "account_limits must be a dictionary"}), 400
+                
+                for account_id, limit in account_limits.items():
+                    if not isinstance(limit, int) or limit < 0:
+                        return jsonify({"error": f"Limit for account {account_id} must be a non-negative integer"}), 400
+        
         service = get_stream_checker_service()
         service.update_config(data)
         
-        # Auto-start or stop services based on pipeline mode when wizard is complete
-        if 'pipeline_mode' in data and check_wizard_complete():
-            pipeline_mode = data['pipeline_mode']
+        # Auto-start or stop services based on automation_controls when wizard is complete
+        if 'automation_controls' in data and check_wizard_complete():
+            automation_controls = data['automation_controls']
             manager = get_automation_manager()
             
-            if pipeline_mode == 'disabled':
-                # Stop services if pipeline is disabled
+            # Check if any automation is enabled
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', False) or
+                automation_controls.get('auto_stream_matching', False) or
+                automation_controls.get('auto_quality_checking', False) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                # Stop services if all automation is disabled
                 if service.running:
                     service.stop()
-                    logger.info("Stream checker service stopped (pipeline disabled)")
+                    logger.info("Stream checker service stopped (all automation disabled)")
                 if manager.running:
                     manager.stop_automation()
-                    logger.info("Automation service stopped (pipeline disabled)")
+                    logger.info("Automation service stopped (all automation disabled)")
                 # Stop background processors
                 stop_scheduled_event_processor()
                 stop_epg_refresh_processor()
             else:
-                # Start services if pipeline is active and they're not already running
+                # Start services if automation is enabled and they're not already running
                 if not service.running:
                     service.start()
-                    logger.info(f"Stream checker service auto-started after config update (mode: {pipeline_mode})")
+                    logger.info(f"Stream checker service auto-started after config update")
                 if not manager.running:
                     manager.start_automation()
-                    logger.info(f"Automation service auto-started after config update (mode: {pipeline_mode})")
+                    logger.info(f"Automation service auto-started after config update")
                 # Start background processors if not running
                 if not (scheduled_event_processor_thread and scheduled_event_processor_thread.is_alive()):
                     start_scheduled_event_processor()
@@ -3354,219 +3539,6 @@ def trigger_epg_refresh():
         return jsonify({"error": str(e)}), 500
 
 
-# ============================================================================
-# Match Profiles API Endpoints
-# ============================================================================
-
-@app.route('/api/match-profiles', methods=['GET'])
-@log_function_call
-def list_match_profiles():
-    """Get all match profiles.
-    
-    Returns:
-        JSON array of match profiles
-    """
-    try:
-
-        manager = get_match_profiles_manager()
-        profiles = manager.list_profiles()
-        return jsonify([p.to_dict() for p in profiles]), 200
-    except Exception as e:
-        logger.error(f"Error listing match profiles: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/match-profiles/<int:profile_id>', methods=['GET'])
-@log_function_call
-def get_match_profile(profile_id):
-    """Get a specific match profile.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Returns:
-        JSON object with profile data
-    """
-    try:
-
-        manager = get_match_profiles_manager()
-        profile = manager.get_profile(profile_id)
-        
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
-        
-        return jsonify(profile.to_dict()), 200
-    except Exception as e:
-        logger.error(f"Error getting match profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/match-profiles', methods=['POST'])
-@log_function_call
-def create_match_profile():
-    """Create a new match profile.
-    
-    Request body:
-        {
-            "name": "Profile Name",
-            "description": "Optional description",
-            "steps": [
-                {
-                    "id": "step1",
-                    "type": "regex_name",
-                    "pattern": ".*ESPN.*",
-                    "variables": {},
-                    "enabled": true,
-                    "order": 0
-                }
-            ]
-        }
-        
-    Returns:
-        JSON object with created profile
-    """
-    try:
-
-        data = request.get_json()
-        
-        if not data or 'name' not in data:
-            return jsonify({"error": "Missing required field: name"}), 400
-        
-        manager = get_match_profiles_manager()
-        profile = manager.create_profile(
-            name=data['name'],
-            description=data.get('description'),
-            steps=data.get('steps', [])
-        )
-        
-        return jsonify(profile.to_dict()), 201
-    except Exception as e:
-        logger.error(f"Error creating match profile: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/match-profiles/<int:profile_id>', methods=['PUT', 'PATCH'])
-@log_function_call
-def update_match_profile(profile_id):
-    """Update a match profile.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Request body:
-        {
-            "name": "Updated Name",
-            "description": "Updated description",
-            "steps": [...],
-            "enabled": true
-        }
-        
-    Returns:
-        JSON object with updated profile
-    """
-    try:
-
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        manager = get_match_profiles_manager()
-        profile = manager.update_profile(
-            profile_id=profile_id,
-            name=data.get('name'),
-            description=data.get('description'),
-            steps=data.get('steps'),
-            enabled=data.get('enabled')
-        )
-        
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
-        
-        return jsonify(profile.to_dict()), 200
-    except Exception as e:
-        logger.error(f"Error updating match profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/match-profiles/<int:profile_id>', methods=['DELETE'])
-@log_function_call
-def delete_match_profile(profile_id):
-    """Delete a match profile.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Returns:
-        JSON with success message
-    """
-    try:
-
-        manager = get_match_profiles_manager()
-        
-        if not manager.delete_profile(profile_id):
-            return jsonify({"error": "Profile not found"}), 404
-        
-        return jsonify({"message": "Profile deleted successfully"}), 200
-    except Exception as e:
-        logger.error(f"Error deleting match profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/match-profiles/<int:profile_id>/test', methods=['POST'])
-@log_function_call
-def test_match_profile(profile_id):
-    """Test a match profile against stream data.
-    
-    Args:
-        profile_id: The profile ID
-        
-    Request body:
-        {
-            "stream_name": "ESPN HD",
-            "stream_url": "http://example.com/stream",
-            "stream_tvg_id": "ESPN.us",
-            "channel_name": "Sports",
-            "channel_group": "Sports Channels",
-            "m3u_account_name": "Primary Provider"
-        }
-        
-    Returns:
-        JSON with test results
-    """
-    try:
-
-        manager = get_match_profiles_manager()
-        
-        profile = manager.get_profile(profile_id)
-        if not profile:
-            return jsonify({"error": "Profile not found"}), 404
-        
-        data = request.get_json() or {}
-        
-        # Apply variables if provided
-        if any(k in data for k in ['channel_name', 'channel_group', 'm3u_account_name']):
-            profile = manager.apply_profile_to_variables(
-                profile,
-                channel_name=data.get('channel_name', ''),
-                channel_group=data.get('channel_group', ''),
-                m3u_account_name=data.get('m3u_account_name', '')
-            )
-        
-        # Test against stream data
-        result = manager.test_profile_against_stream(
-            profile,
-            stream_name=data.get('stream_name', ''),
-            stream_url=data.get('stream_url', ''),
-            stream_tvg_id=data.get('stream_tvg_id', '')
-        )
-        
-        return jsonify(result), 200
-    except Exception as e:
-        logger.error(f"Error testing match profile {profile_id}: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -3593,27 +3565,34 @@ if __name__ == '__main__':
     
     logger.info(f"Starting StreamFlow for Dispatcharr Web API on {args.host}:{args.port}")
     
-    # Auto-start stream checker service if enabled and pipeline mode is not disabled AND wizard is complete
+    # Auto-start stream checker service if enabled and automation is configured AND wizard is complete
     try:
         # Check if wizard has been completed
         if not check_wizard_complete():
             logger.info("Stream checker service will not start - setup wizard has not been completed")
         else:
             service = get_stream_checker_service()
-            pipeline_mode = service.config.get('pipeline_mode', 'pipeline_1_5')
+            automation_controls = service.config.get('automation_controls', {})
             
-            if pipeline_mode == 'disabled':
-                logger.info("Stream checker service is disabled via pipeline mode")
+            # Check if any automation is enabled
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', True) or
+                automation_controls.get('auto_stream_matching', True) or
+                automation_controls.get('auto_quality_checking', True) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                logger.info("Stream checker service is disabled (all automation controls disabled)")
             elif service.config.get('enabled', True):
                 service.start()
-                logger.info(f"Stream checker service auto-started (mode: {pipeline_mode})")
+                logger.info(f"Stream checker service auto-started")
             else:
                 logger.info("Stream checker service is disabled in configuration")
     except Exception as e:
         logger.error(f"Failed to auto-start stream checker service: {e}")
     
-    # Auto-start automation service if pipeline mode is not disabled AND wizard is complete
-    # When any pipeline other than disabled is selected, automation should auto-start
+    # Auto-start automation service if automation is configured AND wizard is complete
     try:
         # Check if wizard has been completed
         if not check_wizard_complete():
@@ -3621,14 +3600,22 @@ if __name__ == '__main__':
         else:
             manager = get_automation_manager()
             service = get_stream_checker_service()
-            pipeline_mode = service.config.get('pipeline_mode', 'pipeline_1_5')
+            automation_controls = service.config.get('automation_controls', {})
             
-            if pipeline_mode == 'disabled':
-                logger.info("Automation service is disabled via pipeline mode")
+            # Check if any automation is enabled
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', True) or
+                automation_controls.get('auto_stream_matching', True) or
+                automation_controls.get('auto_quality_checking', True) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                logger.info("Automation service is disabled (all automation controls disabled)")
             else:
-                # Auto-start automation for any active pipeline
+                # Auto-start automation
                 manager.start_automation()
-                logger.info(f"Automation service auto-started (mode: {pipeline_mode})")
+                logger.info(f"Automation service auto-started")
     except Exception as e:
         logger.error(f"Failed to auto-start automation service: {e}")
     

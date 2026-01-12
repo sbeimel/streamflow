@@ -278,7 +278,7 @@ def get_stream_info(url: str, timeout: int = 30, user_agent: str = 'VLC/3.0.14')
         return None, None
 
 
-def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14', stream_startup_buffer: int = 10) -> Dict[str, Any]:
+def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14', stream_startup_buffer: int = 10, proxy: Optional[str] = None) -> Dict[str, Any]:
     """
     Get complete stream information using ffmpeg in a single call.
     
@@ -292,6 +292,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         timeout: Base timeout in seconds (actual timeout includes duration + overhead)
         user_agent: User agent string to use for HTTP requests
         stream_startup_buffer: Buffer in seconds for stream startup (default: 10s)
+        proxy: HTTP proxy URL for FFmpeg (e.g., 'http://proxy:8080')
 
     Returns:
         Dictionary containing:
@@ -332,11 +333,17 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         }
     
     logger.debug(f"Analyzing stream with ffmpeg for {duration}s: {url[:50]}...")
-    # Use list arguments to pass URL safely to subprocess without shell interpretation
-    command = [
-        'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
-        '-i', url, '-t', str(duration), '-f', 'null', '-'
-    ]
+    
+    # Build FFmpeg command with proxy support (same logic as Dispatcharr)
+    command = ['ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent]
+    
+    # Add HTTP proxy if provided (matches Dispatcharr's build_command logic)
+    if proxy and proxy.strip():
+        logger.debug(f"Using HTTP proxy for FFmpeg: {proxy.strip()}")
+        command.extend(['-http_proxy', proxy.strip()])
+    
+    # Complete the command
+    command.extend(['-i', url, '-t', str(duration), '-f', 'null', '-'])
 
     result_data = {
         'video_codec': 'N/A',
@@ -665,7 +672,8 @@ def analyze_stream(
     retries: int = 1,
     retry_delay: int = 10,
     user_agent: str = 'VLC/3.0.14',
-    stream_startup_buffer: int = 10
+    stream_startup_buffer: int = 10,
+    proxy: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Perform complete stream analysis including codec, resolution, FPS, bitrate, and audio.
@@ -685,6 +693,7 @@ def analyze_stream(
         retry_delay: Delay in seconds between retries
         user_agent: User agent string to use for HTTP requests
         stream_startup_buffer: Buffer in seconds for stream startup (default: 10s)
+        proxy: HTTP proxy URL for FFmpeg (e.g., 'http://proxy:8080')
 
     Returns:
         Dictionary containing analysis results with keys:
@@ -740,7 +749,8 @@ def analyze_stream(
                     duration=ffmpeg_duration,
                     timeout=timeout,
                     user_agent=user_agent,
-                    stream_startup_buffer=stream_startup_buffer
+                    stream_startup_buffer=stream_startup_buffer,
+                    proxy=proxy
                 )
 
                 # Build result dictionary with metadata
