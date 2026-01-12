@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Settings } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
@@ -1126,8 +1126,10 @@ export default function ChannelConfiguration() {
   const [pendingChanges, setPendingChanges] = useState({})
   const [activeTab, setActiveTab] = useState('regex')
   
-  // Multi-select state for bulk regex assignment
+  // Multi-select state for bulk operations
   const [selectedChannels, setSelectedChannels] = useState(new Set())
+  const [bulkQualityDialogOpen, setBulkQualityDialogOpen] = useState(false)
+  const [bulkQualityPreference, setBulkQualityPreference] = useState('default')
   const [filterByGroup, setFilterByGroup] = useState('all')
   const [sortByGroup, setSortByGroup] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
@@ -1473,6 +1475,48 @@ export default function ChannelConfiguration() {
       })
     } finally {
       setBulkCheckingChannels(false)
+    }
+  }
+
+  const handleBulkQualityPreference = async () => {
+    if (selectedChannels.size === 0) {
+      toast({
+        title: "No Channels Selected",
+        description: "Please select channels to update",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      const channelIds = Array.from(selectedChannels)
+      
+      // Update quality preference for all selected channels
+      await Promise.all(
+        channelIds.map(channelId => 
+          channelSettingsAPI.updateSettings(channelId, { 
+            quality_preference: bulkQualityPreference 
+          })
+        )
+      )
+      
+      toast({
+        title: "Success",
+        description: `Updated quality preference for ${selectedChannels.size} channel${selectedChannels.size !== 1 ? 's' : ''}`,
+      })
+      
+      // Reload data and clear selection
+      await loadData()
+      setSelectedChannels(new Set())
+      setBulkQualityDialogOpen(false)
+      setBulkQualityPreference('default')
+      
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update quality preferences",
+        variant: "destructive"
+      })
     }
   }
 
@@ -2174,6 +2218,16 @@ export default function ChannelConfiguration() {
                     >
                       <Plus className="h-4 w-4 mr-2" />
                       Add Regex to Selected
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => setBulkQualityDialogOpen(true)}
+                      disabled={selectedChannels.size === 0}
+                      className="text-purple-600 border-purple-600 hover:bg-purple-50"
+                      variant="outline"
+                    >
+                      <Settings className="h-4 w-4 mr-2" />
+                      Set Quality Preference
                     </Button>
                     <Button
                       size="sm"
@@ -2997,6 +3051,55 @@ export default function ChannelConfiguration() {
             </Button>
             <Button onClick={handleBulkAddPattern} disabled={!bulkPattern.trim()}>
               Add to {selectedChannels.size} Channel{selectedChannels.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Quality Preference Dialog */}
+      <Dialog open={bulkQualityDialogOpen} onOpenChange={setBulkQualityDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Set Quality Preference for Multiple Channels</DialogTitle>
+            <DialogDescription>
+              This will update the quality preference for {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="bulk-quality-preference">Quality Preference</Label>
+              <Select value={bulkQualityPreference} onValueChange={setBulkQualityPreference}>
+                <SelectTrigger id="bulk-quality-preference">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default</SelectItem>
+                  <SelectItem value="prefer_4k">Prefer 4K</SelectItem>
+                  <SelectItem value="avoid_4k">Avoid 4K</SelectItem>
+                  <SelectItem value="max_1080p">Max 1080p</SelectItem>
+                  <SelectItem value="max_720p">Max 720p</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {bulkQualityPreference === 'default' && 'Standard quality scoring (4K > Full HD > HD)'}
+                {bulkQualityPreference === 'prefer_4k' && '4K streams get extra bonus points'}
+                {bulkQualityPreference === 'avoid_4k' && '4K streams get penalty (Full HD preferred)'}
+                {bulkQualityPreference === 'max_1080p' && 'Streams above 1080p are excluded'}
+                {bulkQualityPreference === 'max_720p' && 'Streams above 720p are excluded'}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setBulkQualityDialogOpen(false)
+              setBulkQualityPreference('default')
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={handleBulkQualityPreference}>
+              Update {selectedChannels.size} Channel{selectedChannels.size !== 1 ? 's' : ''}
             </Button>
           </DialogFooter>
         </DialogContent>
