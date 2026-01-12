@@ -841,7 +841,9 @@ export default function StreamChecker() {
                                 <h5 className="text-sm font-medium">M3U Account Limits (0 = use global limit)</h5>
                                 <div className="space-y-2 max-h-64 overflow-y-auto">
                                   {m3uAccounts.map((account) => {
-                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] || 0
+                                    // Use String(account.id) for consistent key lookup (JSON keys are always strings)
+                                    const accountIdStr = String(account.id)
+                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[accountIdStr] || 0
                                     return (
                                       <div key={account.id} className="flex items-center gap-2 p-3 border rounded-md">
                                         <div className="flex-1">
@@ -866,9 +868,9 @@ export default function StreamChecker() {
                                                 }
                                                 if (newLimit === 0) {
                                                   // Remove from config if set to 0 (use global limit)
-                                                  delete newConfig.account_stream_limits.account_limits[account.id]
+                                                  delete newConfig.account_stream_limits.account_limits[accountIdStr]
                                                 } else {
-                                                  newConfig.account_stream_limits.account_limits[account.id] = newLimit
+                                                  newConfig.account_stream_limits.account_limits[accountIdStr] = newLimit
                                                 }
                                                 return newConfig
                                               })
