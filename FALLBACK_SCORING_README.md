@@ -18,7 +18,7 @@ Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive), 1280x720 [SAR 
 Stream #0:1(deu): Audio: mp2, 48000 Hz, stereo, fltp, 256 kb/s
 ```
 
-**Problem**: Ohne Bitrate-Information bekommen diese Streams Score 0 und werden als "schlecht" eingestuft, obwohl sie perfekt funktionieren.
+**Problem**: Ohne Bitrate-Information bekommen diese Streams Score 0.0 und werden als "schlecht" eingestuft, obwohl sie perfekt funktionieren.
 
 ## Lösung: Fallback-Scoring
 
@@ -35,7 +35,7 @@ def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] =
         stream_data.get('resolution') not in ['0x0', 'N/A', ''] and
         stream_data.get('fps', 0) > 0):
         
-        return 40.0  # Mittlerer Score
+        return 0.40  # Mittlerer Score (normalisiert auf 0.0-1.0 Skala)
     
     # 3. Normale Berechnung für vollständige Streams
     return self._calculate_normal_score(stream_data, channel_id)
@@ -45,15 +45,17 @@ def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] =
 
 | Stream-Typ | Auflösung | FPS | Bitrate | Score | Behandlung |
 |------------|-----------|-----|---------|-------|------------|
-| **Tot** | `0x0` oder `N/A` | `0` | `0` | `0` | Entfernt |
-| **Funktioniert ohne Bitrate** | `1280x720` | `50` | `0` | `40` | Behalten |
-| **Vollständig** | `1280x720` | `50` | `5000` | `60-100` | Bevorzugt |
+| **Tot** | `0x0` oder `N/A` | `0` | `0` | `0.0` | Entfernt |
+| **Funktioniert ohne Bitrate** | `1280x720` | `50` | `0` | `0.40` | Behalten |
+| **Vollständig, niedrige Qualität** | `1280x720` | `50` | `3000` | `0.60-0.70` | Bevorzugt |
+| **Vollständig, gute Qualität** | `1920x1080` | `50` | `5000` | `0.80-0.90` | Stark bevorzugt |
+| **Vollständig, beste Qualität** | `1920x1080` | `60` | `8000` | `0.95-1.0` | Am meisten bevorzugt |
 
-### Score-Hierarchie
+### Score-Hierarchie (normalisiert auf 0.0-1.0)
 
-- **0**: Tote Streams (werden entfernt)
-- **40**: Funktionierende Streams ohne Bitrate-Info (mittlere Priorität)
-- **60-100**: Vollständige Streams mit allen Metadaten (höchste Priorität)
+- **0.0**: Tote Streams (werden entfernt)
+- **0.40**: Funktionierende Streams ohne Bitrate-Info (mittlere Priorität)
+- **0.60-1.0**: Vollständige Streams mit allen Metadaten (höchste Priorität)
 
 ## Vorteile
 
@@ -68,7 +70,7 @@ def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] =
 Das System loggt Fallback-Scoring für bessere Nachverfolgung:
 
 ```
-DEBUG - Stream without bitrate info but functional: 1280x720@50fps - assigning fallback score: 40
+DEBUG - Stream without bitrate info but functional: 1280x720@50fps - assigning fallback score: 0.40
 ```
 
 ## Konfiguration

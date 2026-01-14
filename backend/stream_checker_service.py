@@ -2715,8 +2715,8 @@ class StreamCheckerService:
             stream_data.get('resolution') not in ['0x0', 'N/A', ''] and
             stream_data.get('fps', 0) > 0):
             
-            logger.debug(f"Stream without bitrate info but functional: {stream_data.get('resolution')}@{stream_data.get('fps')}fps - assigning fallback score: 40")
-            return 40.0  # Medium score - better than dead streams (0), worse than complete streams (60-100)
+            logger.debug(f"Stream without bitrate info but functional: {stream_data.get('resolution')}@{stream_data.get('fps')}fps - assigning fallback score: 0.40")
+            return 0.40  # Medium score - better than dead streams (0.0), worse than complete streams (0.60-1.0)
         
         weights = self.config.get('scoring.weights', {})
         score = 0.0
