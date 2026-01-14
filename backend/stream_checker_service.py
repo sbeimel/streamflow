@@ -2341,29 +2341,12 @@ class StreamCheckerService:
                     step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})'
                 )
                 
-                # Analyze stream
+                # Analyze stream with profile failover
                 analysis_params = self.config.get('stream_analysis', {})
-                
-                # Apply URL transformation if using M3U profile with search/replace patterns
-                stream_url = stream.get('url', '')
-                if udi:
-                    stream_url = udi.apply_profile_url_transformation(stream)
-                
-                # Get HTTP proxy for this stream from its M3U account
-                from api_utils import get_stream_proxy
-                proxy = get_stream_proxy(stream['id'])
-                
-                analyzed = analyze_stream(
-                    stream_url=stream_url,
-                    stream_id=stream['id'],
-                    stream_name=stream.get('name', 'Unknown'),
-                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
-                    timeout=analysis_params.get('timeout', 30),
-                    retries=analysis_params.get('retries', 1),
-                    retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
-                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
-                    proxy=proxy
+                analyzed = self._analyze_stream_with_profile_failover(
+                    stream=stream,
+                    analysis_params=analysis_params,
+                    udi=udi
                 )
                 
                 # Update stream stats on dispatcharr with ffmpeg-extracted data
@@ -2469,26 +2452,11 @@ class StreamCheckerService:
                     logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
                     analysis_params = self.config.get('stream_analysis', {})
                     
-                    # Apply URL transformation if using M3U profile with search/replace patterns
-                    stream_url = stream.get('url', '')
-                    if udi:
-                        stream_url = udi.apply_profile_url_transformation(stream)
-                    
-                    # Get HTTP proxy for this stream from its M3U account
-                    from api_utils import get_stream_proxy
-                    proxy = get_stream_proxy(stream['id'])
-                    
-                    analyzed = analyze_stream(
-                        stream_url=stream_url,
-                        stream_id=stream['id'],
-                        stream_name=stream.get('name', 'Unknown'),
-                        ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
-                        timeout=analysis_params.get('timeout', 30),
-                        retries=analysis_params.get('retries', 1),
-                        retry_delay=analysis_params.get('retry_delay', 10),
-                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
-                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
-                        proxy=proxy
+                    # Analyze stream with profile failover
+                    analyzed = self._analyze_stream_with_profile_failover(
+                        stream=stream,
+                        analysis_params=analysis_params,
+                        udi=udi
                     )
                     self._update_stream_stats(analyzed)
                     score = self._calculate_stream_score(analyzed, channel_id)
@@ -2706,6 +2674,199 @@ class StreamCheckerService:
         finally:
             self.checking = False
             self.progress.clear()
+    
+    def _analyze_stream_with_profile_failover(self, stream: Dict, analysis_params: Dict, udi) -> Dict:
+        """Analyze a stream with automatic profile failover.
+        
+        If a stream fails with one profile, automatically tries other available profiles
+        before marking the stream as dead. This significantly improves reliability when
+        one profile has issues but others work fine.
+        
+        Strategy:
+        1. Try all immediately available profiles (with free slots)
+        2. If all fail, try ALL profiles (including full ones) - will wait for slots
+        3. Only mark as dead if ALL profiles fail
+        
+        Args:
+            stream: Stream dictionary with 'id', 'name', 'url', etc.
+            analysis_params: Analysis parameters from config
+            udi: UDI manager instance
+            
+        Returns:
+            Analysis result dictionary
+        """
+        from stream_check_utils import analyze_stream
+        from api_utils import get_stream_proxy
+        
+        stream_id = stream['id']
+        stream_name = stream.get('name', 'Unknown')
+        
+        # Phase 1: Try available profiles (with free slots)
+        available_profiles = []
+        if udi and stream.get('m3u_account'):
+            available_profiles = udi.get_all_available_profiles_for_stream(stream)
+        
+        # If no profiles or custom stream, use standard analysis
+        if not available_profiles and not stream.get('m3u_account'):
+            stream_url = stream.get('url', '')
+            if udi:
+                stream_url = udi.apply_profile_url_transformation(stream)
+            
+            proxy = get_stream_proxy(stream_id)
+            
+            return analyze_stream(
+                stream_url=stream_url,
+                stream_id=stream_id,
+                stream_name=stream_name,
+                ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                timeout=analysis_params.get('timeout', 30),
+                retries=analysis_params.get('retries', 1),
+                retry_delay=analysis_params.get('retry_delay', 10),
+                user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                proxy=proxy
+            )
+        
+        # Try available profiles first
+        logger.info(f"Stream {stream_id} ({stream_name}): Phase 1 - Trying {len(available_profiles)} available profile(s)")
+        
+        last_error = None
+        for profile_idx, profile in enumerate(available_profiles, 1):
+            profile_id = profile.get('id')
+            profile_name = profile.get('name', f'Profile {profile_id}')
+            
+            try:
+                # Apply URL transformation for this specific profile
+                stream_url = udi.apply_profile_url_transformation(stream, profile)
+                
+                logger.info(f"Stream {stream_id}: Trying available profile {profile_idx}/{len(available_profiles)} - {profile_name} (ID: {profile_id})")
+                
+                proxy = get_stream_proxy(stream_id)
+                
+                analyzed = analyze_stream(
+                    stream_url=stream_url,
+                    stream_id=stream_id,
+                    stream_name=stream_name,
+                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                    timeout=analysis_params.get('timeout', 30),
+                    retries=analysis_params.get('retries', 1),
+                    retry_delay=analysis_params.get('retry_delay', 10),
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                    proxy=proxy
+                )
+                
+                # Check if analysis was successful (not dead/error)
+                if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                    logger.info(f"Stream {stream_id}: ✅ SUCCESS with available profile {profile_name} (ID: {profile_id})")
+                    # Add profile info to result
+                    analyzed['used_profile_id'] = profile_id
+                    analyzed['used_profile_name'] = profile_name
+                    analyzed['profile_failover_attempts'] = profile_idx
+                    analyzed['profile_failover_phase'] = 1
+                    return analyzed
+                else:
+                    # Profile failed, try next one
+                    status = analyzed.get('status', 'Unknown')
+                    logger.warning(f"Stream {stream_id}: ❌ FAILED with available profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                    last_error = analyzed
+                    
+            except Exception as e:
+                logger.error(f"Stream {stream_id}: ❌ ERROR with available profile {profile_name} (ID: {profile_id}): {e}")
+                last_error = {
+                    'stream_id': stream_id,
+                    'stream_name': stream_name,
+                    'stream_url': stream.get('url', ''),
+                    'status': 'Error',
+                    'error': str(e)
+                }
+        
+        # Phase 2: All available profiles failed - try ALL profiles (including full ones)
+        if udi and stream.get('m3u_account'):
+            all_profiles = udi.get_all_profiles_for_stream(stream)
+            # Filter out profiles we already tried
+            tried_profile_ids = {p.get('id') for p in available_profiles}
+            remaining_profiles = [p for p in all_profiles if p.get('id') not in tried_profile_ids]
+            
+            if remaining_profiles:
+                logger.warning(f"Stream {stream_id} ({stream_name}): Phase 2 - All available profiles failed, trying {len(remaining_profiles)} additional profile(s) (may wait for slots)")
+                
+                for profile_idx, profile in enumerate(remaining_profiles, 1):
+                    profile_id = profile.get('id')
+                    profile_name = profile.get('name', f'Profile {profile_id}')
+                    
+                    try:
+                        # Apply URL transformation for this specific profile
+                        stream_url = udi.apply_profile_url_transformation(stream, profile)
+                        
+                        logger.info(f"Stream {stream_id}: Trying additional profile {profile_idx}/{len(remaining_profiles)} - {profile_name} (ID: {profile_id}) [may wait for slot]")
+                        
+                        proxy = get_stream_proxy(stream_id)
+                        
+                        # Note: The AccountStreamLimiter will handle waiting for slots automatically
+                        analyzed = analyze_stream(
+                            stream_url=stream_url,
+                            stream_id=stream_id,
+                            stream_name=stream_name,
+                            ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                            timeout=analysis_params.get('timeout', 30),
+                            retries=analysis_params.get('retries', 1),
+                            retry_delay=analysis_params.get('retry_delay', 10),
+                            user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                            stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                            proxy=proxy
+                        )
+                        
+                        # Check if analysis was successful
+                        if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                            logger.info(f"Stream {stream_id}: ✅ SUCCESS with additional profile {profile_name} (ID: {profile_id}) after waiting")
+                            # Add profile info to result
+                            analyzed['used_profile_id'] = profile_id
+                            analyzed['used_profile_name'] = profile_name
+                            analyzed['profile_failover_attempts'] = len(available_profiles) + profile_idx
+                            analyzed['profile_failover_phase'] = 2
+                            return analyzed
+                        else:
+                            # Profile failed
+                            status = analyzed.get('status', 'Unknown')
+                            logger.warning(f"Stream {stream_id}: ❌ FAILED with additional profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                            last_error = analyzed
+                            
+                    except Exception as e:
+                        logger.error(f"Stream {stream_id}: ❌ ERROR with additional profile {profile_name} (ID: {profile_id}): {e}")
+                        last_error = {
+                            'stream_id': stream_id,
+                            'stream_name': stream_name,
+                            'stream_url': stream.get('url', ''),
+                            'status': 'Error',
+                            'error': str(e)
+                        }
+        
+        # All profiles failed (both phases)
+        total_attempts = len(available_profiles) + len(remaining_profiles) if 'remaining_profiles' in locals() else len(available_profiles)
+        logger.error(f"Stream {stream_id} ({stream_name}): ❌ ALL {total_attempts} profile(s) FAILED (Phase 1 + Phase 2) - marking as dead")
+        
+        # Return the last error result
+        if last_error:
+            last_error['profile_failover_attempts'] = total_attempts
+            last_error['all_profiles_failed'] = True
+            return last_error
+        
+        # Fallback error result
+        return {
+            'stream_id': stream_id,
+            'stream_name': stream_name,
+            'stream_url': stream.get('url', ''),
+            'timestamp': datetime.now().isoformat(),
+            'video_codec': 'N/A',
+            'audio_codec': 'N/A',
+            'resolution': '0x0',
+            'fps': 0,
+            'bitrate_kbps': None,
+            'status': 'Error',
+            'profile_failover_attempts': total_attempts if 'total_attempts' in locals() else 0,
+            'all_profiles_failed': True
+        }
     
     def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] = None) -> float:
         """Calculate a quality score for a stream based on analysis.

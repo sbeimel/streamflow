@@ -1286,6 +1286,133 @@ class UDIManager:
         logger.debug(f"No available profile found for stream {stream.get('id')} in account {account_id}")
         return None
     
+    def get_all_available_profiles_for_stream(self, stream: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get all available profiles for a stream, ordered by priority.
+        
+        This method returns ALL available profiles for profile failover during quality checking.
+        If one profile fails, the next one can be tried.
+        
+        Profiles are returned in their natural order (as defined in the M3U account).
+        Only profiles with available slots or unlimited streams are included.
+        
+        Args:
+            stream: Stream dictionary with 'm3u_account' and 'url' fields
+            
+        Returns:
+            List of available profile dictionaries, ordered by their position in the account
+        """
+        self._ensure_initialized()
+        
+        account_id = stream.get('m3u_account')
+        if not account_id:
+            logger.debug(f"Stream {stream.get('id')} has no m3u_account")
+            return []
+        
+        # Get the account and its profiles
+        account = self.get_m3u_account_by_id(account_id)
+        if not account:
+            logger.warning(f"Account {account_id} not found for stream {stream.get('id')}")
+            return []
+        
+        profiles = account.get('profiles', [])
+        if not profiles:
+            logger.debug(f"Account {account_id} has no profiles")
+            return []
+        
+        # Get current usage per profile
+        profile_usage = self.get_active_streams_count_per_profile(account_id)
+        
+        # Collect available profiles in their natural order
+        available_profiles = []
+        
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            
+            profile_id = profile.get('id')
+            if not profile_id:
+                continue
+            
+            # Skip inactive profiles
+            if not profile.get('is_active', True):
+                logger.debug(f"Profile {profile_id} is inactive, skipping")
+                continue
+            
+            # Check if profile has available slots
+            max_streams = profile.get('max_streams', 0)
+            if max_streams == 0:
+                # Unlimited streams - always available
+                available_profiles.append(profile)
+                logger.debug(f"Profile {profile_id} has unlimited streams, adding to available list")
+            else:
+                active_count = profile_usage.get(profile_id, 0)
+                if active_count < max_streams:
+                    available_profiles.append(profile)
+                    logger.debug(f"Profile {profile_id} has {active_count}/{max_streams} active streams, adding to available list")
+                else:
+                    logger.debug(f"Profile {profile_id} is at capacity ({active_count}/{max_streams} streams), skipping")
+        
+        if available_profiles:
+            logger.debug(f"Found {len(available_profiles)} available profile(s) for stream {stream.get('id')} in account {account_id}")
+        else:
+            logger.debug(f"No available profiles found for stream {stream.get('id')} in account {account_id}")
+        
+        return available_profiles
+    
+    def get_all_profiles_for_stream(self, stream: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get ALL profiles for a stream, regardless of availability.
+        
+        This method returns ALL active profiles for comprehensive failover testing.
+        Used when a stream fails with available profiles and we want to try
+        ALL profiles (including full ones) before marking the stream as dead.
+        
+        Args:
+            stream: Stream dictionary with 'm3u_account' and 'url' fields
+            
+        Returns:
+            List of all active profile dictionaries, ordered by their position in the account
+        """
+        self._ensure_initialized()
+        
+        account_id = stream.get('m3u_account')
+        if not account_id:
+            logger.debug(f"Stream {stream.get('id')} has no m3u_account")
+            return []
+        
+        # Get the account and its profiles
+        account = self.get_m3u_account_by_id(account_id)
+        if not account:
+            logger.warning(f"Account {account_id} not found for stream {stream.get('id')}")
+            return []
+        
+        profiles = account.get('profiles', [])
+        if not profiles:
+            logger.debug(f"Account {account_id} has no profiles")
+            return []
+        
+        # Collect all active profiles (ignore capacity)
+        all_profiles = []
+        
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            
+            profile_id = profile.get('id')
+            if not profile_id:
+                continue
+            
+            # Only skip inactive profiles
+            if not profile.get('is_active', True):
+                logger.debug(f"Profile {profile_id} is inactive, skipping")
+                continue
+            
+            all_profiles.append(profile)
+            logger.debug(f"Profile {profile_id} added to comprehensive failover list")
+        
+        logger.debug(f"Found {len(all_profiles)} total active profile(s) for stream {stream.get('id')} in account {account_id}")
+        
+        return all_profiles
+    
     def check_stream_can_run(self, stream: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """Check if a stream can run based on its M3U account profile availability.
         

@@ -2130,3 +2130,354 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
 </TabsContent>
 ```
 
+
+
+# ============================================================================
+# OPTIONAL FEATURE: Profile Failover for Quality Check
+# ============================================================================
+
+## Overview
+
+Profile Failover ensures that streams are not incorrectly marked as dead when only
+one specific profile of an M3U account has issues. Instead, all available profiles
+are automatically tried.
+
+## Problem
+
+Without Profile Failover:
+- Stream fails with Profile 1 → Marked as DEAD
+- Profile 2 and 3 are never tried (even though they might work)
+- Stream is removed from channel unnecessarily
+
+With Profile Failover:
+- Stream fails with Profile 1 → Try Profile 2
+- Profile 2 fails → Try Profile 3
+- Profile 3 succeeds → Stream stays in channel ✅
+
+## Implementation
+
+### Backend Changes
+
+**File: `backend/udi/manager.py`**
+
+Add new method after `get_all_available_profiles_for_stream()`:
+
+```python
+def get_all_profiles_for_stream(self, stream: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Get ALL profiles for a stream, regardless of availability.
+    
+    This method returns ALL active profiles for comprehensive failover testing.
+    Used when a stream fails with available profiles and we want to try
+    ALL profiles (including full ones) before marking the stream as dead.
+    
+    Args:
+        stream: Stream dictionary with 'm3u_account' and 'url' fields
+        
+    Returns:
+        List of all active profile dictionaries, ordered by their position in the account
+    """
+    self._ensure_initialized()
+    
+    account_id = stream.get('m3u_account')
+    if not account_id:
+        logger.debug(f"Stream {stream.get('id')} has no m3u_account")
+        return []
+    
+    # Get the account and its profiles
+    account = self.get_m3u_account_by_id(account_id)
+    if not account:
+        logger.warning(f"Account {account_id} not found for stream {stream.get('id')}")
+        return []
+    
+    profiles = account.get('profiles', [])
+    if not profiles:
+        logger.debug(f"Account {account_id} has no profiles")
+        return []
+    
+    # Collect all active profiles (ignore capacity)
+    all_profiles = []
+    
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        
+        profile_id = profile.get('id')
+        if not profile_id:
+            continue
+        
+        # Only skip inactive profiles
+        if not profile.get('is_active', True):
+            logger.debug(f"Profile {profile_id} is inactive, skipping")
+            continue
+        
+        all_profiles.append(profile)
+        logger.debug(f"Profile {profile_id} added to comprehensive failover list")
+    
+    logger.debug(f"Found {len(all_profiles)} total active profile(s) for stream {stream.get('id')} in account {account_id}")
+    
+    return all_profiles
+```
+
+**File: `backend/stream_checker_service.py`**
+
+Add new method before `_calculate_stream_score()`:
+
+```python
+def _analyze_stream_with_profile_failover(self, stream: Dict, analysis_params: Dict, udi) -> Dict:
+    """Analyze a stream with automatic profile failover.
+    
+    If a stream fails with one profile, automatically tries other available profiles
+    before marking the stream as dead. This significantly improves reliability when
+    one profile has issues but others work fine.
+    
+    Strategy:
+    1. Try all immediately available profiles (with free slots)
+    2. If all fail, try ALL profiles (including full ones) - will wait for slots
+    3. Only mark as dead if ALL profiles fail
+    
+    Args:
+        stream: Stream dictionary with 'id', 'name', 'url', etc.
+        analysis_params: Analysis parameters from config
+        udi: UDI manager instance
+        
+    Returns:
+        Analysis result dictionary
+    """
+    from stream_check_utils import analyze_stream
+    from api_utils import get_stream_proxy
+    
+    stream_id = stream['id']
+    stream_name = stream.get('name', 'Unknown')
+    
+    # Phase 1: Try available profiles (with free slots)
+    available_profiles = []
+    if udi and stream.get('m3u_account'):
+        available_profiles = udi.get_all_available_profiles_for_stream(stream)
+    
+    # If no profiles or custom stream, use standard analysis
+    if not available_profiles and not stream.get('m3u_account'):
+        stream_url = stream.get('url', '')
+        if udi:
+            stream_url = udi.apply_profile_url_transformation(stream)
+        
+        proxy = get_stream_proxy(stream_id)
+        
+        return analyze_stream(
+            stream_url=stream_url,
+            stream_id=stream_id,
+            stream_name=stream_name,
+            ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+            timeout=analysis_params.get('timeout', 30),
+            retries=analysis_params.get('retries', 1),
+            retry_delay=analysis_params.get('retry_delay', 10),
+            user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+            stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+            proxy=proxy
+        )
+    
+    # Try available profiles first
+    logger.info(f"Stream {stream_id} ({stream_name}): Phase 1 - Trying {len(available_profiles)} available profile(s)")
+    
+    last_error = None
+    for profile_idx, profile in enumerate(available_profiles, 1):
+        profile_id = profile.get('id')
+        profile_name = profile.get('name', f'Profile {profile_id}')
+        
+        try:
+            stream_url = udi.apply_profile_url_transformation(stream, profile)
+            logger.info(f"Stream {stream_id}: Trying available profile {profile_idx}/{len(available_profiles)} - {profile_name} (ID: {profile_id})")
+            
+            proxy = get_stream_proxy(stream_id)
+            
+            analyzed = analyze_stream(
+                stream_url=stream_url,
+                stream_id=stream_id,
+                stream_name=stream_name,
+                ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                timeout=analysis_params.get('timeout', 30),
+                retries=analysis_params.get('retries', 1),
+                retry_delay=analysis_params.get('retry_delay', 10),
+                user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                proxy=proxy
+            )
+            
+            if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                logger.info(f"Stream {stream_id}: ✅ SUCCESS with available profile {profile_name} (ID: {profile_id})")
+                analyzed['used_profile_id'] = profile_id
+                analyzed['used_profile_name'] = profile_name
+                analyzed['profile_failover_attempts'] = profile_idx
+                analyzed['profile_failover_phase'] = 1
+                return analyzed
+            else:
+                status = analyzed.get('status', 'Unknown')
+                logger.warning(f"Stream {stream_id}: ❌ FAILED with available profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                last_error = analyzed
+                
+        except Exception as e:
+            logger.error(f"Stream {stream_id}: ❌ ERROR with available profile {profile_name} (ID: {profile_id}): {e}")
+            last_error = {
+                'stream_id': stream_id,
+                'stream_name': stream_name,
+                'stream_url': stream.get('url', ''),
+                'status': 'Error',
+                'error': str(e)
+            }
+    
+    # Phase 2: All available profiles failed - try ALL profiles (including full ones)
+    if udi and stream.get('m3u_account'):
+        all_profiles = udi.get_all_profiles_for_stream(stream)
+        tried_profile_ids = {p.get('id') for p in available_profiles}
+        remaining_profiles = [p for p in all_profiles if p.get('id') not in tried_profile_ids]
+        
+        if remaining_profiles:
+            logger.warning(f"Stream {stream_id} ({stream_name}): Phase 2 - All available profiles failed, trying {len(remaining_profiles)} additional profile(s) (may wait for slots)")
+            
+            for profile_idx, profile in enumerate(remaining_profiles, 1):
+                profile_id = profile.get('id')
+                profile_name = profile.get('name', f'Profile {profile_id}')
+                
+                try:
+                    stream_url = udi.apply_profile_url_transformation(stream, profile)
+                    logger.info(f"Stream {stream_id}: Trying additional profile {profile_idx}/{len(remaining_profiles)} - {profile_name} (ID: {profile_id}) [may wait for slot]")
+                    
+                    proxy = get_stream_proxy(stream_id)
+                    
+                    analyzed = analyze_stream(
+                        stream_url=stream_url,
+                        stream_id=stream_id,
+                        stream_name=stream_name,
+                        ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                        timeout=analysis_params.get('timeout', 30),
+                        retries=analysis_params.get('retries', 1),
+                        retry_delay=analysis_params.get('retry_delay', 10),
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                        proxy=proxy
+                    )
+                    
+                    if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                        logger.info(f"Stream {stream_id}: ✅ SUCCESS with additional profile {profile_name} (ID: {profile_id}) after waiting")
+                        analyzed['used_profile_id'] = profile_id
+                        analyzed['used_profile_name'] = profile_name
+                        analyzed['profile_failover_attempts'] = len(available_profiles) + profile_idx
+                        analyzed['profile_failover_phase'] = 2
+                        return analyzed
+                    else:
+                        status = analyzed.get('status', 'Unknown')
+                        logger.warning(f"Stream {stream_id}: ❌ FAILED with additional profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                        last_error = analyzed
+                        
+                except Exception as e:
+                    logger.error(f"Stream {stream_id}: ❌ ERROR with additional profile {profile_name} (ID: {profile_id}): {e}")
+                    last_error = {
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'stream_url': stream.get('url', ''),
+                        'status': 'Error',
+                        'error': str(e)
+                    }
+    
+    # All profiles failed
+    total_attempts = len(available_profiles) + len(remaining_profiles) if 'remaining_profiles' in locals() else len(available_profiles)
+    logger.error(f"Stream {stream_id} ({stream_name}): ❌ ALL {total_attempts} profile(s) FAILED (Phase 1 + Phase 2) - marking as dead")
+    
+    if last_error:
+        last_error['profile_failover_attempts'] = total_attempts
+        last_error['all_profiles_failed'] = True
+        return last_error
+    
+    return {
+        'stream_id': stream_id,
+        'stream_name': stream_name,
+        'stream_url': stream.get('url', ''),
+        'timestamp': datetime.now().isoformat(),
+        'video_codec': 'N/A',
+        'audio_codec': 'N/A',
+        'resolution': '0x0',
+        'fps': 0,
+        'bitrate_kbps': None,
+        'status': 'Error',
+        'profile_failover_attempts': total_attempts if 'total_attempts' in locals() else 0,
+        'all_profiles_failed': True
+    }
+```
+
+**Integration in `_check_channel_concurrent()` (around line 2330):**
+
+Replace:
+```python
+# Analyze stream
+analysis_params = self.config.get('stream_analysis', {})
+
+# Apply URL transformation if using M3U profile with search/replace patterns
+stream_url = stream.get('url', '')
+if udi:
+    stream_url = udi.apply_profile_url_transformation(stream)
+
+# Get HTTP proxy for this stream from its M3U account
+from api_utils import get_stream_proxy
+proxy = get_stream_proxy(stream['id'])
+
+analyzed = analyze_stream(
+    stream_url=stream_url,
+    stream_id=stream['id'],
+    stream_name=stream.get('name', 'Unknown'),
+    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+    timeout=analysis_params.get('timeout', 30),
+    retries=analysis_params.get('retries', 1),
+    retry_delay=analysis_params.get('retry_delay', 10),
+    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+    proxy=proxy
+)
+```
+
+With:
+```python
+# Analyze stream with profile failover
+analysis_params = self.config.get('stream_analysis', {})
+analyzed = self._analyze_stream_with_profile_failover(
+    stream=stream,
+    analysis_params=analysis_params,
+    udi=udi
+)
+```
+
+**Integration in `_check_channel_sequential()` (around line 2460):**
+
+Same replacement as above in the section where cached data cannot be fetched.
+
+## Benefits
+
+✅ **Higher Reliability**: Streams are not incorrectly marked as dead  
+✅ **Automatic Failover**: Tries all profiles before giving up  
+✅ **2-Phase Strategy**: Fast with available profiles, thorough with all profiles  
+✅ **Detailed Logging**: Shows exactly which profiles were tried  
+✅ **No Configuration**: Works automatically out-of-the-box
+
+## Logging Example
+
+```
+INFO - Stream 123 (ARD HD): Phase 1 - Trying 2 available profile(s)
+INFO - Stream 123: Trying available profile 1/2 - Premium (ID: 1)
+WARNING - Stream 123: ❌ FAILED with available profile Premium (ID: 1) - Status: Error
+INFO - Stream 123: Trying available profile 2/2 - Free1 (ID: 2)
+WARNING - Stream 123: ❌ FAILED with available profile Free1 (ID: 2) - Status: Timeout
+WARNING - Stream 123 (ARD HD): Phase 2 - All available profiles failed, trying 1 additional profile(s) (may wait for slots)
+INFO - Stream 123: Trying additional profile 1/1 - Free2 (ID: 3) [may wait for slot]
+INFO - Stream 123: ✅ SUCCESS with additional profile Free2 (ID: 3) after waiting
+```
+
+## Compatibility
+
+- Fully backward compatible
+- Works with Concurrent Stream Limiter
+- Works with Provider Diversification
+- Works with all existing features
+- No breaking changes
+
+## Documentation
+
+See `PROFILE_FAILOVER_README.md` for complete documentation.
+
