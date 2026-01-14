@@ -1,0 +1,215 @@
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -140,7 +140,11 @@ class StreamCheckConfig:
+         'account_stream_limits': {
+             'enabled': True,  # Enable per-account stream limits for channel assignment
+             'global_limit': 0,  # Global limit per account (0 = unlimited)
+             'account_limits': {}  # Per-account limits: {account_id: limit}
++        },
++        'stream_ordering': {
++            'provider_diversification': False,  # Enable provider diversification for better redundancy
++            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
+         }
+     }
+     
+@@ -2025,6 +2029,10 @@ class StreamCheckerService:
+             # Sort by score (highest first)
+             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+             
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
++            
+             # Remove dead streams from the channel (if enabled in config)
+             if self.config.get('dead_stream_handling', {}).get('enabled', True):
+                 analyzed_streams = self._remove_dead_streams(analyzed_streams, channel_id)
+@@ -2507,6 +2515,10 @@ class StreamCheckerService:
+             # Sort by score (highest first)
+             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+             
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
++            
+             # Remove dead streams from the channel (if enabled in config)
+             if self.config.get('dead_stream_handling', {}).get('enabled', True):
+                 analyzed_streams = self._remove_dead_streams(analyzed_streams, channel_id)
+@@ -3512,6 +3524,78 @@ class StreamCheckerService:
+         
+         return limited_streams
+     
++    def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
++        """Apply provider diversification to stream ordering for better redundancy.
++        
++        Instead of sorting purely by score (which groups all streams from the best provider together),
++        this method interleaves streams from different providers in a round-robin fashion.
++        
++        Example:
++            Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
++            After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
++        
++        This ensures that if one provider fails, the next stream is from a different provider,
++        providing better failover and redundancy.
++        
++        Args:
++            analyzed_streams: List of analyzed streams sorted by score
++            channel_id: Channel ID for logging
++            
++        Returns:
++            Reordered list with provider diversification applied
++        """
++        if not analyzed_streams:
++            return analyzed_streams
++        
++        # Get UDI manager to look up stream providers (M3U accounts)
++        udi = get_udi_manager()
++        
++        # Group streams by provider (M3U account)
++        provider_streams = defaultdict(list)
++        streams_without_provider = []
++        
++        for stream_data in analyzed_streams:
++            stream_id = stream_data.get('stream_id')
++            if not stream_id:
++                streams_without_provider.append(stream_data)
++                continue
++            
++            # Get stream to find its M3U account (provider)
++            stream = udi.get_stream_by_id(stream_id)
++            if not stream:
++                streams_without_provider.append(stream_data)
++                continue
++            
++            m3u_account = stream.get('m3u_account')
++            if m3u_account is None:
++                # Custom streams without provider
++                streams_without_provider.append(stream_data)
++            else:
++                provider_streams[m3u_account].append(stream_data)
++        
++        # If only one provider or no providers, return original order
++        if len(provider_streams) <= 1:
++            logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
++            return analyzed_streams
++        
++        # Apply round-robin diversification
++        diversified_streams = []
++        max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
++        
++        # Interleave streams from different providers
++        for i in range(max_streams_per_provider):
++            for provider_id in sorted(provider_streams.keys()):
++                streams = provider_streams[provider_id]
++                if i < len(streams):
++                    diversified_streams.append(streams[i])
++        
++        # Append streams without provider at the end
++        diversified_streams.extend(streams_without_provider)
++        
++        logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
++        
++        return diversified_streams
++    
+     def apply_account_limits_to_existing_channels(self) -> Dict[str, Any]:
+         """Apply current account stream limits to all existing channels without full quality check.
+         
+@@ -3660,6 +3744,10 @@ class StreamCheckerService:
+             # Sort by score (highest first)
+             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+             
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
++            
+             # Apply account limits
+             original_count = len(analyzed_streams)
+             limited_streams = self._apply_account_limits_after_scoring(analyzed_streams, account_limits_config, channel_id, channel_name)
+
+--- a/frontend/src/pages/StreamChecker.jsx
++++ b/frontend/src/pages/StreamChecker.jsx
+@@ -22,7 +22,8 @@ import {
+   Trash2,
+   AlertCircle,
+   RefreshCw,
+-  List
++  List,
++  Info
+ } from 'lucide-react'
+ 
+ // Pagination constants
+@@ -551,7 +552,7 @@ export default function StreamChecker() {
+ 
+               {/* Tabs for Configuration Sections */}
+               <Tabs defaultValue="analysis" className="w-full">
+-                <TabsList className="grid w-full grid-cols-5">
++                <TabsList className="grid w-full grid-cols-6">
+                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
+                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
+                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
+                   <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
++                  <TabsTrigger value="stream-ordering">Stream Ordering</TabsTrigger>
+                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
+                 </TabsList>
+ 
+@@ -983,6 +984,58 @@ export default function StreamChecker() {
+                   </Card>
+                 </TabsContent>
+ 
++                {/* Stream Ordering Tab */}
++                <TabsContent value="stream-ordering" className="space-y-4">
++                  <Card>
++                    <CardHeader>
++                      <CardTitle>Provider Diversification</CardTitle>
++                      <CardDescription>
++                        Interleave streams from different providers for better redundancy and failover
++                      </CardDescription>
++                    </CardHeader>
++                    <CardContent className="space-y-4">
++                      <div className="flex items-center justify-between rounded-lg border p-4">
++                        <div className="space-y-1">
++                          <Label htmlFor="provider_diversification" className="text-base font-medium">
++                            Enable Provider Diversification
++                          </Label>
++                          <p className="text-sm text-muted-foreground">
++                            Distribute streams from different providers evenly instead of grouping by quality
++                          </p>
++                        </div>
++                        <Switch
++                          id="provider_diversification"
++                          checked={editedConfig?.stream_ordering?.provider_diversification ?? false}
++                          onCheckedChange={(checked) => updateConfigValue('stream_ordering.provider_diversification', checked)}
++                          disabled={!configEditing}
++                        />
++                      </div>
++
++                      <Alert>
++                        <Info className="h-4 w-4" />
++                        <AlertTitle>How it works</AlertTitle>
++                        <AlertDescription>
++                          <div className="space-y-2 mt-2">
++                            <p><strong>Without diversification:</strong></p>
++                            <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
++                            <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
++                            
++                            <p className="mt-3"><strong>With diversification:</strong></p>
++                            <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
++                            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
++                          </div>
++                        </AlertDescription>
++                      </Alert>
++
++                      <div className="rounded-lg bg-muted p-4 space-y-2">
++                        <h4 className="font-medium text-sm">Benefits</h4>
++                        <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
++                          <li>Better redundancy across multiple providers</li>
++                          <li>Automatic failover when one provider has issues</li>
++                          <li>Load distribution across providers</li>
++                          <li>Improved reliability for viewers</li>
++                        </ul>
++                      </div>
++                    </CardContent>
++                  </Card>
++                </TabsContent>
++
+                 {/* Dead Streams Tab */}
+                 <TabsContent value="dead-streams" className="space-y-4">
