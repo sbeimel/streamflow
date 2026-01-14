@@ -138,6 +138,10 @@ class StreamCheckConfig:
             'enabled': True,  # Enable per-account stream limits for channel assignment
             'global_limit': 0,  # Global limit per account (0 = unlimited)
             'account_limits': {}  # Per-account limits: {account_id: limit}
+        },
+        'stream_ordering': {
+            'provider_diversification': False,  # Enable provider diversification for better redundancy
+            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
         }
     }
     
@@ -2021,6 +2025,10 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
+            # Apply provider diversification if enabled
+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+            
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
@@ -2498,6 +2506,10 @@ class StreamCheckerService:
                 step_detail='Sorting streams by quality score'
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Apply provider diversification if enabled
+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
             
             # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
@@ -3500,6 +3512,78 @@ class StreamCheckerService:
         
         return limited_streams
     
+    def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
+        """Apply provider diversification to stream ordering for better redundancy.
+        
+        Instead of sorting purely by score (which groups all streams from the best provider together),
+        this method interleaves streams from different providers in a round-robin fashion.
+        
+        Example:
+            Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
+            After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
+        
+        This ensures that if one provider fails, the next stream is from a different provider,
+        providing better failover and redundancy.
+        
+        Args:
+            analyzed_streams: List of analyzed streams sorted by score
+            channel_id: Channel ID for logging
+            
+        Returns:
+            Reordered list with provider diversification applied
+        """
+        if not analyzed_streams:
+            return analyzed_streams
+        
+        # Get UDI manager to look up stream providers (M3U accounts)
+        udi = get_udi_manager()
+        
+        # Group streams by provider (M3U account)
+        provider_streams = defaultdict(list)
+        streams_without_provider = []
+        
+        for stream_data in analyzed_streams:
+            stream_id = stream_data.get('stream_id')
+            if not stream_id:
+                streams_without_provider.append(stream_data)
+                continue
+            
+            # Get stream to find its M3U account (provider)
+            stream = udi.get_stream_by_id(stream_id)
+            if not stream:
+                streams_without_provider.append(stream_data)
+                continue
+            
+            m3u_account = stream.get('m3u_account')
+            if m3u_account is None:
+                # Custom streams without provider
+                streams_without_provider.append(stream_data)
+            else:
+                provider_streams[m3u_account].append(stream_data)
+        
+        # If only one provider or no providers, return original order
+        if len(provider_streams) <= 1:
+            logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
+            return analyzed_streams
+        
+        # Apply round-robin diversification
+        diversified_streams = []
+        max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
+        
+        # Interleave streams from different providers
+        for i in range(max_streams_per_provider):
+            for provider_id in sorted(provider_streams.keys()):
+                streams = provider_streams[provider_id]
+                if i < len(streams):
+                    diversified_streams.append(streams[i])
+        
+        # Append streams without provider at the end
+        diversified_streams.extend(streams_without_provider)
+        
+        logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
+        
+        return diversified_streams
+    
     def apply_account_limits_to_existing_channels(self) -> Dict[str, Any]:
         """Apply current account stream limits to all existing channels without full quality check.
         
@@ -3575,6 +3659,10 @@ class StreamCheckerService:
             
             # Sort by score (highest first)
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Apply provider diversification if enabled
+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
             
             # Apply account limits
             original_count = len(analyzed_streams)

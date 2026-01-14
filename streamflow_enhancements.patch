@@ -1814,3 +1814,319 @@ index 1234567..abcdefg 100644
          
          # Log the changes
          if config_changes:
+
+
+# Provider Diversification Feature
+
+## Overview
+
+Provider diversification ensures better redundancy by interleaving streams from different providers (M3U accounts) instead of grouping all streams from the best provider together.
+
+## Implementation
+
+### Backend Changes
+
+**File: `backend/stream_checker_service.py`**
+
+Added new configuration option:
+```python
+'stream_ordering': {
+    'provider_diversification': False,  # Enable provider diversification
+    'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
+}
+```
+
+Added new method `_apply_provider_diversification()`:
+```python
+def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
+    """Apply provider diversification to stream ordering for better redundancy.
+    
+    Instead of sorting purely by score (which groups all streams from the best provider together),
+    this method interleaves streams from different providers in a round-robin fashion.
+    
+    Example:
+        Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
+        After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
+    
+    This ensures that if one provider fails, the next stream is from a different provider.
+    """
+```
+
+Applied in three locations:
+1. `_check_channel_concurrent()` - After sorting by score
+2. `_check_channel_sequential()` - After sorting by score  
+3. `apply_account_limits_to_existing_channels()` - After sorting by score
+
+### Example
+
+**Channel: ARD**
+
+**Before (Standard Sorting):**
+```
+1. Provider A - Score 0.95 ⭐⭐⭐
+2. Provider A - Score 0.94 ⭐⭐⭐
+3. Provider A - Score 0.93 ⭐⭐⭐
+4. Provider B - Score 0.92 ⭐⭐
+5. Provider B - Score 0.91 ⭐⭐
+6. Provider C - Score 0.89 ⭐
+```
+❌ Problem: If Provider A fails → 3 streams dead!
+
+**After (Provider Diversification):**
+```
+1. Provider A - Score 0.95 ⭐⭐⭐ (best from A)
+2. Provider B - Score 0.92 ⭐⭐ (best from B)
+3. Provider C - Score 0.89 ⭐ (best from C)
+4. Provider A - Score 0.94 ⭐⭐⭐ (2nd best from A)
+5. Provider B - Score 0.91 ⭐⭐ (2nd best from B)
+6. Provider A - Score 0.93 ⭐⭐⭐ (3rd best from A)
+```
+✅ Benefit: If Provider A fails → Provider B/C take over immediately!
+
+### Configuration
+
+**Location:** Stream Checker Config (`stream_checker_config.json`)
+
+```json
+{
+  "stream_ordering": {
+    "provider_diversification": true,
+    "diversification_mode": "round_robin"
+  }
+}
+```
+
+**UI Location:** Stream Checker page → Stream Ordering section
+
+### Benefits
+
+✅ **Better Redundancy**: Automatic failover to different providers  
+✅ **Load Distribution**: Spreads load across multiple providers  
+✅ **Improved Reliability**: Single provider failure doesn't affect all top streams  
+✅ **Transparent**: Works with existing quality scoring  
+✅ **Optional**: Can be enabled/disabled per preference
+
+### Logging
+
+```
+INFO - Channel 123: Applied provider diversification - 3 providers interleaved
+DEBUG - Channel 123: Only 1 provider(s), skipping diversification
+```
+
+### Compatibility
+
+- Fully backward compatible
+- Disabled by default
+- Works with all existing features (account limits, dead stream removal, etc.)
+- No impact on quality scoring
+
+
+### Code Changes
+
+#### Backend: stream_checker_service.py
+
+**1. Add configuration in DEFAULT_CONFIG:**
+
+```diff
++        'stream_ordering': {
++            'provider_diversification': False,  # Enable provider diversification for better redundancy
++            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
++        }
+```
+
+**2. Add new method `_apply_provider_diversification()`:**
+
+```python
+def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
+    """Apply provider diversification to stream ordering for better redundancy.
+    
+    Instead of sorting purely by score (which groups all streams from the best provider together),
+    this method interleaves streams from different providers in a round-robin fashion.
+    
+    Example:
+        Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
+        After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
+    
+    This ensures that if one provider fails, the next stream is from a different provider,
+    providing better failover and redundancy.
+    
+    Args:
+        analyzed_streams: List of analyzed streams sorted by score
+        channel_id: Channel ID for logging
+        
+    Returns:
+        Reordered list with provider diversification applied
+    """
+    if not analyzed_streams:
+        return analyzed_streams
+    
+    # Get UDI manager to look up stream providers (M3U accounts)
+    udi = get_udi_manager()
+    
+    # Group streams by provider (M3U account)
+    provider_streams = defaultdict(list)
+    streams_without_provider = []
+    
+    for stream_data in analyzed_streams:
+        stream_id = stream_data.get('stream_id')
+        if not stream_id:
+            streams_without_provider.append(stream_data)
+            continue
+        
+        # Get stream to find its M3U account (provider)
+        stream = udi.get_stream_by_id(stream_id)
+        if not stream:
+            streams_without_provider.append(stream_data)
+            continue
+        
+        m3u_account = stream.get('m3u_account')
+        if m3u_account is None:
+            # Custom streams without provider
+            streams_without_provider.append(stream_data)
+        else:
+            provider_streams[m3u_account].append(stream_data)
+    
+    # If only one provider or no providers, return original order
+    if len(provider_streams) <= 1:
+        logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
+        return analyzed_streams
+    
+    # Apply round-robin diversification
+    diversified_streams = []
+    max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
+    
+    # Interleave streams from different providers
+    for i in range(max_streams_per_provider):
+        for provider_id in sorted(provider_streams.keys()):
+            streams = provider_streams[provider_id]
+            if i < len(streams):
+                diversified_streams.append(streams[i])
+    
+    # Append streams without provider at the end
+    diversified_streams.extend(streams_without_provider)
+    
+    logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
+    
+    return diversified_streams
+```
+
+**3. Apply in `_check_channel_concurrent()` (after line ~2027):**
+
+```diff
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+```
+
+**4. Apply in `_check_channel_sequential()` (after line ~2509):**
+
+```diff
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+```
+
+**5. Apply in `apply_account_limits_to_existing_channels()` (after line ~3662):**
+
+```diff
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+```
+
+#### Frontend: StreamChecker.jsx
+
+**1. Add Info icon import:**
+
+```diff
+ import { 
+   Activity, 
+   CheckCircle2, 
+   Clock, 
+   PlayCircle, 
+   StopCircle, 
+   Loader2,
+   Settings,
+   Trash2,
+   AlertCircle,
+   RefreshCw,
+-  List
++  List,
++  Info
+ } from 'lucide-react'
+```
+
+**2. Update TabsList grid columns (line ~554):**
+
+```diff
+-                <TabsList className="grid w-full grid-cols-5">
++                <TabsList className="grid w-full grid-cols-6">
+                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
+                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
+                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
+                   <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
++                  <TabsTrigger value="stream-ordering">Stream Ordering</TabsTrigger>
+                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
+                 </TabsList>
+```
+
+**3. Add Stream Ordering Tab (after account-limits tab, before dead-streams tab):**
+
+```jsx
+{/* Stream Ordering Tab */}
+<TabsContent value="stream-ordering" className="space-y-4">
+  <Card>
+    <CardHeader>
+      <CardTitle>Provider Diversification</CardTitle>
+      <CardDescription>
+        Interleave streams from different providers for better redundancy and failover
+      </CardDescription>
+    </CardHeader>
+    <CardContent className="space-y-4">
+      <div className="flex items-center justify-between rounded-lg border p-4">
+        <div className="space-y-1">
+          <Label htmlFor="provider_diversification" className="text-base font-medium">
+            Enable Provider Diversification
+          </Label>
+          <p className="text-sm text-muted-foreground">
+            Distribute streams from different providers evenly instead of grouping by quality
+          </p>
+        </div>
+        <Switch
+          id="provider_diversification"
+          checked={editedConfig?.stream_ordering?.provider_diversification ?? false}
+          onCheckedChange={(checked) => updateConfigValue('stream_ordering.provider_diversification', checked)}
+          disabled={!configEditing}
+        />
+      </div>
+
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertTitle>How it works</AlertTitle>
+        <AlertDescription>
+          <div className="space-y-2 mt-2">
+            <p><strong>Without diversification:</strong></p>
+            <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
+            <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
+            
+            <p className="mt-3"><strong>With diversification:</strong></p>
+            <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
+            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
+          </div>
+        </AlertDescription>
+      </Alert>
+
+      <div className="rounded-lg bg-muted p-4 space-y-2">
+        <h4 className="font-medium text-sm">Benefits</h4>
+        <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+          <li>Better redundancy across multiple providers</li>
+          <li>Automatic failover when one provider has issues</li>
+          <li>Load distribution across providers</li>
+          <li>Improved reliability for viewers</li>
+        </ul>
+      </div>
+    </CardContent>
+  </Card>
+</TabsContent>
+```
+

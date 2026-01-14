@@ -23,7 +23,8 @@ import {
   Trash2,
   AlertCircle,
   RefreshCw,
-  List
+  List,
+  Info
 } from 'lucide-react'
 
 // Pagination constants
@@ -549,11 +550,12 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
                   <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
+                  <TabsTrigger value="stream-ordering">Stream Ordering</TabsTrigger>
                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
                 </TabsList>
 
@@ -980,6 +982,62 @@ export default function StreamChecker() {
                       </>
                     )}
                   </div>
+                </TabsContent>
+
+                {/* Stream Ordering Tab */}
+                <TabsContent value="stream-ordering" className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Provider Diversification</CardTitle>
+                      <CardDescription>
+                        Interleave streams from different providers for better redundancy and failover
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-1">
+                          <Label htmlFor="provider_diversification" className="text-base font-medium">
+                            Enable Provider Diversification
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Distribute streams from different providers evenly instead of grouping by quality
+                          </p>
+                        </div>
+                        <Switch
+                          id="provider_diversification"
+                          checked={editedConfig?.stream_ordering?.provider_diversification ?? false}
+                          onCheckedChange={(checked) => updateConfigValue('stream_ordering.provider_diversification', checked)}
+                          disabled={!configEditing}
+                        />
+                      </div>
+
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertTitle>How it works</AlertTitle>
+                        <AlertDescription>
+                          <div className="space-y-2 mt-2">
+                            <p><strong>Without diversification:</strong></p>
+                            <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
+                            <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
+                            
+                            <p className="mt-3"><strong>With diversification:</strong></p>
+                            <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
+                            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+
+                      <div className="rounded-lg bg-muted p-4 space-y-2">
+                        <h4 className="font-medium text-sm">Benefits</h4>
+                        <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                          <li>Better redundancy across multiple providers</li>
+                          <li>Automatic failover when one provider has issues</li>
+                          <li>Load distribution across providers</li>
+                          <li>Improved reliability for viewers</li>
+                        </ul>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </TabsContent>
 
                 {/* Dead Streams Tab */}
