@@ -1,7 +1,7 @@
 # 🚀 StreamFlow Enhancements - START HERE
 
-**Version:** 1.0  
-**Datum:** 14. Januar 2026  
+**Version:** 2.1  
+**Datum:** 15. Januar 2026  
 **Status:** ✅ Bereit für Integration
 
 ---
@@ -44,7 +44,7 @@ cd frontend && npm test
 
 ## 📦 Was ist enthalten?
 
-### ✨ 2 Neue Features
+### ✨ 7 Neue Features
 
 1. **Provider-Diversifikation**
    - Intelligente Verteilung von Streams verschiedener Provider
@@ -56,6 +56,31 @@ cd frontend && npm test
    - Korrekte Sortierung von Streams ohne Bitrate
    - Kritischer Bugfix
 
+3. **Account Stream Limits**
+   - Globale und pro-Account Limits für Stream-Zuweisung
+   - Verhindert Überlastung einzelner Accounts
+   - Flexible Konfiguration pro Channel
+
+4. **Channel Quality Preferences**
+   - Kanal-spezifische Qualitätspräferenzen (4K bevorzugen, max 1080p, etc.)
+   - Automatische Score-Anpassung basierend auf Präferenzen
+   - Vererbung von Gruppen-Einstellungen
+
+5. **Profile Failover v2.0**
+   - Intelligentes Polling für volle Profile (Phase 2)
+   - Automatischer Retry mit verschiedenen Profilen
+   - Konfigurierbare Timeouts und Poll-Intervalle
+
+6. **Test Streams Without Stats**
+   - Schnelles Testen von Streams ohne vorhandene Stats
+   - Nützlich nach M3U-Upload oder für neue Streams
+   - Button in Dashboard und Stream Checker
+
+7. **Re-Score & Re-Sort**
+   - Neuberechnung von Scores ohne Quality Checks
+   - Nutzt vorhandene stream_stats (2-5 Sekunden statt 30-60 Minuten)
+   - Ideal nach Konfigurations-Änderungen
+
 ### 📄 Dokumentation
 
 - ✅ Changelogs (DE + EN)
@@ -66,9 +91,14 @@ cd frontend && npm test
 
 ### 🔧 Patches
 
-- `00_complete_enhancements.patch` - Alle Änderungen
+- `00_complete_enhancements.patch` - Alle Änderungen (empfohlen)
 - `01_provider_diversification.patch` - Nur Feature 1
 - `02_fallback_score_fix.patch` - Nur Feature 2
+- `03_account_stream_limits.patch` - Nur Feature 3
+- `04_quality_preferences.patch` - Nur Feature 4
+- `05_profile_failover_v2.patch` - Nur Feature 5
+- `06_test_streams_without_stats.patch` - Nur Feature 6
+- `07_rescore_resort.patch` - Nur Feature 7
 
 ---
 
@@ -79,7 +109,12 @@ cd frontend && npm test
 **Lies:**
 1. `README.md` - Übersicht
 2. `CHANGELOG_DE.md` - Was ist neu?
-3. `../PROVIDER_DIVERSIFICATION_README.md` - Feature-Details
+3. Feature-Dokumentation im Hauptverzeichnis:
+   - `../PROVIDER_DIVERSIFICATION_README.md`
+   - `../ACCOUNT_STREAM_LIMITS_README.md`
+   - `../CHANNEL_QUALITY_PREFERENCES_README.md`
+   - `../PROFILE_FAILOVER_README.md`
+   - `../RESCORE_RESORT_README.md`
 
 **Fragen:**
 - Was bringen die Features?
@@ -118,22 +153,32 @@ cd frontend && npm test
 ### Folien-Struktur (Vorschlag)
 
 **Folie 1: Übersicht**
-- 2 neue Features
+- 7 neue Features
 - Vollständig getestet
 - Bereit für Integration
 
 **Folie 2: Problem**
 - Provider-Ausfall betrifft mehrere Streams
 - Falsche Sortierung von Fallback-Streams
+- Keine Account-Limits
+- Keine Qualitätspräferenzen
+- Profile Failover zu langsam
 
 **Folie 3: Lösung**
 - Provider-Diversifikation (Round-Robin)
 - Fallback-Score Fix (40.0 → 0.40)
+- Account Stream Limits (global + per-account)
+- Quality Preferences (4K, 1080p, 720p)
+- Profile Failover v2.0 (intelligentes Polling)
+- Test Streams Without Stats (schnell)
+- Re-Score & Re-Sort (2-5 Sekunden)
 
 **Folie 4: Vorteile**
 - Bessere Redundanz
 - Höhere Verfügbarkeit
 - Korrekte Priorisierung
+- Flexible Limits
+- Schnellere Konfiguration
 
 **Folie 5: Demo**
 - Live-Demo oder Screenshots
@@ -162,10 +207,12 @@ git apply git_pulls/patches/00_complete_enhancements.patch
 # 3. Test-Daten vorbereiten
 # - Kanal mit 3 Providern
 # - Streams mit verschiedenen Qualitäten
+# - Account Limits konfigurieren
 
 # 4. Demo durchführen
-# - Ohne Diversifikation: Alle A-Streams zuerst
-# - Mit Diversifikation: A, B, C, A, B, C...
+# - Provider Diversification zeigen
+# - Quality Preferences testen
+# - Re-Score & Re-Sort demonstrieren (2-5 Sekunden!)
 ```
 
 ---
@@ -250,9 +297,14 @@ git_pulls/
 ├── IMPLEMENTATION_GUIDE_DE.md           ← Wie einbauen? (Deutsch)
 │
 └── patches/
-    ├── 00_complete_enhancements.patch   ← Alle Änderungen
+    ├── 00_complete_enhancements.patch   ← Alle Änderungen (empfohlen)
     ├── 01_provider_diversification.*    ← Feature 1
-    └── 02_fallback_score_fix.*          ← Feature 2
+    ├── 02_fallback_score_fix.*          ← Feature 2
+    ├── 03_account_stream_limits.*       ← Feature 3
+    ├── 04_quality_preferences.*         ← Feature 4
+    ├── 05_profile_failover_v2.*         ← Feature 5
+    ├── 06_test_streams_without_stats.*  ← Feature 6
+    └── 07_rescore_resort.*              ← Feature 7
 ```
 
 ---
@@ -293,6 +345,7 @@ git_pulls/
 - 📊 **Nutze Beispiele:** Vorher/Nachher Vergleich
 - 🎯 **Sei konkret:** "3 Provider, 9 Streams → A,B,C,A,B,C..."
 - ⚡ **Halte es einfach:** Nicht zu technisch für Non-Devs
+- 🚀 **Highlight:** Re-Score & Re-Sort in 2-5 Sekunden statt 30-60 Minuten!
 
 ### Für die Integration
 

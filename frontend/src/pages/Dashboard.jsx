@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2, TestTube, Sparkles } from 'lucide-react'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -112,6 +112,47 @@ export default function Dashboard() {
       toast({
         title: "Error",
         description: "Failed to trigger global action",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleTestStreamsWithoutStats = async () => {
+    try {
+      setActionLoading('test-without-stats')
+      const response = await streamCheckerAPI.testStreamsWithoutStats()
+      toast({
+        title: "Success",
+        description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
+      })
+      await loadStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to test streams without stats",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleRescoreAndResort = async () => {
+    try {
+      setActionLoading('rescore-resort')
+      const response = await streamCheckerAPI.rescoreAndResort()
+      const stats = response.data.stats || {}
+      toast({
+        title: "Success",
+        description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+      })
+      await loadStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to re-score and re-sort channels",
         variant: "destructive"
       })
     } finally {
@@ -341,6 +382,24 @@ export default function Dashboard() {
           >
             <PlayCircle className="mr-2 h-4 w-4" />
             {actionLoading === 'global' ? 'Triggering...' : 'Trigger Global Action'}
+          </Button>
+
+          <Button
+            onClick={handleTestStreamsWithoutStats}
+            disabled={shouldDisableActions}
+            variant="outline"
+          >
+            <TestTube className="mr-2 h-4 w-4" />
+            {actionLoading === 'test-without-stats' ? 'Testing...' : 'Test Streams Without Stats'}
+          </Button>
+
+          <Button
+            onClick={handleRescoreAndResort}
+            disabled={shouldDisableActions}
+            variant="secondary"
+          >
+            <Sparkles className="mr-2 h-4 w-4" />
+            {actionLoading === 'rescore-resort' ? 'Re-Scoring...' : 'Re-Score & Re-Sort'}
           </Button>
         </CardContent>
       </Card>

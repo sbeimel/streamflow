@@ -2918,6 +2918,55 @@ def trigger_global_action():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-checker/rescore-resort', methods=['POST'])
+def rescore_and_resort_all_channels():
+    """Re-score and re-sort all channels using existing stream stats (no quality checks).
+    
+    This function:
+    1. Gets all channels and their streams
+    2. Uses existing stream_stats (no new ffmpeg analysis)
+    3. Re-calculates scores based on current config:
+       - M3U account priorities
+       - Quality preferences
+       - Scoring weights
+       - Provider diversification
+    4. Re-sorts streams by score (best first)
+    5. Re-applies account stream limits
+    6. Updates channel-stream assignments
+    
+    Useful after changing configuration without wanting to run time-consuming quality checks.
+    Much faster than Global Action since it skips ffmpeg analysis.
+    """
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        result = service.rescore_and_resort_all_channels()
+        
+        if result.get('success'):
+            return jsonify({
+                "message": "Re-score and re-sort completed successfully",
+                "status": "completed",
+                "stats": {
+                    "channels_processed": result.get('channels_processed', 0),
+                    "channels_updated": result.get('channels_updated', 0),
+                    "streams_before": result.get('total_streams_before', 0),
+                    "streams_after": result.get('total_streams_after', 0),
+                    "streams_removed": result.get('streams_removed_by_limits', 0),
+                    "duration_seconds": result.get('duration_seconds', 0)
+                },
+                "channels_with_changes": result.get('channels_with_changes', [])
+            })
+        else:
+            return jsonify({"error": result.get('error', 'Unknown error')}), 500
+    
+    except Exception as e:
+        logger.error(f"Error during re-score and re-sort: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/stream-checker/apply-account-limits', methods=['POST'])
 def apply_account_limits_to_channels():
     """Apply current account stream limits to all existing channels.

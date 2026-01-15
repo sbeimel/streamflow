@@ -1320,31 +1320,58 @@ diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.
 index 1234567..abcdefg 100644
 --- a/backend/stream_checker_service.py
 +++ b/backend/stream_checker_service.py
-@@ -1885,8 +1885,21 @@ class StreamCheckerService:
+@@ -1885,8 +1885,48 @@ class StreamCheckerService:
                      step_detail=f'Using smart scheduler with per-account limits'
                  )
                  
-+                # Create a wrapper function that includes proxy support
-+                def analyze_stream_with_proxy(stream_url, stream_id, stream_name, **kwargs):
-+                    """Wrapper function that adds proxy support to analyze_stream for concurrent checking."""
-+                    # Get HTTP proxy for this stream from its M3U account
-+                    from api_utils import get_stream_proxy
-+                    proxy = get_stream_proxy(stream_id)
++                # Create a wrapper function that uses profile failover for concurrent checking
++                def analyze_stream_with_profile_failover_wrapper(stream_url, stream_id, stream_name, **kwargs):
++                    """Wrapper function that uses profile failover for concurrent checking.
 +                    
-+                    # Call analyze_stream with proxy parameter
-+                    return analyze_stream(
-+                        stream_url=stream_url,
-+                        stream_id=stream_id,
-+                        stream_name=stream_name,
-+                        proxy=proxy,
-+                        **kwargs
++                    Note: stream_url parameter is ignored - we get the stream from UDI and let
++                    profile failover handle URL transformation per profile.
++                    """
++                    # Get full stream data from UDI
++                    stream = udi.get_stream_by_id(stream_id)
++                    if not stream:
++                        logger.error(f"Stream {stream_id} not found in UDI")
++                        return {
++                            'stream_id': stream_id,
++                            'stream_name': stream_name,
++                            'stream_url': stream_url,
++                            'status': 'Error',
++                            'error': 'Stream not found in UDI'
++                        }
++                    
++                    # Use profile failover analysis (Phase 1 + Phase 2)
++                    return self._analyze_stream_with_profile_failover(
++                        stream=stream,
++                        analysis_params=analysis_params,
++                        udi=udi
 +                    )
++                
++                # LEGACY: Old wrapper function that only includes proxy support (without profile failover)
++                # Kept for reference but not used anymore
++                # def analyze_stream_with_proxy(stream_url, stream_id, stream_name, **kwargs):
++                #     """Wrapper function that adds proxy support to analyze_stream for concurrent checking."""
++                #     # Get HTTP proxy for this stream from its M3U account
++                #     from api_utils import get_stream_proxy
++                #     proxy = get_stream_proxy(stream_id)
++                #     
++                #     # Call analyze_stream with proxy parameter
++                #     return analyze_stream(
++                #         stream_url=stream_url,
++                #         stream_id=stream_id,
++                #         stream_name=stream_name,
++                #         proxy=proxy,
++                #         **kwargs
++                #     )
 +                
                  # Check streams in parallel with account-aware limits
                  results = smart_scheduler.check_streams_with_limits(
                      streams=streams_to_check,
 -                    check_function=analyze_stream,
-+                    check_function=analyze_stream_with_proxy,
++                    check_function=analyze_stream_with_profile_failover_wrapper,
                      progress_callback=progress_callback,
                      stagger_delay=stagger_delay,
 
@@ -2873,7 +2900,484 @@ Add in Stream Ordering tab:
 
 ---
 
+---
+
+# New Feature: Re-Score & Re-Sort All Channels
+
+## Overview
+
+Re-Score & Re-Sort allows you to recalculate stream scores and re-sort all channels **without performing new quality checks**. This is much faster than Global Action since it skips time-consuming ffmpeg analysis and uses existing stream_stats.
+
+## Use Cases
+
+Use Re-Score & Re-Sort after changing:
+- ✅ M3U Account Priorities
+- ✅ Account Stream Limits (global or per-account)
+- ✅ Quality Preferences (prefer 4K, max 1080p, etc.)
+- ✅ Scoring Weights (bitrate, resolution, FPS, codec)
+- ✅ Provider Diversification settings
+
+## Backend Implementation
+
+**File: `backend/stream_checker_service.py`**
+
+Add new method after `trigger_global_action()`:
+
+```python
+def rescore_and_resort_all_channels(self):
+    """Re-calculate scores and re-sort all channels using existing stream stats.
+    
+    This function does NOT perform new quality checks. Instead, it:
+    1. Gets all channels and their streams
+    2. Uses existing stream_stats from UDI cache
+    3. Re-calculates scores based on current config (priorities, quality preferences, weights)
+    4. Re-sorts streams by score
+    5. Re-applies account stream limits
+    6. Updates channel-stream assignments
+    
+    Useful after changing:
+    - M3U account priorities
+    - Account stream limits
+    - Quality preferences
+    - Scoring weights
+    - Provider diversification settings
+    
+    Returns:
+        Dict with statistics about the re-scoring operation
+    """
+    if not self.running:
+        logger.warning("Cannot re-score channels - service is not running")
+        return {'success': False, 'error': 'Service is not running'}
+    
+    logger.info("=" * 80)
+    logger.info("RE-SCORE & RE-SORT ALL CHANNELS (using existing stats)")
+    logger.info("=" * 80)
+    
+    start_time = time_module.time()
+    
+    try:
+        udi = get_udi_manager()
+        channels = udi.get_channels()
+        
+        if not channels:
+            logger.warning("No channels found")
+            return {'success': False, 'error': 'No channels found'}
+        
+        stats = {
+            'channels_processed': 0,
+            'channels_updated': 0,
+            'total_streams_before': 0,
+            'total_streams_after': 0,
+            'streams_removed_by_limits': 0,
+            'channels_with_changes': []
+        }
+        
+        account_limits_config = self.config.get('account_stream_limits', {})
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            channel_name = channel.get('name', f'Channel {channel_id}')
+            
+            if not channel_id:
+                continue
+            
+            logger.info(f"Processing channel: {channel_name} (ID: {channel_id})")
+            
+            # Get current streams for this channel
+            current_streams = udi.get_channel_streams(channel_id)
+            if not current_streams:
+                logger.debug(f"Channel {channel_name} has no streams, skipping")
+                continue
+            
+            stats['channels_processed'] += 1
+            streams_before = len(current_streams)
+            stats['total_streams_before'] += streams_before
+            
+            # Build analyzed stream data from existing stats
+            analyzed_streams = []
+            
+            for stream in current_streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                # Get full stream data with stats
+                full_stream = udi.get_stream_by_id(stream_id)
+                if not full_stream:
+                    continue
+                
+                # Get stream_stats
+                stream_stats = full_stream.get('stream_stats')
+                if stream_stats is None:
+                    stream_stats = {}
+                if isinstance(stream_stats, str):
+                    try:
+                        stream_stats = json.loads(stream_stats)
+                        if stream_stats is None:
+                            stream_stats = {}
+                    except json.JSONDecodeError:
+                        stream_stats = {}
+                
+                # Build stream data dict for score calculation
+                score_data = {
+                    'stream_id': stream_id,
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'stream_url': stream.get('url', ''),
+                    'resolution': stream_stats.get('resolution', '0x0'),
+                    'fps': stream_stats.get('source_fps', 0),
+                    'video_codec': stream_stats.get('video_codec', 'N/A'),
+                    'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                    'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                    'status': 'OK' if stream_stats.get('resolution') not in ['0x0', 'N/A', ''] else 'Error'
+                }
+                
+                # Calculate score with current config
+                score = self._calculate_stream_score(score_data, channel_id)
+                score_data['score'] = score
+                
+                analyzed_streams.append(score_data)
+            
+            if not analyzed_streams:
+                logger.debug(f"No streams with stats found for channel {channel_name}")
+                continue
+            
+            # Sort by score (highest first)
+            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            logger.info(f"Channel {channel_name}: {len(analyzed_streams)} streams scored and sorted")
+            
+            # Apply provider diversification if enabled
+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+                logger.info(f"Channel {channel_name}: Applied provider diversification")
+            
+            # Apply account stream limits AFTER scoring (and diversification)
+            if account_limits_config.get('enabled', True):
+                streams_before_limits = len(analyzed_streams)
+                analyzed_streams = self._apply_account_limits_after_scoring(
+                    analyzed_streams, account_limits_config, channel_id, channel_name
+                )
+                streams_removed = streams_before_limits - len(analyzed_streams)
+                if streams_removed > 0:
+                    logger.info(f"Channel {channel_name}: Removed {streams_removed} stream(s) due to account limits")
+                    stats['streams_removed_by_limits'] += streams_removed
+            
+            streams_after = len(analyzed_streams)
+            stats['total_streams_after'] += streams_after
+            
+            # Update channel streams if there are changes
+            if streams_after != streams_before or streams_after > 0:
+                # Extract stream IDs in new order
+                new_stream_ids = [s['stream_id'] for s in analyzed_streams]
+                
+                # Update channel streams in UDI
+                from api_utils import update_channel_streams
+                success = update_channel_streams(channel_id, [{'id': sid} for sid in new_stream_ids])
+                
+                if success:
+                    stats['channels_updated'] += 1
+                    stats['channels_with_changes'].append({
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'streams_before': streams_before,
+                        'streams_after': streams_after,
+                        'streams_removed': streams_before - streams_after
+                    })
+                    logger.info(f"✓ Updated channel {channel_name}: {streams_before} → {streams_after} streams")
+                else:
+                    logger.error(f"Failed to update channel {channel_name}")
+        
+        # Calculate duration
+        duration = time_module.time() - start_time
+        stats['duration_seconds'] = round(duration, 2)
+        
+        logger.info("=" * 80)
+        logger.info(f"RE-SCORE & RE-SORT COMPLETED in {duration:.2f}s")
+        logger.info(f"  Channels processed: {stats['channels_processed']}")
+        logger.info(f"  Channels updated: {stats['channels_updated']}")
+        logger.info(f"  Total streams before: {stats['total_streams_before']}")
+        logger.info(f"  Total streams after: {stats['total_streams_after']}")
+        logger.info(f"  Streams removed by limits: {stats['streams_removed_by_limits']}")
+        logger.info("=" * 80)
+        
+        stats['success'] = True
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error during re-score and re-sort: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+```
+
+## Backend API Endpoint
+
+**File: `backend/web_api.py`**
+
+Add after `trigger_global_action()` endpoint:
+
+```python
+@app.route('/api/stream-checker/rescore-resort', methods=['POST'])
+def rescore_and_resort_all_channels():
+    """Re-score and re-sort all channels using existing stream stats (no quality checks).
+    
+    This function:
+    1. Gets all channels and their streams
+    2. Uses existing stream_stats (no new ffmpeg analysis)
+    3. Re-calculates scores based on current config:
+       - M3U account priorities
+       - Quality preferences
+       - Scoring weights
+       - Provider diversification
+    4. Re-sorts streams by score (best first)
+    5. Re-applies account stream limits
+    6. Updates channel-stream assignments
+    
+    Useful after changing configuration without wanting to run time-consuming quality checks.
+    Much faster than Global Action since it skips ffmpeg analysis.
+    """
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        result = service.rescore_and_resort_all_channels()
+        
+        if result.get('success'):
+            return jsonify({
+                "message": "Re-score and re-sort completed successfully",
+                "status": "completed",
+                "stats": {
+                    "channels_processed": result.get('channels_processed', 0),
+                    "channels_updated": result.get('channels_updated', 0),
+                    "streams_before": result.get('total_streams_before', 0),
+                    "streams_after": result.get('total_streams_after', 0),
+                    "streams_removed": result.get('streams_removed_by_limits', 0),
+                    "duration_seconds": result.get('duration_seconds', 0)
+                },
+                "channels_with_changes": result.get('channels_with_changes', [])
+            })
+        else:
+            return jsonify({"error": result.get('error', 'Unknown error')}), 500
+    
+    except Exception as e:
+        logger.error(f"Error during re-score and re-sort: {e}")
+        return jsonify({"error": str(e)}), 500
+```
+
+## Frontend API Function
+
+**File: `frontend/src/services/api.js`**
+
+Add to streamCheckerAPI object:
+
+```javascript
+export const streamCheckerAPI = {
+  // ... existing functions ...
+  triggerGlobalAction: () => api.post('/stream-checker/global-action'),
+  testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
+  rescoreAndResort: () => api.post('/stream-checker/rescore-resort'),  // NEW
+};
+```
+
+## Frontend Button - Stream Checker Page
+
+**File: `frontend/src/pages/StreamChecker.jsx`**
+
+Add Sparkles icon import:
+```javascript
+import { 
+  // ... existing imports ...
+  TestTube,
+  Sparkles  // NEW
+} from 'lucide-react'
+```
+
+Add handler function:
+```javascript
+const handleRescoreAndResort = async () => {
+  try {
+    setActionLoading('rescore-resort')
+    const response = await streamCheckerAPI.rescoreAndResort()
+    const stats = response.data.stats || {}
+    toast({
+      title: "Success",
+      description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+    })
+    await loadData()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to re-score and re-sort channels",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+```
+
+Add button next to Global Action button:
+```jsx
+<div className="flex gap-2">
+  <Button
+    onClick={handleTriggerGlobalAction}
+    disabled={actionLoading === 'global-action' || isChecking}
+    variant="default"
+  >
+    {actionLoading === 'global-action' ? (
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+    ) : (
+      <RefreshCw className="mr-2 h-4 w-4" />
+    )}
+    Global Action
+  </Button>
+  <Button
+    onClick={handleRescoreAndResort}
+    disabled={actionLoading === 'rescore-resort' || isChecking}
+    variant="secondary"
+  >
+    {actionLoading === 'rescore-resort' ? (
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+    ) : (
+      <Sparkles className="mr-2 h-4 w-4" />
+    )}
+    Re-Score & Re-Sort
+  </Button>
+</div>
+```
+
+## Frontend Buttons - Dashboard Quick Actions
+
+**File: `frontend/src/pages/Dashboard.jsx`**
+
+Add Sparkles and TestTube icon imports:
+```javascript
+import { 
+  // ... existing imports ...
+  TestTube, 
+  Sparkles 
+} from 'lucide-react'
+```
+
+Add handler functions:
+```javascript
+const handleTestStreamsWithoutStats = async () => {
+  try {
+    setActionLoading('test-without-stats')
+    const response = await streamCheckerAPI.testStreamsWithoutStats()
+    toast({
+      title: "Success",
+      description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
+    })
+    await loadStatus()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to test streams without stats",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+
+const handleRescoreAndResort = async () => {
+  try {
+    setActionLoading('rescore-resort')
+    const response = await streamCheckerAPI.rescoreAndResort()
+    const stats = response.data.stats || {}
+    toast({
+      title: "Success",
+      description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+    })
+    await loadStatus()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to re-score and re-sort channels",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+```
+
+Add buttons in Quick Actions section:
+```jsx
+<Card>
+  <CardHeader>
+    <CardTitle>Quick Actions</CardTitle>
+    <CardDescription>Common stream management tasks</CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-3">
+    <Button
+      onClick={handleTriggerGlobalAction}
+      disabled={shouldDisableActions}
+      variant="default"
+      className="w-full"
+    >
+      {actionLoading === 'global' ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <RefreshCw className="mr-2 h-4 w-4" />
+      )}
+      Trigger Global Action
+    </Button>
+    
+    <Button
+      onClick={handleTestStreamsWithoutStats}
+      disabled={shouldDisableActions}
+      variant="outline"
+      className="w-full"
+    >
+      {actionLoading === 'test-without-stats' ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <TestTube className="mr-2 h-4 w-4" />
+      )}
+      Test Streams Without Stats
+    </Button>
+    
+    <Button
+      onClick={handleRescoreAndResort}
+      disabled={shouldDisableActions}
+      variant="secondary"
+      className="w-full"
+    >
+      {actionLoading === 'rescore-resort' ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <Sparkles className="mr-2 h-4 w-4" />
+      )}
+      Re-Score & Re-Sort
+    </Button>
+  </CardContent>
+</Card>
+```
+
+## Performance
+
+**Speed Comparison:**
+
+| Operation | Duration | Quality Checks |
+|-----------|----------|----------------|
+| **Global Action** | 30-60 minutes | ✅ Yes (ffmpeg) |
+| **Re-Score & Re-Sort** | 2-5 seconds | ❌ No |
+
+**Example:**
+- 150 channels with 2500 streams
+- Re-Score & Re-Sort: **~3 seconds**
+- Global Action: **~45 minutes**
+
+## Documentation
+
+See `RESCORE_RESORT_README.md` for complete documentation.
+
+---
+
 ## Version History
 
 - **v1.0**: Initial enhancements (Provider Diversification, Fallback Score Fix, Profile Failover v1)
 - **v2.0**: Profile Failover v2 with intelligent polling, Test Streams Without Stats button, Priority+Diversification info
+- **v2.1**: Re-Score & Re-Sort feature, Dashboard Quick Actions buttons (Test Streams Without Stats + Re-Score & Re-Sort)

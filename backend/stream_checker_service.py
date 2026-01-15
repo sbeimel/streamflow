@@ -3648,6 +3648,189 @@ class StreamCheckerService:
             logger.error(f"Failed to trigger global action: {e}")
             return False
     
+    def rescore_and_resort_all_channels(self):
+        """Re-calculate scores and re-sort all channels using existing stream stats.
+        
+        This function does NOT perform new quality checks. Instead, it:
+        1. Gets all channels and their streams
+        2. Uses existing stream_stats from UDI cache
+        3. Re-calculates scores based on current config (priorities, quality preferences, weights)
+        4. Re-sorts streams by score
+        5. Re-applies account stream limits
+        6. Updates channel-stream assignments
+        
+        Useful after changing:
+        - M3U account priorities
+        - Account stream limits
+        - Quality preferences
+        - Scoring weights
+        - Provider diversification settings
+        
+        Returns:
+            Dict with statistics about the re-scoring operation
+        """
+        if not self.running:
+            logger.warning("Cannot re-score channels - service is not running")
+            return {'success': False, 'error': 'Service is not running'}
+        
+        logger.info("=" * 80)
+        logger.info("RE-SCORE & RE-SORT ALL CHANNELS (using existing stats)")
+        logger.info("=" * 80)
+        
+        start_time = time_module.time()
+        
+        try:
+            udi = get_udi_manager()
+            channels = udi.get_channels()
+            
+            if not channels:
+                logger.warning("No channels found")
+                return {'success': False, 'error': 'No channels found'}
+            
+            stats = {
+                'channels_processed': 0,
+                'channels_updated': 0,
+                'total_streams_before': 0,
+                'total_streams_after': 0,
+                'streams_removed_by_limits': 0,
+                'channels_with_changes': []
+            }
+            
+            account_limits_config = self.config.get('account_stream_limits', {})
+            
+            for channel in channels:
+                channel_id = channel.get('id')
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                if not channel_id:
+                    continue
+                
+                logger.info(f"Processing channel: {channel_name} (ID: {channel_id})")
+                
+                # Get current streams for this channel
+                current_streams = udi.get_channel_streams(channel_id)
+                if not current_streams:
+                    logger.debug(f"Channel {channel_name} has no streams, skipping")
+                    continue
+                
+                stats['channels_processed'] += 1
+                streams_before = len(current_streams)
+                stats['total_streams_before'] += streams_before
+                
+                # Build analyzed stream data from existing stats
+                analyzed_streams = []
+                
+                for stream in current_streams:
+                    stream_id = stream.get('id')
+                    if not stream_id:
+                        continue
+                    
+                    # Get full stream data with stats
+                    full_stream = udi.get_stream_by_id(stream_id)
+                    if not full_stream:
+                        continue
+                    
+                    # Get stream_stats
+                    stream_stats = full_stream.get('stream_stats')
+                    if stream_stats is None:
+                        stream_stats = {}
+                    if isinstance(stream_stats, str):
+                        try:
+                            stream_stats = json.loads(stream_stats)
+                            if stream_stats is None:
+                                stream_stats = {}
+                        except json.JSONDecodeError:
+                            stream_stats = {}
+                    
+                    # Build stream data dict for score calculation
+                    score_data = {
+                        'stream_id': stream_id,
+                        'stream_name': stream.get('name', 'Unknown'),
+                        'stream_url': stream.get('url', ''),
+                        'resolution': stream_stats.get('resolution', '0x0'),
+                        'fps': stream_stats.get('source_fps', 0),
+                        'video_codec': stream_stats.get('video_codec', 'N/A'),
+                        'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                        'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                        'status': 'OK' if stream_stats.get('resolution') not in ['0x0', 'N/A', ''] else 'Error'
+                    }
+                    
+                    # Calculate score with current config
+                    score = self._calculate_stream_score(score_data, channel_id)
+                    score_data['score'] = score
+                    
+                    analyzed_streams.append(score_data)
+                
+                if not analyzed_streams:
+                    logger.debug(f"No streams with stats found for channel {channel_name}")
+                    continue
+                
+                # Sort by score (highest first)
+                analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+                
+                logger.info(f"Channel {channel_name}: {len(analyzed_streams)} streams scored and sorted")
+                
+                # Apply provider diversification if enabled
+                if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                    analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+                    logger.info(f"Channel {channel_name}: Applied provider diversification")
+                
+                # Apply account stream limits AFTER scoring (and diversification)
+                if account_limits_config.get('enabled', True):
+                    streams_before_limits = len(analyzed_streams)
+                    analyzed_streams = self._apply_account_limits_after_scoring(
+                        analyzed_streams, account_limits_config, channel_id, channel_name
+                    )
+                    streams_removed = streams_before_limits - len(analyzed_streams)
+                    if streams_removed > 0:
+                        logger.info(f"Channel {channel_name}: Removed {streams_removed} stream(s) due to account limits")
+                        stats['streams_removed_by_limits'] += streams_removed
+                
+                streams_after = len(analyzed_streams)
+                stats['total_streams_after'] += streams_after
+                
+                # Update channel streams if there are changes
+                if streams_after != streams_before or streams_after > 0:
+                    # Extract stream IDs in new order
+                    new_stream_ids = [s['stream_id'] for s in analyzed_streams]
+                    
+                    # Update channel streams in UDI
+                    from api_utils import update_channel_streams
+                    success = update_channel_streams(channel_id, [{'id': sid} for sid in new_stream_ids])
+                    
+                    if success:
+                        stats['channels_updated'] += 1
+                        stats['channels_with_changes'].append({
+                            'channel_id': channel_id,
+                            'channel_name': channel_name,
+                            'streams_before': streams_before,
+                            'streams_after': streams_after,
+                            'streams_removed': streams_before - streams_after
+                        })
+                        logger.info(f"✓ Updated channel {channel_name}: {streams_before} → {streams_after} streams")
+                    else:
+                        logger.error(f"Failed to update channel {channel_name}")
+            
+            # Calculate duration
+            duration = time_module.time() - start_time
+            stats['duration_seconds'] = round(duration, 2)
+            
+            logger.info("=" * 80)
+            logger.info(f"RE-SCORE & RE-SORT COMPLETED in {duration:.2f}s")
+            logger.info(f"  Channels processed: {stats['channels_processed']}")
+            logger.info(f"  Channels updated: {stats['channels_updated']}")
+            logger.info(f"  Total streams before: {stats['total_streams_before']}")
+            logger.info(f"  Total streams after: {stats['total_streams_after']}")
+            logger.info(f"  Streams removed by limits: {stats['streams_removed_by_limits']}")
+            logger.info("=" * 80)
+            
+            stats['success'] = True
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error during re-score and re-sort: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+    
     def _apply_account_limits_after_scoring(self, analyzed_streams: List[Dict], account_limits_config: Dict, 
                                           channel_id: int, channel_name: str) -> List[Dict]:
         """Apply account stream limits AFTER quality scoring to keep only the BEST streams per account.

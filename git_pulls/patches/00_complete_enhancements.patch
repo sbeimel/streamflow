@@ -1,164 +1,2079 @@
-StreamFlow Enhancements - Complete Patch
-=========================================
-
-This patch file contains all enhancements for StreamFlow:
-1. Provider Diversification Feature
-2. Fallback Score Normalization Fix
-
-Apply this patch to integrate all changes at once.
-
----
-
-PATCH 1: Fallback Score Fix
-============================
-
---- a/backend/stream_checker_service.py
-+++ b/backend/stream_checker_service.py
-@@ -2728,7 +2728,7 @@ class StreamCheckerService:
-             stream_data.get('fps', 0) > 0):
+diff --git a/backend/channel_settings_manager.py b/backend/channel_settings_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/channel_settings_manager.py
++++ b/backend/channel_settings_manager.py
+@@ -30,6 +30,13 @@ class ChannelSettingsManager:
+     # Mode constants
+     MODE_ENABLED = 'enabled'
+     MODE_DISABLED = 'disabled'
++    
++    # Quality preference constants
++    QUALITY_DEFAULT = 'default'
++    QUALITY_PREFER_4K = 'prefer_4k'
++    QUALITY_AVOID_4K = 'avoid_4k'
++    QUALITY_MAX_1080P = 'max_1080p'
++    QUALITY_MAX_720P = 'max_720p'
+     
+     def __init__(self):
+         """Initialize the channel settings manager."""
+@@ -60,12 +67,13 @@ class ChannelSettingsManager:
+         Args:
+             channel_id: The channel ID
              
-             logger.debug(f"Stream without bitrate info but functional: {stream_data.get('resolution')}@{stream_data.get('fps')}fps - assigning fallback score: 0.40")
--            return 40.0  # Medium score - better than dead streams (0.0), worse than complete streams (0.60-1.0)
-+            return 0.40  # Medium score - better than dead streams (0.0), worse than complete streams (0.60-1.0)
+         Returns:
+-            Dictionary with channel settings (matching_mode, checking_mode)
+-            Defaults to 'enabled' for both if not set
++            Dictionary with channel settings (matching_mode, checking_mode, quality_preference)
++            Defaults to 'enabled' for modes and 'default' for quality_preference if not set
+         """
+         with self._lock:
+             settings = self._settings.get(channel_id, {})
+             return {
+                 'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
+                 'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
++                'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
+             }
+     
+     def get_channel_effective_settings(self, channel_id: int, channel_group_id: Optional[int] = None) -> Dict[str, Any]:
+@@ -77,12 +85,15 @@ class ChannelSettingsManager:
+             
+         Returns:
+             Dictionary with:
+             - matching_mode: Effective matching mode
+             - checking_mode: Effective checking mode
++            - quality_preference: Effective quality preference
+             - matching_mode_source: 'channel' or 'group' or 'default'
+             - checking_mode_source: 'channel' or 'group' or 'default'
++            - quality_preference_source: 'channel' or 'group' or 'default'
+             - has_explicit_matching: Whether channel has explicit matching setting
+             - has_explicit_checking: Whether channel has explicit checking setting
++            - has_explicit_quality_preference: Whether channel has explicit quality preference setting
+         """
+         with self._lock:
+             channel_settings = self._settings.get(channel_id, {})
+             has_explicit_matching = 'matching_mode' in channel_settings
+             has_explicit_checking = 'checking_mode' in channel_settings
++            has_explicit_quality_preference = 'quality_preference' in channel_settings
+             
+             # Determine effective matching mode
+             if has_explicit_matching:
+@@ -105,11 +116,23 @@ class ChannelSettingsManager:
+             else:
+                 checking_mode = self.MODE_ENABLED
+                 checking_mode_source = 'default'
+             
++            # Determine effective quality preference
++            if has_explicit_quality_preference:
++                quality_preference = channel_settings['quality_preference']
++                quality_preference_source = 'channel'
++            elif channel_group_id is not None:
++                group_settings = self._group_settings.get(channel_group_id, {})
++                quality_preference = group_settings.get('quality_preference', self.QUALITY_DEFAULT)
++                quality_preference_source = 'group'
++            else:
++                quality_preference = self.QUALITY_DEFAULT
++                quality_preference_source = 'default'
++            
+             return {
+                 'matching_mode': matching_mode,
+                 'checking_mode': checking_mode,
++                'quality_preference': quality_preference,
+                 'matching_mode_source': matching_mode_source,
+                 'checking_mode_source': checking_mode_source,
++                'quality_preference_source': quality_preference_source,
+                 'has_explicit_matching': has_explicit_matching,
+                 'has_explicit_checking': has_explicit_checking
++                'has_explicit_quality_preference': has_explicit_quality_preference
+             }
+     
+     def set_channel_settings(self, channel_id: int, matching_mode: Optional[str] = None,
+-                            checking_mode: Optional[str] = None) -> bool:
++                            checking_mode: Optional[str] = None, quality_preference: Optional[str] = None) -> bool:
+         """Set settings for a specific channel.
          
-         weights = self.config.get('scoring.weights', {})
-         score = 0.0
+         Args:
+             channel_id: The channel ID
+             matching_mode: Matching mode ('enabled' or 'disabled'), None to keep current
+             checking_mode: Checking mode ('enabled' or 'disabled'), None to keep current
++            quality_preference: Quality preference ('default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p'), None to keep current
+             
+         Returns:
+             True if successful, False otherwise
+         """
+         with self._lock:
+             # Get current settings or initialize new ones
+             if channel_id not in self._settings:
+                 self._settings[channel_id] = {}
+             
+             # Update only provided fields
+             if matching_mode is not None:
+                 if matching_mode not in [self.MODE_ENABLED, self.MODE_DISABLED]:
+                     logger.error(f"Invalid matching_mode: {matching_mode}")
+                     return False
+                 self._settings[channel_id]['matching_mode'] = matching_mode
+             
+             if checking_mode is not None:
+                 if checking_mode not in [self.MODE_ENABLED, self.MODE_DISABLED]:
+                     logger.error(f"Invalid checking_mode: {checking_mode}")
+                     return False
+                 self._settings[channel_id]['checking_mode'] = checking_mode
+             
++            if quality_preference is not None:
++                valid_preferences = [self.QUALITY_DEFAULT, self.QUALITY_PREFER_4K, self.QUALITY_AVOID_4K, 
++                                   self.QUALITY_MAX_1080P, self.QUALITY_MAX_720P]
++                if quality_preference not in valid_preferences:
++                    logger.error(f"Invalid quality_preference: {quality_preference}")
++                    return False
++                self._settings[channel_id]['quality_preference'] = quality_preference
++            
+             # Save to file
+             success = self._save_settings()
+             if success:
+                 logger.info(f"Updated settings for channel {channel_id}: "
+                           f"matching={self._settings[channel_id].get('matching_mode', 'enabled')}, "
+-                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}")
++                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}, "
++                          f"quality_preference={self._settings[channel_id].get('quality_preference', 'default')}")
+             return success
 
----
+diff --git a/backend/web_api.py b/backend/web_api.py
+index 1234567..abcdefg 100644
+--- a/backend/web_api.py
++++ b/backend/web_api.py
+@@ -1820,6 +1820,7 @@ def update_channel_settings_endpoint(channel_id):
+         
+         matching_mode = data.get('matching_mode')
+         checking_mode = data.get('checking_mode')
++        quality_preference = data.get('quality_preference')
+         
+         # Validate modes if provided
+         valid_modes = ['enabled', 'disabled']
+@@ -1828,11 +1829,17 @@ def update_channel_settings_endpoint(channel_id):
+         if checking_mode and checking_mode not in valid_modes:
+             return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
+         
++        # Validate quality preference if provided
++        valid_preferences = ['default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p']
++        if quality_preference and quality_preference not in valid_preferences:
++            return jsonify({"error": f"Invalid quality_preference. Must be one of: {valid_preferences}"}), 400
++        
+         settings_manager = get_channel_settings_manager()
+         success = settings_manager.set_channel_settings(
+             channel_id,
+             matching_mode=matching_mode,
+-            checking_mode=checking_mode
++            checking_mode=checking_mode,
++            quality_preference=quality_preference
+         )
+         
+         if success:
+@@ -2700,6 +2707,21 @@ def update_stream_checker_config():
+                 else:
+                     logger.warning("croniter not available - cron expression validation skipped")
+         
++        # Validate account stream limits if provided
++        if 'account_stream_limits' in data:
++            limits_config = data['account_stream_limits']
++            
++            # Validate global_limit
++            if 'global_limit' in limits_config:
++                global_limit = limits_config['global_limit']
++                if not isinstance(global_limit, int) or global_limit < 0:
++                    return jsonify({"error": "global_limit must be a non-negative integer"}), 400
++            
++            # Validate account_limits
++            if 'account_limits' in limits_config:
++                account_limits = limits_config['account_limits']
++                if not isinstance(account_limits, dict):
++                    return jsonify({"error": "account_limits must be a dictionary"}), 400
++                
++                for account_id, limit in account_limits.items():
++                    if not isinstance(limit, int) or limit < 0:
++                        return jsonify({"error": f"Limit for account {account_id} must be a non-negative integer"}), 400
++        
+         service = get_stream_checker_service()
+         service.update_config(data)
 
-PATCH 2: Provider Diversification
-==================================
-
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
 --- a/backend/stream_checker_service.py
 +++ b/backend/stream_checker_service.py
-@@ -140,7 +140,11 @@ class StreamCheckConfig:
-         'account_stream_limits': {
-             'enabled': True,  # Enable per-account stream limits for channel assignment
-             'global_limit': 0,  # Global limit per account (0 = unlimited)
-             'account_limits': {}  # Per-account limits: {account_id: limit}
+@@ -135,6 +135,11 @@ class StreamCheckConfig:
+             'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
+             'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
+             'min_score': 0  # Minimum score (0-100, 0 = no minimum)
 +        },
-+        'stream_ordering': {
-+            'provider_diversification': False,  # Enable provider diversification for better redundancy
-+            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
++        'account_stream_limits': {
++            'enabled': True,  # Enable per-account stream limits for channel assignment
++            'global_limit': 0,  # Global limit per account (0 = unlimited)
++            'account_limits': {}  # Per-account limits: {account_id: limit}
          }
      }
      
-@@ -2025,6 +2029,10 @@ class StreamCheckerService:
-             # Sort by score (highest first)
-             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
-             
-+            # Apply provider diversification if enabled
-+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
-+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
-+            
-             # Remove dead streams from the channel (if enabled in config)
-             if self.config.get('dead_stream_handling', {}).get('enabled', True):
-                 analyzed_streams = self._remove_dead_streams(analyzed_streams, channel_id)
-@@ -2507,6 +2515,10 @@ class StreamCheckerService:
-             # Sort by score (highest first)
-             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
-            
-+            # Apply provider diversification if enabled
-+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
-+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
-+            
-             # Remove dead streams from the channel (if enabled in config)
-             if self.config.get('dead_stream_handling', {}).get('enabled', True):
-                 analyzed_streams = self._remove_dead_streams(analyzed_streams, channel_id)
-@@ -3512,6 +3524,78 @@ class StreamCheckerService:
-         
-         return limited_streams
+@@ -2677,7 +2682,12 @@ class StreamCheckerService:
+             self.progress.clear()
      
-+    def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
-+        """Apply provider diversification to stream ordering for better redundancy.
-+        
-+        Instead of sorting purely by score (which groups all streams from the best provider together),
-+        this method interleaves streams from different providers in a round-robin fashion.
-+        
-+        Example:
-+            Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
-+            After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
-+        
-+        This ensures that if one provider fails, the next stream is from a different provider,
-+        providing better failover and redundancy.
+-    def _calculate_stream_score(self, stream_data: Dict) -> float:
++    def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] = None) -> float:
+         """Calculate a quality score for a stream based on analysis.
+         
+-        Applies M3U account priority bonuses according to priority_mode:
++        Applies M3U account priority bonuses according to priority_mode and
++        channel-specific quality preferences.
 +        
 +        Args:
-+            analyzed_streams: List of analyzed streams sorted by score
-+            channel_id: Channel ID for logging
++            stream_data: Stream analysis data
++            channel_id: Optional channel ID for applying quality preferences
+         """
+         # Dead streams always get a score of 0
+         if self._is_stream_dead(stream_data):
+@@ -2730,6 +2740,11 @@ class StreamCheckerService:
+         if stream_id:
+             priority_boost = self._get_priority_boost(stream_id, stream_data)
+             score += priority_boost
+         
++        # Apply channel-specific quality preference boost/penalty
++        if channel_id:
++            quality_boost = self._get_quality_preference_boost(stream_data, channel_id)
++            score += quality_boost
++        
+         return round(score, 2)
+     
++    def _get_quality_preference_boost(self, stream_data: Dict, channel_id: int) -> float:
++        """Calculate quality preference boost/penalty for a stream based on channel settings.
++        
++        Args:
++            stream_data: Stream data dictionary containing resolution and other info
++            channel_id: The channel ID to get quality preferences for
 +            
 +        Returns:
-+            Reordered list with provider diversification applied
++            Quality preference boost/penalty value (-10.0 to 0.5)
 +        """
-+        if not analyzed_streams:
++        try:
++            from channel_settings_manager import get_channel_settings_manager
++            
++            settings_manager = get_channel_settings_manager()
++            
++            # Get channel's group ID for inheritance
++            udi = get_udi_manager()
++            channel = udi.get_channel_by_id(channel_id)
++            channel_group_id = channel.get('channel_group_id') if channel else None
++            
++            # Get effective settings with inheritance
++            effective_settings = settings_manager.get_channel_effective_settings(channel_id, channel_group_id)
++            quality_pref = effective_settings.get('quality_preference', 'default')
++            
++            if quality_pref == 'default':
++                return 0.0
++            
++            resolution = stream_data.get('resolution', 'N/A')
++            if 'x' in str(resolution):
++                try:
++                    width, height = map(int, resolution.split('x'))
++                    
++                    if quality_pref == 'prefer_4k' and height >= 2160:
++                        # Extra bonus for 4K streams
++                        logger.debug(f"Applying 4K preference bonus (+0.5) to stream for channel {channel_id}")
++                        return 0.5
++                    elif quality_pref == 'avoid_4k' and height >= 2160:
++                        # Penalty for 4K streams (prefer Full HD instead)
++                        logger.debug(f"Applying 4K avoidance penalty (-0.5) to stream for channel {channel_id}")
++                        return -0.5
++                    elif quality_pref == 'max_1080p' and height > 1080:
++                        # Heavy penalty for streams above 1080p (effectively exclude them)
++                        logger.debug(f"Applying max 1080p penalty (-10.0) to stream for channel {channel_id}")
++                        return -10.0
++                    elif quality_pref == 'max_720p' and height > 720:
++                        # Heavy penalty for streams above 720p (effectively exclude them)
++                        logger.debug(f"Applying max 720p penalty (-10.0) to stream for channel {channel_id}")
++                        return -10.0
++                        
++                except (ValueError, AttributeError):
++                    pass
++            
++            return 0.0
++        except Exception as e:
++            logger.error(f"Error calculating quality preference boost for channel {channel_id}: {e}")
++            return 0.0
+
+diff --git a/backend/automated_stream_manager.py b/backend/automated_stream_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/automated_stream_manager.py
++++ b/backend/automated_stream_manager.py
+@@ -1055,6 +1055,16 @@ class AutomatedStreamManager:
+                         })
+             
++            # Get stream checker service for account limits configuration
++            stream_checker_service = None
++            account_limits_config = {}
++            try:
++                from stream_checker_service import get_stream_checker_service
++                stream_checker_service = get_stream_checker_service()
++                account_limits_config = stream_checker_service.config.get('account_stream_limits', {})
++            except Exception as e:
++                logger.warning(f"Could not get stream checker service for account limits: {e}")
++            
+             # Prepare detailed changelog data
+             detailed_assignments = []
+             
+@@ -1062,6 +1072,10 @@ class AutomatedStreamManager:
+             dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+             
++            # Apply account stream limits before assignment
++            if account_limits_config.get('enabled', True):
++                assignments = self._apply_account_stream_limits(assignments, all_streams, account_limits_config)
++            
+             # Assign streams to channels
+             for channel_id, stream_ids in assignments.items():
+                 if stream_ids:
+@@ -1180,6 +1194,73 @@ class AutomatedStreamManager:
+                 })
+             return {}
+     
++    def _apply_account_stream_limits(self, assignments: Dict[str, List[int]], all_streams: List[Dict], 
++                                   account_limits_config: Dict) -> Dict[str, List[int]]:
++        """Apply per-account stream limits to channel assignments.
++        
++        Limits are applied PER CHANNEL, meaning each channel can have up to the limit
++        number of streams from each M3U account.
++        
++        Args:
++            assignments: Dictionary mapping channel_id to list of stream_ids
++            all_streams: List of all available streams
++            account_limits_config: Account limits configuration
++            
++        Returns:
++            Modified assignments dictionary with limits applied
++        """
++        if not account_limits_config.get('enabled', True):
++            return assignments
++        
++        global_limit = account_limits_config.get('global_limit', 0)
++        account_specific_limits = account_limits_config.get('account_limits', {})
++        
++        # If no limits are configured, return unchanged
++        if global_limit == 0 and not account_specific_limits:
++            return assignments
++        
++        # Create stream_id to m3u_account mapping for quick lookup
++        stream_to_account = {}
++        for stream in all_streams:
++            if isinstance(stream, dict) and 'id' in stream:
++                stream_to_account[stream['id']] = stream.get('m3u_account')
++        
++        limited_assignments = defaultdict(list)
++        total_limited_streams = 0
++        total_channels_processed = 0
++        
++        logger.info("Applying account stream limits to channel assignments (per-channel counting)...")
++        
++        # Process assignments channel by channel (each channel gets its own limits)
++        for channel_id, stream_ids in assignments.items():
++            # Track streams per account FOR THIS CHANNEL ONLY
++            channel_account_counts = defaultdict(int)
++            total_channels_processed += 1
++            
++            for stream_id in stream_ids:
++                m3u_account = stream_to_account.get(stream_id)
++                
++                # Skip custom streams (no m3u_account)
++                if m3u_account is None:
++                    limited_assignments[channel_id].append(stream_id)
++                    continue
++                
++                # Determine limit for this account
++                account_limit = account_specific_limits.get(str(m3u_account), global_limit)
++                
++                # If limit is 0, no limit applies
++                if account_limit == 0:
++                    limited_assignments[channel_id].append(stream_id)
++                    continue
++                
++                # Check if we're within the limit FOR THIS CHANNEL
++                if channel_account_counts[m3u_account] < account_limit:
++                    limited_assignments[channel_id].append(stream_id)
++                    channel_account_counts[m3u_account] += 1
++                else:
++                    # Stream exceeds limit for this channel, skip it
++                    total_limited_streams += 1
++                    logger.debug(f"Stream {stream_id} from account {m3u_account} exceeds per-channel limit ({account_limit}) for channel {channel_id}")
++            
++            # Log per-channel statistics
++            if any(count > 0 for count in channel_account_counts.values()):
++                logger.debug(f"Channel {channel_id} account limits applied:")
++                for account_id, count in channel_account_counts.items():
++                    account_limit = account_specific_limits.get(str(account_id), global_limit)
++                    if account_limit > 0:
++                        logger.debug(f"  Account {account_id}: {count}/{account_limit} streams assigned")
++        
++        if total_limited_streams > 0:
++            logger.info(f"Applied per-channel account stream limits: {total_limited_streams} streams were excluded from assignment across {total_channels_processed} channels")
++        
++        return dict(limited_assignments)
++    
+     def validate_and_remove_non_matching_streams(self, force: bool = False) -> Dict[str, Any]:
+
+diff --git a/frontend/src/pages/ChannelConfiguration.jsx b/frontend/src/pages/ChannelConfiguration.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/ChannelConfiguration.jsx
++++ b/frontend/src/pages/ChannelConfiguration.jsx
+@@ -58,10 +58,13 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+ 
+   const matchingMode = channelSettings?.matching_mode || 'enabled'
+   const checkingMode = channelSettings?.checking_mode || 'enabled'
++  const qualityPreference = channelSettings?.quality_preference || 'default'
+   const matchingModeSource = channelSettings?.matching_mode_source || 'default'
+   const checkingModeSource = channelSettings?.checking_mode_source || 'default'
++  const qualityPreferenceSource = channelSettings?.quality_preference_source || 'default'
+   const isMatchingInherited = matchingModeSource === 'group'
+   const isCheckingInherited = checkingModeSource === 'group'
++  const isQualityPrefInherited = qualityPreferenceSource === 'group'
+
+@@ -94,6 +97,32 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+     }
+   }
+
++  const handleQualityPreferenceChange = async (value) => {
++    try {
++      await onUpdateSettings(channel.id, { quality_preference: value })
++      toast({
++        title: "Success",
++        description: "Quality preference updated successfully"
++      })
++    } catch (err) {
++      toast({
++        title: "Error",
++        description: "Failed to update quality preference",
++        variant: "destructive"
++      })
++    }
++  }
++
++  const getQualityPreferenceDescription = (preference) => {
++    switch (preference) {
++      case 'default': return 'Standard quality scoring (4K > Full HD > HD)'
++      case 'prefer_4k': return '4K streams get extra bonus points'
++      case 'avoid_4k': return '4K streams get penalty (Full HD preferred)'
++      case 'max_1080p': return 'Streams above 1080p are excluded'
++      case 'max_720p': return 'Streams above 720p are excluded'
++      default: return 'Standard quality scoring'
++    }
++  }
++
+@@ -244,7 +273,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+         {expanded && (
+           <div className="border-t p-4 bg-muted/50 space-y-4">
+             {/* Channel Settings */}
+-            <div className="grid grid-cols-2 gap-4 pb-4 border-b">
++            <div className="grid grid-cols-3 gap-4 pb-4 border-b">
+               <div className="space-y-2">
+                 <Label htmlFor={`matching-mode-${channel.id}`} className="text-sm font-medium">
+                   Stream Matching
+@@ -290,6 +319,29 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+                   {isCheckingInherited && ' (inherited from group)'}
+                 </p>
+               </div>
++              <div className="space-y-2">
++                <Label htmlFor={`quality-preference-${channel.id}`} className="text-sm font-medium">
++                  Quality Preference
++                  {isQualityPrefInherited && (
++                    <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
++                  )}
++                </Label>
++                <Select value={qualityPreference} onValueChange={handleQualityPreferenceChange}>
++                  <SelectTrigger id={`quality-preference-${channel.id}`}>
++                    <SelectValue />
++                  </SelectTrigger>
++                  <SelectContent>
++                    <SelectItem value="default">Default</SelectItem>
++                    <SelectItem value="prefer_4k">Prefer 4K</SelectItem>
++                    <SelectItem value="avoid_4k">Avoid 4K</SelectItem>
++                    <SelectItem value="max_1080p">Max 1080p</SelectItem>
++                    <SelectItem value="max_720p">Max 720p</SelectItem>
++                  </SelectContent>
++                </Select>
++                <p className="text-xs text-muted-foreground">
++                  {getQualityPreferenceDescription(qualityPreference)}
++                  {isQualityPrefInherited && ' (inherited from group)'}
++                </p>
++              </div>
+             </div>
+
+diff --git a/frontend/src/pages/StreamChecker.jsx b/frontend/src/pages/StreamChecker.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/StreamChecker.jsx
++++ b/frontend/src/pages/StreamChecker.jsx
+@@ -169,6 +169,50 @@ export default function StreamChecker() {
+     })
+   }
+
++  const addAccountLimit = () => {
++    // TODO: In future, we could fetch M3U accounts and show a dropdown
++    // For now, use a simple prompt
++    const accountId = prompt('Enter M3U Account ID (you can find these in the M3U Accounts section):')
++    if (accountId && accountId.trim()) {
++      const id = accountId.trim()
++      // Check if account already has a limit
++      if (editedConfig?.account_stream_limits?.account_limits?.[id] !== undefined) {
++        toast({
++          title: "Account Already Configured",
++          description: `Account ${id} already has a limit configured.`,
++          variant: "destructive"
++        })
++        return
++      }
++      
++      setEditedConfig(prevConfig => {
++        const newConfig = JSON.parse(JSON.stringify(prevConfig))
++        if (!newConfig.account_stream_limits) {
++          newConfig.account_stream_limits = {}
++        }
++        if (!newConfig.account_stream_limits.account_limits) {
++          newConfig.account_stream_limits.account_limits = {}
++        }
++        newConfig.account_stream_limits.account_limits[id] = 50 // Default to 50 streams
++        return newConfig
++      })
++      
++      toast({
++        title: "Account Limit Added",
++        description: `Added limit configuration for M3U Account ${id}`,
++      })
++    }
++  }
++
++  const updateAccountLimit = (accountId, limit) => {
++    setEditedConfig(prevConfig => {
++      const newConfig = JSON.parse(JSON.stringify(prevConfig))
++      if (newConfig.account_stream_limits?.account_limits) {
++        newConfig.account_stream_limits.account_limits[accountId] = limit
++      }
++      return newConfig
++    })
++  }
++
++  const removeAccountLimit = (accountId) => {
++    setEditedConfig(prevConfig => {
++      const newConfig = JSON.parse(JSON.stringify(prevConfig))
++      if (newConfig.account_stream_limits?.account_limits) {
++        delete newConfig.account_stream_limits.account_limits[accountId]
++      }
++      return newConfig
++    })
++    
++    toast({
++      title: "Account Limit Removed",
++      description: `Removed limit configuration for M3U Account ${accountId}`,
++    })
++  }
++
+   const handleSaveConfig = async () => {
+     try {
+       setActionLoading('save-config')
+@@ -463,8 +507,8 @@ export default function StreamChecker() {
+               {/* Tabs for Configuration Sections */}
+               <Tabs defaultValue="analysis" className="w-full">
+-                <TabsList className="grid w-full grid-cols-4">
++                <TabsList className="grid w-full grid-cols-5">
+                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
+                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
+                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
++                  <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
+                   <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
+                 </TabsList>
+
+@@ -703,6 +747,80 @@ export default function StreamChecker() {
+                 </TabsContent>
+
++                {/* Account Stream Limits Tab */}
++                <TabsContent value="account-limits" className="space-y-4">
++                  <div className="space-y-4">
++                    <div className="flex items-center justify-between">
++                      <div className="space-y-0.5">
++                        <Label htmlFor="account_limits_enabled">Enable Account Stream Limits</Label>
++                        <p className="text-sm text-muted-foreground">
++                          Limit the number of streams per M3U account that can be assigned to channels
++                        </p>
++                      </div>
++                      <Switch
++                        id="account_limits_enabled"
++                        checked={editedConfig?.account_stream_limits?.enabled !== false}
++                        onCheckedChange={(checked) => updateConfigValue('account_stream_limits.enabled', checked)}
++                        disabled={!configEditing}
++                      />
++                    </div>
++
++                    {editedConfig?.account_stream_limits?.enabled !== false && (
++                      <>
++                        <div className="space-y-4 pt-4 border-t">
++                          <div className="space-y-2">
++                            <Label htmlFor="global_stream_limit">Global Stream Limit per Account</Label>
++                            <Input
++                              id="global_stream_limit"
++                              type="number"
++                              min="0"
++                              step="1"
++                              value={editedConfig?.account_stream_limits?.global_limit ?? 0}
++                              onChange={(e) => updateConfigValue('account_stream_limits.global_limit', parseInt(e.target.value) || 0)}
++                              disabled={!configEditing}
++                            />
++                            <p className="text-sm text-muted-foreground">
++                              Maximum streams per M3U account **per channel** (0 = unlimited). This applies to each channel individually - each channel can have up to this many streams from each account.
++                            </p>
++                          </div>
++
++                          <div className="space-y-4">
++                            <div className="flex items-center justify-between">
++                              <h4 className="font-medium">Per-Account Limits</h4>
++                              {configEditing && (
++                                <Button
++                                  variant="outline"
++                                  size="sm"
++                                  onClick={() => addAccountLimit()}
++                                >
++                                  Add Account Limit
++                                </Button>
++                              )}
++                            </div>
++                            <p className="text-sm text-muted-foreground">
++                              Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
++                            </p>
++
++                            {editedConfig?.account_stream_limits?.account_limits && 
++                             Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
++                              <div className="space-y-2">
++                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => (
++                                  <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
++                                    <div className="flex-1">
++                                      <Label className="text-sm font-medium">M3U Account ID: {accountId}</Label>
++                                    </div>
++                                    <div className="w-24">
++                                      <Input
++                                        type="number"
++                                        min="0"
++                                        step="1"
++                                        value={limit}
++                                        onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
++                                        disabled={!configEditing}
++                                        className="text-center"
++                                      />
++                                    </div>
++                                    <div className="text-sm text-muted-foreground">streams</div>
++                                    {configEditing && (
++                                      <Button
++                                        variant="outline"
++                                        size="sm"
++                                        onClick={() => removeAccountLimit(accountId)}
++                                      >
++                                        <Trash2 className="h-4 w-4" />
++                                      </Button>
++                                    )}
++                                  </div>
++                                ))}
++                              </div>
++                            ) : (
++                              <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
++                                No per-account limits configured. All accounts will use the global limit.
++                              </div>
++                            )}
++                          </div>
++                        </div>
++
++                        <Alert>
++                          <AlertCircle className="h-4 w-4" />
++                          <AlertTitle>How Account Stream Limits Work</AlertTitle>
++                          <AlertDescription>
++                            <ul className="list-disc list-inside space-y-1 mt-2">
++                              <li>Limits apply **per channel** during channel assignment (stream discovery)</li>
++                              <li>Each channel can have up to the limit number of streams from each M3U account</li>
++                              <li>Custom streams (not from M3U accounts) are not affected by these limits</li>
++                              <li>Per-account limits override the global limit for specific accounts</li>
++                              <li>Set limit to 0 for unlimited streams from that account per channel</li>
++                              <li><strong>Example:</strong> Global limit 2 → Each channel gets max 2 streams per account</li>
++                              <li><strong>With 10 channels:</strong> Account with limit 2 can provide max 20 streams total (2×10)</li>
++                              <li><strong>Provider weighting:</strong> Account A=3, Account B=2, Account C=1 → Each channel gets max 6 streams from these accounts</li>
++                            </ul>
++                          </AlertDescription>
++                        </Alert>
++                      </>
++                    )}
++                  </div>
++                </TabsContent>
++
+                 {/* Dead Streams Tab */}
+                 <TabsContent value="dead-streams" className="space-y-4">
+diff --git a/frontend/src/pages/ChannelConfiguration.jsx b/frontend/src/pages/ChannelConfiguration.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/ChannelConfiguration.jsx
++++ b/frontend/src/pages/ChannelConfiguration.jsx
+@@ -350,18 +350,6 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheck
+                   {isQualityPrefInherited && ' (inherited from group)'}
+                 </p>
+               </div>
+-            </div>
+-            <div className="space-y-2">
+-              <Label htmlFor={`checking-mode-${channel.id}`} className="text-sm font-medium">
+-                Stream Checking
+-                {isCheckingInherited && (
+-                  <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
+-                )}
+-              </Label>
+-              <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
+-                <SelectTrigger id={`checking-mode-${channel.id}`}>
+-                  <SelectValue />
+-                </SelectTrigger>
+-                <SelectContent>
+-                  <SelectItem value="enabled">Enabled</SelectItem>
+-                  <SelectItem value="disabled">Disabled</SelectItem>
+-                </SelectContent>
+-              </Select>
+-              <p className="text-xs text-muted-foreground">
+-                {checkingMode === 'enabled'
+-                  ? 'Channel streams will be quality checked'
+-                  : 'Channel streams will not be quality checked'}
+-                {isCheckingInherited && ' (inherited from group)'}
+-              </p>
+             </div>
+           </div>
+
+diff --git a/frontend/src/pages/StreamChecker.jsx b/frontend/src/pages/StreamChecker.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/StreamChecker.jsx
++++ b/frontend/src/pages/StreamChecker.jsx
+@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.
+ import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination.jsx'
+ import { useToast } from '@/hooks/use-toast.js'
+-import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
++import { streamCheckerAPI, deadStreamsAPI, m3uAPI } from '@/services/api.js'
+ import { 
+   Activity, 
+   CheckCircle2, 
+@@ -44,6 +44,7 @@ export default function StreamChecker() {
+   })
+   const [totalDeadStreams, setTotalDeadStreams] = useState(0)
++  const [m3uAccounts, setM3uAccounts] = useState([])
+   const { toast } = useToast()
+
+   useEffect(() => {
+@@ -58,12 +59,16 @@ export default function StreamChecker() {
+
+   const loadData = async () => {
+     try {
+-      const [statusResponse, progressResponse, configResponse] = await Promise.all([
++      const [statusResponse, progressResponse, configResponse, m3uAccountsResponse] = await Promise.all([
+         streamCheckerAPI.getStatus(),
+         streamCheckerAPI.getProgress(),
+-        streamCheckerAPI.getConfig()
++        streamCheckerAPI.getConfig(),
++        m3uAPI.getAccounts().catch(() => ({ data: { accounts: [] } })) // Load M3U accounts
+       ])
+       setStatus(statusResponse.data)
+       setProgress(progressResponse.data)
+       setConfig(configResponse.data)
+       if (!editedConfig && configResponse.data) {
+         setEditedConfig(configResponse.data)
+       }
++      
++      // Set M3U accounts - use same logic as Dashboard
++      const accounts = m3uAccountsResponse.data.accounts || []
++      setM3uAccounts(accounts)
+     } catch (err) {
+       console.error('Failed to load stream checker data:', err)
+     } finally {
+@@ -169,35 +174,6 @@ export default function StreamChecker() {
+     })
+   }
+
+-  const addAccountLimit = () => {
+-    // TODO: In future, we could fetch M3U accounts and show a dropdown
+-    // For now, use a simple prompt
+-    const accountId = prompt('Enter M3U Account ID (you can find these in the M3U Accounts section):')
+-    if (accountId && accountId.trim()) {
+-      const id = accountId.trim()
+-      // Check if account already has a limit
+-      if (editedConfig?.account_stream_limits?.account_limits?.[id] !== undefined) {
+-        toast({
+-          title: "Account Already Configured",
+-          description: `Account ${id} already has a limit configured.`,
+-          variant: "destructive"
+-        })
+-        return
+-      }
+-      
+-      setEditedConfig(prevConfig => {
+-        const newConfig = JSON.parse(JSON.stringify(prevConfig))
+-        if (!newConfig.account_stream_limits) {
+-          newConfig.account_stream_limits = {}
+-        }
+-        if (!newConfig.account_stream_limits.account_limits) {
+-          newConfig.account_stream_limits.account_limits = {}
+-        }
+-        newConfig.account_stream_limits.account_limits[id] = 50 // Default to 50 streams
+-        return newConfig
+-      })
+-      
+-      toast({
+-        title: "Account Limit Added",
+-        description: `Added limit configuration for M3U Account ${id}`,
+-      })
+-    }
+-  }
+-
+   const updateAccountLimit = (accountId, limit) => {
+     setEditedConfig(prevConfig => {
+       const newConfig = JSON.parse(JSON.stringify(prevConfig))
+@@ -825,9 +801,7 @@ export default function StreamChecker() {
+                           <div className="space-y-4">
+                             <div className="flex items-center justify-between">
+                               <h4 className="font-medium">Per-Account Limits</h4>
+-                              {configEditing && (
+-                                <Button
+-                                  variant="outline"
+-                                  size="sm"
+-                                  onClick={() => addAccountLimit()}
+-                                >
+-                                  Add Account Limit
+-                                </Button>
+-                              )}
+                             </div>
+                             <p className="text-sm text-muted-foreground">
+                               Override the global limit for specific M3U accounts **per channel**. These limits take precedence over the global limit and apply to each channel individually.
+                             </p>
+
+-                            {/* Show available M3U accounts when editing */}
+-                            {configEditing && m3uAccounts.length > 0 && (
++                            {/* Show all M3U accounts with input fields when editing */}
++                            {configEditing && m3uAccounts.length > 0 && (
+                               <div className="space-y-2">
+-                                <h5 className="text-sm font-medium">Available M3U Accounts (Active Only)</h5>
+-                                <div className="grid gap-2 max-h-48 overflow-y-auto">
++                                <h5 className="text-sm font-medium">M3U Account Limits (0 = use global limit)</h5>
++                                <div className="space-y-2 max-h-64 overflow-y-auto">
+                                   {m3uAccounts.map((account) => {
+-                                    const hasLimit = editedConfig?.account_stream_limits?.account_limits?.[account.id] !== undefined
++                                    // Use String(account.id) for consistent key lookup (JSON keys are always strings)
++                                    const accountIdStr = String(account.id)
++                                    const currentLimit = editedConfig?.account_stream_limits?.account_limits?.[accountIdStr] ?? ''
+                                     return (
+-                                      <div key={account.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
++                                      <div key={account.id} className="flex items-center gap-2 p-3 border rounded-md">
+                                         <div className="flex-1">
+                                           <div className="text-sm font-medium">{account.name || `Account ${account.id}`}</div>
+                                           <div className="text-xs text-muted-foreground">ID: {account.id} • Priority: {account.priority || 'N/A'}</div>
+                                         </div>
+-                                        <Button
+-                                          variant={hasLimit ? "secondary" : "outline"}
+-                                          size="sm"
+-                                          onClick={() => addSpecificAccountLimit(account.id, account.name || `Account ${account.id}`)}
+-                                          disabled={hasLimit}
+-                                        >
+-                                          {hasLimit ? 'Already Added' : 'Add Limit'}
+-                                        </Button>
++                                        <div className="w-20">
++                                          <Input
++                                            type="number"
++                                            min="1"
++                                            step="1"
++                                            value={currentLimit || ''}
++                                            onChange={(e) => {
++                                              const newLimit = parseInt(e.target.value) || null
++                                              if (newLimit && newLimit > 0) {
++                                                setEditedConfig(prevConfig => {
++                                                  const newConfig = JSON.parse(JSON.stringify(prevConfig))
++                                                  if (!newConfig.account_stream_limits) {
++                                                    newConfig.account_stream_limits = {}
++                                                  }
++                                                  if (!newConfig.account_stream_limits.account_limits) {
++                                                    newConfig.account_stream_limits.account_limits = {}
++                                                  }
++                                                  newConfig.account_stream_limits.account_limits[accountIdStr] = newLimit
++                                                  return newConfig
++                                                })
++                                              }
++                                            }}
++                                            disabled={!configEditing}
++                                            className="text-center"
++                                            placeholder="Global"
++                                          />
++                                        </div>
++                                        <div className="flex items-center gap-1">
++                                          {currentLimit ? (
++                                            <Button
++                                              variant="outline"
++                                              size="sm"
++                                              onClick={() => {
++                                                setEditedConfig(prevConfig => {
++                                                  const newConfig = JSON.parse(JSON.stringify(prevConfig))
++                                                  if (newConfig.account_stream_limits?.account_limits) {
++                                                    delete newConfig.account_stream_limits.account_limits[accountIdStr]
++                                                  }
++                                                  return newConfig
++                                                })
++                                                toast({
++                                                  title: "Account Limit Reset",
++                                                  description: `Account ${account.id} will now use the global limit`,
++                                                })
++                                              }}
++                                              disabled={!configEditing}
++                                              className="h-8 w-8 p-0"
++                                              title="Reset to global limit"
++                                            >
++                                              ×
++                                            </Button>
++                                          ) : (
++                                            <div className="text-xs text-muted-foreground w-12 text-center">
++                                              global
++                                            </div>
++                                          )}
++                                        </div>
+                                       </div>
+                                     )
+                                   })}
+                                 </div>
++                                <div className="text-xs text-muted-foreground">
++                                  <strong>0</strong> = Use global limit • <strong>&gt;0</strong> = Override with specific limit per channel
++                                </div>
+                               </div>
+                             )}
+
+-                            {editedConfig?.account_stream_limits?.account_limits && 
++                            {/* Show configured limits summary */}
++                            {editedConfig?.account_stream_limits?.account_limits && 
+                              Object.keys(editedConfig.account_stream_limits.account_limits).length > 0 ? (
+-                              <div className="space-y-2">
+-                                <h5 className="text-sm font-medium">Configured Account Limits</h5>
+-                                {Object.entries(editedConfig.account_stream_limits.account_limits).map(([accountId, limit]) => {
+-                                  const account = m3uAccounts.find(acc => acc.id.toString() === accountId.toString())
+-                                  const accountName = account?.name || `Account ${accountId}`
+-                                  return (
+-                                    <div key={accountId} className="flex items-center gap-2 p-3 border rounded-md">
+-                                      <div className="flex-1">
+-                                        <Label className="text-sm font-medium">{accountName}</Label>
+-                                        <div className="text-xs text-muted-foreground">ID: {accountId}</div>
+-                                      </div>
+-                                      <div className="w-24">
+-                                        <Input
+-                                          type="number"
+-                                          min="0"
+-                                          step="1"
+-                                          value={limit}
+-                                          onChange={(e) => updateAccountLimit(accountId, parseInt(e.target.value) || 0)}
+-                                          disabled={!configEditing}
+-                                          className="text-center"
+-                                        />
+-                                      </div>
+-                                      <div className="text-sm text-muted-foreground">streams</div>
+-                                      {configEditing && (
+-                                        <Button
+-                                          variant="outline"
+-                                          size="sm"
+-                                          onClick={() => removeAccountLimit(accountId)}
+-                                        >
+-                                          <Trash2 className="h-4 w-4" />
+-                                        </Button>
+-                                      )}
+-                                    </div>
+-                                  )
+-                                })}
++                              <div className="text-sm text-muted-foreground">
++                                <strong>Active overrides:</strong> {Object.keys(editedConfig.account_stream_limits.account_limits).length} account(s) with custom limits
+                               </div>
+                             ) : (
+                               <div className="text-sm text-muted-foreground p-4 border rounded-md text-center">
+                                 No per-account limits configured. All accounts will use the global limit.
+-                                {configEditing && m3uAccounts.length === 0 && (
+-                                  <div className="mt-2 text-xs text-muted-foreground">
+-                                    No active M3U accounts found. Check your M3U configuration.
+-                                  </div>
+-                                )}
+                               </div>
+                             )}
+                           </div>
+
+# HTTP Proxy Support Documentation
+# 
+# Note: HTTP Proxy support is already fully implemented in the base StreamFlow version.
+# This documentation section describes the existing functionality for reference.
+
+diff --git a/backend/api_utils.py b/backend/api_utils.py
+index 1234567..abcdefg 100644
+--- a/backend/api_utils.py
++++ b/backend/api_utils.py
+@@ -690,6 +690,65 @@ def update_channel_streams(channel_id: int, streams: List[Dict[str, Any]]) -> b
+         return False
+
+
++def get_stream_proxy(stream_id: int) -> Optional[str]:
++    """
++    Get HTTP proxy for a stream from its M3U account.
++    
++    This function retrieves the HTTP proxy configuration for a specific stream
++    by looking up its associated M3U account in the UDI cache and extracting
++    the proxy URL from the account configuration.
++    
++    Args:
++        stream_id (int): The ID of the stream to get proxy for
++        
++    Returns:
++        Optional[str]: Proxy URL string (e.g., 'http://proxy:8080') or None if no proxy configured
++    """
++    log_function_call(logger, "get_stream_proxy", stream_id=stream_id)
++    
++    try:
++        # Get stream from UDI cache
++        udi = get_udi_manager()
++        stream = udi.get_stream_by_id(stream_id)
++        
++        if not stream:
++            logger.debug(f"Stream {stream_id} not found in UDI cache")
++            log_function_return(logger, "get_stream_proxy", None)
++            return None
++        
++        # Get M3U account ID from stream
++        m3u_account_id = stream.get('m3u_account')
++        if not m3u_account_id:
++            logger.debug(f"Stream {stream_id} has no M3U account association")
++            log_function_return(logger, "get_stream_proxy", None)
++            return None
++        
++        # Get M3U accounts from UDI cache
++        accounts = udi.get_m3u_accounts()
++        if not accounts:
++            logger.debug("No M3U accounts found in UDI cache")
++            log_function_return(logger, "get_stream_proxy", None)
++            return None
++        
++        # Find the specific M3U account and extract proxy
++        for account in accounts:
++            if account.get('id') == m3u_account_id:
++                proxy = account.get('proxy')
++                if proxy and proxy.strip():
++                    logger.debug(f"Found proxy '{proxy}' for stream {stream_id} from M3U account {m3u_account_id}")
++                    log_function_return(logger, "get_stream_proxy", proxy.strip())
++                    return proxy.strip()
++                else:
++                    logger.debug(f"M3U account {m3u_account_id} has no proxy configured")
++                    log_function_return(logger, "get_stream_proxy", None)
++                    return None
++        
++        logger.debug(f"M3U account {m3u_account_id} not found for stream {stream_id}")
++        log_function_return(logger, "get_stream_proxy", None)
++        return None
++        
++    except Exception as e:
++        log_exception(logger, e, f"get_stream_proxy (stream_id={stream_id})")
++        return None
++
+ def get_channel_streams(channel_id: int) -> List[Dict[str, Any]]:
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -2325,6 +2325,11 @@ class StreamCheckerService:
+                 
+                 logger.debug(f"Analyzing stream {stream['id']} for channel {channel_id}")
+                 
++                # Get HTTP proxy for this stream from its M3U account
++                from api_utils import get_stream_proxy
++                proxy = get_stream_proxy(stream['id'])
++                
+                 analyzed = analyze_stream(
+                     stream['url'], 
+                     stream_id=stream['id'],
+@@ -2332,6 +2337,7 @@ class StreamCheckerService:
+                     timeout=timeout,
+                     max_resolution_height=max_resolution_height,
+                     min_bitrate_kbps=min_bitrate_kbps,
++                    proxy=proxy,
+                     progress_callback=progress_callback
+                 )
+                 
+@@ -2450,6 +2456,11 @@ class StreamCheckerService:
+                     
+                     logger.debug(f"Analyzing stream {stream['id']} for global action")
+                     
++                    # Get HTTP proxy for this stream from its M3U account
++                    from api_utils import get_stream_proxy
++                    proxy = get_stream_proxy(stream['id'])
++                    
+                     analyzed = analyze_stream(
+                         stream['url'], 
+                         stream_id=stream['id'],
+@@ -2457,6 +2468,7 @@ class StreamCheckerService:
+                         timeout=timeout,
+                         max_resolution_height=max_resolution_height,
+                         min_bitrate_kbps=min_bitrate_kbps,
++                        proxy=proxy,
+                         progress_callback=progress_callback
+                     )
+
+diff --git a/backend/stream_check_utils.py b/backend/stream_check_utils.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_check_utils.py
++++ b/backend/stream_check_utils.py
+@@ -45,7 +45,8 @@ def analyze_stream(url: str, 
+                   timeout: int = 30,
+                   max_resolution_height: int = 0,
+                   min_bitrate_kbps: int = 0,
+-                  progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
++                  progress_callback: Optional[Callable] = None,
++                  proxy: Optional[str] = None) -> Dict[str, Any]:
+     """
+     Analyze a stream URL using FFmpeg to extract metadata and check availability.
+     
+@@ -58,6 +59,7 @@ def analyze_stream(url: str,
+         min_bitrate_kbps (int): Minimum bitrate in kbps (0 = no minimum)
+         progress_callback (Optional[Callable]): Callback function for progress updates
++        proxy (Optional[str]): HTTP proxy URL (e.g., 'http://proxy:8080')
+         
+     Returns:
+         Dict[str, Any]: Analysis results containing:
+@@ -85,6 +87,10 @@ def analyze_stream(url: str,
+         # Build FFmpeg command
+         cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error']
+         
++        # Add HTTP proxy if configured
++        if proxy:
++            cmd.extend(['-http_proxy', proxy])
++            logger.debug(f"Using HTTP proxy: {proxy}")
++        
+         # Add timeout
+         cmd.extend(['-timeout', str(timeout * 1000000)])  # FFmpeg timeout in microseconds
+         
+diff --git a/frontend/src/pages/Dashboard.jsx b/frontend/src/pages/Dashboard.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/Dashboard.jsx
++++ b/frontend/src/pages/Dashboard.jsx
+@@ -430,6 +430,18 @@ export default function Dashboard() {
+                         <Badge variant={isEnabled ? "default" : "secondary"}>
+                           {isEnabled ? "Enabled" : "Disabled"}
+                         </Badge>
++                        {/* Proxy Status Badge */}
++                        {playlist.proxy && playlist.proxy.trim() ? (
++                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
++                            Proxy: {(() => {
++                              try {
++                                return new URL(playlist.proxy).hostname
++                              } catch {
++                                return 'Invalid URL'
++                              }
++                            })()}
++                          </Badge>
++                        ) : (
++                          <Badge variant="outline" className="text-xs bg-gray-50 text-gray-600 border-gray-200">
++                            Direct
++                          </Badge>
++                        )}
+                       </div>
+                       {playlist.url && (
+                         <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
+                           {playlist.url}
+                         </p>
+                       )}
++                      {/* Show full proxy URL on hover/second line if configured */}
++                      {playlist.proxy && playlist.proxy.trim() && (
++                        <p className="text-xs text-muted-foreground mt-1 truncate max-w-md">
++                          Proxy: {playlist.proxy}
++                        </p>
++                      )}
+                     </div>
+diff --git a/frontend/src/pages/ChannelConfiguration.jsx b/frontend/src/pages/ChannelConfiguration.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/ChannelConfiguration.jsx
++++ b/frontend/src/pages/ChannelConfiguration.jsx
+@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast.js'
+ import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
+-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity } from 'lucide-react'
++import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Settings } from 'lucide-react'
+ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
+ import { Switch } from '@/components/ui/switch.jsx'
+ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
+@@ -1129,7 +1129,9 @@ export default function ChannelConfiguration() {
+   
+-  // Multi-select state for bulk regex assignment
++  // Multi-select state for bulk operations
+   const [selectedChannels, setSelectedChannels] = useState(new Set())
++  const [bulkQualityDialogOpen, setBulkQualityDialogOpen] = useState(false)
++  const [bulkQualityPreference, setBulkQualityPreference] = useState('default')
+   const [filterByGroup, setFilterByGroup] = useState('all')
+   const [sortByGroup, setSortByGroup] = useState(false)
+   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
+@@ -1475,6 +1477,35 @@ export default function ChannelConfiguration() {
+     }
+   }
+
++  const handleBulkQualityPreference = async () => {
++    if (selectedChannels.size === 0) {
++      toast({
++        title: "No Channels Selected",
++        description: "Please select channels to update",
++        variant: "destructive"
++      })
++      return
++    }
++
++    try {
++      const channelIds = Array.from(selectedChannels)
++      
++      // Update quality preference for all selected channels
++      await Promise.all(
++        channelIds.map(channelId => 
++          channelSettingsAPI.updateSettings(channelId, { 
++            quality_preference: bulkQualityPreference 
++          })
++        )
++      )
++      
++      toast({
++        title: "Success",
++        description: `Updated quality preference for ${selectedChannels.size} channel${selectedChannels.size !== 1 ? 's' : ''}`,
++      })
++      
++      // Reload data and clear selection
++      await loadData()
++      setSelectedChannels(new Set())
++      setBulkQualityDialogOpen(false)
++      setBulkQualityPreference('default')
++      
++    } catch (err) {
++      toast({
++        title: "Error",
++        description: "Failed to update quality preferences",
++        variant: "destructive"
++      })
++    }
++  }
+
+@@ -2215,6 +2246,13 @@ export default function ChannelConfiguration() {
+                       Add Regex to Selected
+                     </Button>
++                    <Button
++                      size="sm"
++                      onClick={() => setBulkQualityDialogOpen(true)}
++                      disabled={selectedChannels.size === 0}
++                      className="text-purple-600 border-purple-600 hover:bg-purple-50"
++                      variant="outline"
++                    >
++                      <Settings className="h-4 w-4 mr-2" />
++                      Set Quality Preference
++                    </Button>
+                     <Button
+                       size="sm"
+                       onClick={handleBulkHealthCheck}
+@@ -3052,6 +3090,47 @@ export default function ChannelConfiguration() {
+           </DialogFooter>
+         </DialogContent>
+       </Dialog>
++
++      {/* Bulk Quality Preference Dialog */}
++      <Dialog open={bulkQualityDialogOpen} onOpenChange={setBulkQualityDialogOpen}>
++        <DialogContent className="sm:max-w-[500px]">
++          <DialogHeader>
++            <DialogTitle>Set Quality Preference for Multiple Channels</DialogTitle>
++            <DialogDescription>
++              This will update the quality preference for {selectedChannels.size} selected channel{selectedChannels.size !== 1 ? 's' : ''}.
++            </DialogDescription>
++          </DialogHeader>
++          
++          <div className="space-y-4">
++            <div className="space-y-2">
++              <Label htmlFor="bulk-quality-preference">Quality Preference</Label>
++              <Select value={bulkQualityPreference} onValueChange={setBulkQualityPreference}>
++                <SelectTrigger id="bulk-quality-preference">
++                  <SelectValue />
++                </SelectTrigger>
++                <SelectContent>
++                  <SelectItem value="default">Default</SelectItem>
++                  <SelectItem value="prefer_4k">Prefer 4K</SelectItem>
++                  <SelectItem value="avoid_4k">Avoid 4K</SelectItem>
++                  <SelectItem value="max_1080p">Max 1080p</SelectItem>
++                  <SelectItem value="max_720p">Max 720p</SelectItem>
++                </SelectContent>
++              </Select>
++              <p className="text-xs text-muted-foreground">
++                {bulkQualityPreference === 'default' && 'Standard quality scoring (4K > Full HD > HD)'}
++                {bulkQualityPreference === 'prefer_4k' && '4K streams get extra bonus points'}
++                {bulkQualityPreference === 'avoid_4k' && '4K streams get penalty (Full HD preferred)'}
++                {bulkQualityPreference === 'max_1080p' && 'Streams above 1080p are excluded'}
++                {bulkQualityPreference === 'max_720p' && 'Streams above 720p are excluded'}
++              </p>
++            </div>
++          </div>
++
++          <DialogFooter>
++            <Button variant="outline" onClick={() => {
++              setBulkQualityDialogOpen(false)
++              setBulkQualityPreference('default')
++            }}>
++              Cancel
++            </Button>
++            <Button onClick={handleBulkQualityPreference}>
++              Update {selectedChannels.size} Channel{selectedChannels.size !== 1 ? 's' : ''}
++            </Button>
++          </DialogFooter>
++        </DialogContent>
++      </Dialog>
+     </div>
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -1885,8 +1885,48 @@ class StreamCheckerService:
+                     step_detail=f'Using smart scheduler with per-account limits'
+                 )
+                 
++                # Create a wrapper function that uses profile failover for concurrent checking
++                def analyze_stream_with_profile_failover_wrapper(stream_url, stream_id, stream_name, **kwargs):
++                    """Wrapper function that uses profile failover for concurrent checking.
++                    
++                    Note: stream_url parameter is ignored - we get the stream from UDI and let
++                    profile failover handle URL transformation per profile.
++                    """
++                    # Get full stream data from UDI
++                    stream = udi.get_stream_by_id(stream_id)
++                    if not stream:
++                        logger.error(f"Stream {stream_id} not found in UDI")
++                        return {
++                            'stream_id': stream_id,
++                            'stream_name': stream_name,
++                            'stream_url': stream_url,
++                            'status': 'Error',
++                            'error': 'Stream not found in UDI'
++                        }
++                    
++                    # Use profile failover analysis (Phase 1 + Phase 2)
++                    return self._analyze_stream_with_profile_failover(
++                        stream=stream,
++                        analysis_params=analysis_params,
++                        udi=udi
++                    )
++                
++                # LEGACY: Old wrapper function that only includes proxy support (without profile failover)
++                # Kept for reference but not used anymore
++                # def analyze_stream_with_proxy(stream_url, stream_id, stream_name, **kwargs):
++                #     """Wrapper function that adds proxy support to analyze_stream for concurrent checking."""
++                #     # Get HTTP proxy for this stream from its M3U account
++                #     from api_utils import get_stream_proxy
++                #     proxy = get_stream_proxy(stream_id)
++                #     
++                #     # Call analyze_stream with proxy parameter
++                #     return analyze_stream(
++                #         stream_url=stream_url,
++                #         stream_id=stream_id,
++                #         stream_name=stream_name,
++                #         proxy=proxy,
++                #         **kwargs
++                #     )
++                
+                 # Check streams in parallel with account-aware limits
+                 results = smart_scheduler.check_streams_with_limits(
+                     streams=streams_to_check,
+-                    check_function=analyze_stream,
++                    check_function=analyze_stream_with_profile_failover_wrapper,
+                     progress_callback=progress_callback,
+                     stagger_delay=stagger_delay,
+
+# Account Stream Limits Improvement: Apply AFTER Quality Check
+
+diff --git a/backend/automated_stream_manager.py b/backend/automated_stream_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/automated_stream_manager.py
++++ b/backend/automated_stream_manager.py
+@@ -1070,8 +1070,8 @@ class AutomatedStreamManager:
+             # Get dead stream removal config once for this discovery run
+             dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+             
+-            # Apply account stream limits before assignment
+-            if account_limits_config.get('enabled', True):
+-                assignments = self._apply_account_stream_limits(assignments, all_streams, account_limits_config)
++            # Note: Account stream limits are now applied AFTER quality check in stream_checker_service.py
++            # This ensures only the BEST streams (by quality score) are kept, not just the first matched ones
+             
+             # Assign streams to channels
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -2022,6 +2022,11 @@ class StreamCheckerService:
+             )
+             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+             
++            # Apply account stream limits AFTER quality scoring (keep only the BEST streams per account)
++            account_limits_config = self.config.get('account_stream_limits', {})
++            if account_limits_config.get('enabled', True):
++                analyzed_streams = self._apply_account_limits_after_scoring(analyzed_streams, account_limits_config, channel_id, channel_name)
++            
+             # Remove dead streams from the channel (if enabled in config)
+             # Dead streams are checked during all channel checks (normal and global)
+             # If they're still dead, they're removed; if revived, they remain
+@@ -2500,6 +2505,11 @@ class StreamCheckerService:
+             )
+             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+             
++            # Apply account stream limits AFTER quality scoring (keep only the BEST streams per account)
++            account_limits_config = self.config.get('account_stream_limits', {})
++            if account_limits_config.get('enabled', True):
++                analyzed_streams = self._apply_account_limits_after_scoring(analyzed_streams, account_limits_config, channel_id, channel_name)
++            
+             # Remove dead streams from the channel (if enabled in config)
+             # Dead streams are checked during all channel checks (normal and global)
+             # If they're still dead, they're removed; if revived, they remain
+@@ -3365,6 +3370,150 @@ class StreamCheckerService:
+         except Exception as e:
+             logger.error(f"Failed to trigger global action: {e}")
+             return False
++    
++    def _apply_account_limits_after_scoring(self, analyzed_streams: List[Dict], account_limits_config: Dict, 
++                                          channel_id: int, channel_name: str) -> List[Dict]:
++        """Apply account stream limits AFTER quality scoring to keep only the BEST streams per account.
++        
++        This ensures that when limits are applied, we keep the highest-quality streams from each account
++        rather than just the first ones found during matching.
++        
++        Args:
++            analyzed_streams: List of analyzed streams sorted by score (highest first)
++            account_limits_config: Account limits configuration
++            channel_id: Channel ID for logging
++            channel_name: Channel name for logging
++            
++        Returns:
++            Filtered list of streams respecting account limits
++        """
++        if not account_limits_config.get('enabled', True):
 +            return analyzed_streams
 +        
-+        # Get UDI manager to look up stream providers (M3U accounts)
++        global_limit = account_limits_config.get('global_limit', 0)
++        account_specific_limits = account_limits_config.get('account_limits', {})
++        
++        # If no limits are configured, return unchanged
++        if global_limit == 0 and not account_specific_limits:
++            return analyzed_streams
++        
++        # Get UDI manager to look up stream M3U accounts
 +        udi = get_udi_manager()
 +        
-+        # Group streams by provider (M3U account)
-+        provider_streams = defaultdict(list)
-+        streams_without_provider = []
++        # Track streams per account for this channel
++        account_counts = defaultdict(int)
++        limited_streams = []
++        removed_count = 0
 +        
++        logger.info(f"Applying account stream limits to {len(analyzed_streams)} analyzed streams for channel {channel_name}")
++        
++        # Process streams in score order (best first)
 +        for stream_data in analyzed_streams:
 +            stream_id = stream_data.get('stream_id')
 +            if not stream_id:
-+                streams_without_provider.append(stream_data)
++                limited_streams.append(stream_data)
 +                continue
 +            
-+            # Get stream to find its M3U account (provider)
++            # Get stream to find its M3U account
 +            stream = udi.get_stream_by_id(stream_id)
 +            if not stream:
-+                streams_without_provider.append(stream_data)
++                limited_streams.append(stream_data)
 +                continue
 +            
 +            m3u_account = stream.get('m3u_account')
++            
++            # Skip custom streams (no m3u_account)
 +            if m3u_account is None:
-+                # Custom streams without provider
-+                streams_without_provider.append(stream_data)
++                limited_streams.append(stream_data)
++                continue
++            
++            # Determine limit for this account
++            account_limit = account_specific_limits.get(str(m3u_account), global_limit)
++            
++            # If limit is 0, no limit applies
++            if account_limit == 0:
++                limited_streams.append(stream_data)
++                continue
++            
++            # Check if we're within the limit for this account
++            if account_counts[m3u_account] < account_limit:
++                limited_streams.append(stream_data)
++                account_counts[m3u_account] += 1
++                logger.debug(f"Keeping stream {stream_id} from account {m3u_account} (score: {stream_data.get('score', 0):.2f}, {account_counts[m3u_account]}/{account_limit})")
 +            else:
-+                provider_streams[m3u_account].append(stream_data)
++                # Stream exceeds limit - remove it (keeping only the best ones)
++                removed_count += 1
++                logger.debug(f"Removing stream {stream_id} from account {m3u_account} (score: {stream_data.get('score', 0):.2f}) - exceeds limit ({account_limit})")
 +        
-+        # If only one provider or no providers, return original order
-+        if len(provider_streams) <= 1:
-+            logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
-+            return analyzed_streams
++        if removed_count > 0:
++            logger.info(f"Applied account stream limits: kept {len(limited_streams)} streams, removed {removed_count} lower-quality streams from channel {channel_name}")
++            
++            # Log per-account statistics
++            for account_id, count in account_counts.items():
++                account_limit = account_specific_limits.get(str(account_id), global_limit)
++                if account_limit > 0:
++                    logger.debug(f"  Account {account_id}: {count}/{account_limit} streams kept (best quality)")
 +        
-+        # Apply round-robin diversification
-+        diversified_streams = []
-+        max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
-+        
-+        # Interleave streams from different providers
-+        for i in range(max_streams_per_provider):
-+            for provider_id in sorted(provider_streams.keys()):
-+                streams = provider_streams[provider_id]
-+                if i < len(streams):
-+                    diversified_streams.append(streams[i])
-+        
-+        # Append streams without provider at the end
-+        diversified_streams.extend(streams_without_provider)
-+        
-+        logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
-+        
-+        return diversified_streams
++        return limited_streams
 +    
-     def apply_account_limits_to_existing_channels(self) -> Dict[str, Any]:
-         """Apply current account stream limits to all existing channels without full quality check.
++    def apply_account_limits_to_existing_channels(self) -> Dict[str, Any]:
++        """Apply current account stream limits to all existing channels without full quality check.
++        
++        This function goes through all channels and removes excess streams per account,
++        keeping only the highest-scored streams based on existing quality data.
++        Useful for applying new limits without running a full quality check.
++        
++        Returns:
++            Dict with operation results and statistics
++        """
++        logger.info("Applying account stream limits to existing channels...")
++        
++        account_limits_config = self.config.get('account_stream_limits', {})
++        if not account_limits_config.get('enabled', True):
++            return {'success': False, 'error': 'Account stream limits are disabled'}
++        
++        global_limit = account_limits_config.get('global_limit', 0)
++        account_specific_limits = account_limits_config.get('account_limits', {})
++        
++        if global_limit == 0 and not account_specific_limits:
++            return {'success': False, 'error': 'No account limits configured'}
++        
++        udi = get_udi_manager()
++        channels = udi.get_channels()
++        
++        results = {
++            'success': True,
++            'channels_processed': 0,
++            'streams_removed': 0,
++            'channels_modified': 0,
++            'details': []
++        }
++        
++        for channel in channels:
++            channel_id = channel.get('id')
++            channel_name = channel.get('name', f'Channel {channel_id}')
++            
++            if not channel_id:
++                continue
++            
++            # Get current streams for this channel
++            current_streams = udi.get_channel_streams(channel_id)
++            if not current_streams or len(current_streams) <= 1:
++                continue  # Skip channels with 0 or 1 streams
++            
++            # Convert to analyzed format with existing scores/stats
++            analyzed_streams = []
++            for stream in current_streams:
++                stream_stats = stream.get('stream_stats', {})
++                if stream_stats is None:
++                    stream_stats = {}
++                elif isinstance(stream_stats, str):
++                    try:
++                        stream_stats = json.loads(stream_stats)
++                    except json.JSONDecodeError:
++                        stream_stats = {}
++                
++                analyzed = {
++                    'stream_id': stream['id'],
++                    'stream_name': stream.get('name', 'Unknown'),
++                    'stream_url': stream.get('url', ''),
++                    'resolution': stream_stats.get('resolution', '0x0'),
++                    'fps': stream_stats.get('source_fps', 0),
++                    'video_codec': stream_stats.get('video_codec', 'N/A'),
++                    'audio_codec': stream_stats.get('audio_codec', 'N/A'),
++                    'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
++                }
++                
++                # Calculate score based on existing data
++                score = self._calculate_stream_score(analyzed, channel_id)
++                analyzed['score'] = score
++                analyzed_streams.append(analyzed)
++            
++            # Sort by score (highest first)
++            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
++            
++            # Apply account limits
++            original_count = len(analyzed_streams)
++            limited_streams = self._apply_account_limits_after_scoring(analyzed_streams, account_limits_config, channel_id, channel_name)
++            
++            if len(limited_streams) < original_count:
++                # Update channel with limited streams
++                limited_ids = [s['stream_id'] for s in limited_streams]
++                
++                try:
++                    from api_utils import update_channel_streams
++                    update_channel_streams(channel_id, limited_ids)
++                    
++                    removed_count = original_count - len(limited_streams)
++                    results['streams_removed'] += removed_count
++                    results['channels_modified'] += 1
++                    
++                    results['details'].append({
++                        'channel_id': channel_id,
++                        'channel_name': channel_name,
++                        'original_streams': original_count,
++                        'remaining_streams': len(limited_streams),
++                        'removed_streams': removed_count
++                    })
++                    
++                    logger.info(f"Applied limits to channel {channel_name}: {original_count} → {len(limited_streams)} streams")
++                    
++                except Exception as e:
++                    logger.error(f"Failed to update channel {channel_id}: {e}")
++                    continue
++            
++            results['channels_processed'] += 1
++        
++        logger.info(f"Account limits application completed: {results['channels_modified']} channels modified, {results['streams_removed']} streams removed")
++        return results
+
+diff --git a/backend/web_api.py b/backend/web_api.py
+index 1234567..abcdefg 100644
+--- a/backend/web_api.py
++++ b/backend/web_api.py
+@@ -2908,6 +2908,49 @@ def trigger_global_action():
+     except Exception as e:
+         logger.error(f"Error triggering global action: {e}")
+         return jsonify({"error": str(e)}), 500
++
++
++@app.route('/api/stream-checker/apply-account-limits', methods=['POST'])
++def apply_account_limits_to_channels():
++    """Apply current account stream limits to all existing channels.
++    
++    This removes excess streams per account from all channels, keeping only the 
++    highest-scored streams based on existing quality data. Useful for applying 
++    new limits without running a full quality check.
++    """
++    try:
++        service = get_stream_checker_service()
++        
++        # Check if account limits are enabled
++        account_limits_config = service.config.get('account_stream_limits', {})
++        if not account_limits_config.get('enabled', True):
++            return jsonify({"error": "Account stream limits are disabled"}), 400
++        
++        global_limit = account_limits_config.get('global_limit', 0)
++        account_specific_limits = account_limits_config.get('account_limits', {})
++        
++        if global_limit == 0 and not account_specific_limits:
++            return jsonify({"error": "No account limits configured"}), 400
++        
++        # Apply limits to existing channels
++        results = service.apply_account_limits_to_existing_channels()
++        
++        if results['success']:
++            return jsonify({
++                "message": "Account limits applied successfully",
++                "channels_processed": results['channels_processed'],
++                "channels_modified": results['channels_modified'],
++                "streams_removed": results['streams_removed'],
++                "details": results['details'][:10]  # Limit details to first 10 channels
++            })
++        else:
++            return jsonify({"error": results.get('error', 'Unknown error')}), 500
++    
++    except Exception as e:
++        logger.error(f"Error applying account limits: {e}")
++        return jsonify({"error": str(e)}), 500
+
+diff --git a/frontend/src/pages/StreamChecker.jsx b/frontend/src/pages/StreamChecker.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/StreamChecker.jsx
++++ b/frontend/src/pages/StreamChecker.jsx
+@@ -300,6 +300,32 @@ export default function StreamChecker() {
+     }
+   }
+
++  const handleApplyAccountLimits = async () => {
++    try {
++      setActionLoading('apply-limits')
++      const response = await fetch('/api/stream-checker/apply-account-limits', {
++        method: 'POST',
++        headers: {
++          'Content-Type': 'application/json'
++        }
++      })
++      
++      if (!response.ok) {
++        const errorData = await response.json()
++        throw new Error(errorData.error || 'Failed to apply account limits')
++      }
++      
++      const data = await response.json()
++      toast({
++        title: "Account Limits Applied",
++        description: `${data.channels_modified} channels modified, ${data.streams_removed} streams removed`
++      })
++    } catch (err) {
++      toast({
++        title: "Error",
++        description: err.message || "Failed to apply account limits",
++        variant: "destructive"
++      })
++    } finally {
++      setActionLoading('')
++    }
++  }
++
+@@ -880,6 +906,25 @@ export default function StreamChecker() {
+                           </AlertDescription>
+                         </Alert>
+                         
++                        {/* Apply Account Limits Button */}
++                        <div className="pt-4 border-t">
++                          <div className="space-y-2">
++                            <h4 className="font-medium">Apply Limits to Existing Channels</h4>
++                            <p className="text-sm text-muted-foreground">
++                              Apply current account stream limits to all existing channels without running a full quality check. 
++                              This will remove excess streams per account, keeping only the highest-scored streams.
++                            </p>
++                            <Button
++                              onClick={handleApplyAccountLimits}
++                              disabled={actionLoading === 'apply-limits' || !editedConfig?.account_stream_limits?.enabled}
++                              className="w-full"
++                            >
++                              {actionLoading === 'apply-limits' ? (
++                                <>
++                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
++                                  Applying Limits...
++                                </>
++                              ) : (
++                                <>
++                                  <Settings className="mr-2 h-4 w-4" />
++                                  Apply Account Limits to All Channels
++                                </>
++                              )}
++                            </Button>
++                          </div>
++                        </div>
+                       </>
+                     )}
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -2710,6 +2710,14 @@ class StreamCheckerService:
+         if self._is_stream_dead(stream_data):
+             return 0.0
          
-@@ -3660,6 +3744,10 @@ class StreamCheckerService:
-             # Sort by score (highest first)
-             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
-             
++        # Fallback scoring for streams without bitrate but with resolution/FPS
++        # These streams work but FFmpeg couldn't extract all metadata (e.g., due to packet corruption)
++        if (stream_data.get('bitrate_kbps', 0) == 0 and 
++            stream_data.get('resolution') not in ['0x0', 'N/A', ''] and
++            stream_data.get('fps', 0) > 0):
++            
++            logger.debug(f"Stream without bitrate info but functional: {stream_data.get('resolution')}@{stream_data.get('fps')}fps - assigning fallback score: 0.40")
++            return 0.40  # Medium score - better than dead streams (0.0), worse than complete streams (0.60-1.0)
++        
+         weights = self.config.get('scoring.weights', {})
+         score = 0.0
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -3335,6 +3335,9 @@ class StreamCheckerService:
+         # Apply the configuration update
+         self.config.update(updates)
+         
+         # Log the changes
+         if config_changes:
+             logger.info(f"Configuration updated: {'; '.join(config_changes)}")
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -3305,6 +3305,25 @@ class StreamCheckerService:
+                 if old_value != value:
+                     config_changes.append(f"Automation control '{key}': {old_value} → {value}")
+         
++        if 'account_stream_limits' in updates:
++            limits_changes = []
++            limits = updates['account_stream_limits']
++            if 'enabled' in limits:
++                old_enabled = self.config.get('account_stream_limits', {}).get('enabled', True)
++                new_enabled = limits['enabled']
++                if old_enabled != new_enabled:
++                    limits_changes.append(f"Enabled: {old_enabled} → {new_enabled}")
++            if 'global_limit' in limits:
++                old_global = self.config.get('account_stream_limits', {}).get('global_limit', 0)
++                new_global = limits['global_limit']
++                if old_global != new_global:
++                    limits_changes.append(f"Global limit: {old_global} → {new_global}")
++            if 'account_limits' in limits:
++                old_account_limits = self.config.get('account_stream_limits', {}).get('account_limits', {})
++                new_account_limits = limits['account_limits']
++                if old_account_limits != new_account_limits:
++                    old_count = len(old_account_limits)
++                    new_count = len(new_account_limits)
++                    limits_changes.append(f"Account-specific limits: {old_count} → {new_count} accounts")
++            if limits_changes:
++                config_changes.append(f"Account stream limits: {', '.join(limits_changes)}")
++        
+         if 'global_check_schedule' in updates:
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -3359,9 +3359,22 @@ class StreamCheckerService:
+                 config_changes.append(f"Global check schedule: {', '.join(schedule_changes)}")
+         
+         # Apply the configuration update
+-        self.config.update(updates)
++        # For account_stream_limits, we need to completely replace the section
++        # to handle deleted account limits properly
++        if 'account_stream_limits' in updates:
++            # Directly access the config dictionary and replace the entire section
++            self.config.config['account_stream_limits'] = updates['account_stream_limits']
++            # Remove account_stream_limits from updates to avoid double-processing
++            updates_copy = updates.copy()
++            del updates_copy['account_stream_limits']
++            if updates_copy:  # Only update if there are other changes
++                self.config.update(updates_copy)
++            # Save the config manually since we bypassed the update method
++            self.config._save_config()
++        else:
++            # Use the normal update method for other changes
++            self.config.update(updates)
+         
+-        # Save configuration to file
+-        self._save_config()
++        # Save configuration to file (only if we didn't already save it above)
++        if 'account_stream_limits' not in updates:
++            self._save_config()
+         
+         # Log the changes
+         if config_changes:
+
+
+# Provider Diversification Feature
+
+## Overview
+
+Provider diversification ensures better redundancy by interleaving streams from different providers (M3U accounts) instead of grouping all streams from the best provider together.
+
+## Implementation
+
+### Backend Changes
+
+**File: `backend/stream_checker_service.py`**
+
+Added new configuration option:
+```python
+'stream_ordering': {
+    'provider_diversification': False,  # Enable provider diversification
+    'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
+}
+```
+
+Added new method `_apply_provider_diversification()`:
+```python
+def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
+    """Apply provider diversification to stream ordering for better redundancy.
+    
+    Instead of sorting purely by score (which groups all streams from the best provider together),
+    this method interleaves streams from different providers in a round-robin fashion.
+    
+    Example:
+        Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
+        After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
+    
+    This ensures that if one provider fails, the next stream is from a different provider.
+    """
+```
+
+Applied in three locations:
+1. `_check_channel_concurrent()` - After sorting by score
+2. `_check_channel_sequential()` - After sorting by score  
+3. `apply_account_limits_to_existing_channels()` - After sorting by score
+
+### Example
+
+**Channel: ARD**
+
+**Before (Standard Sorting):**
+```
+1. Provider A - Score 0.95 ⭐⭐⭐
+2. Provider A - Score 0.94 ⭐⭐⭐
+3. Provider A - Score 0.93 ⭐⭐⭐
+4. Provider B - Score 0.92 ⭐⭐
+5. Provider B - Score 0.91 ⭐⭐
+6. Provider C - Score 0.89 ⭐
+```
+❌ Problem: If Provider A fails → 3 streams dead!
+
+**After (Provider Diversification):**
+```
+1. Provider A - Score 0.95 ⭐⭐⭐ (best from A)
+2. Provider B - Score 0.92 ⭐⭐ (best from B)
+3. Provider C - Score 0.89 ⭐ (best from C)
+4. Provider A - Score 0.94 ⭐⭐⭐ (2nd best from A)
+5. Provider B - Score 0.91 ⭐⭐ (2nd best from B)
+6. Provider A - Score 0.93 ⭐⭐⭐ (3rd best from A)
+```
+✅ Benefit: If Provider A fails → Provider B/C take over immediately!
+
+### Configuration
+
+**Location:** Stream Checker Config (`stream_checker_config.json`)
+
+```json
+{
+  "stream_ordering": {
+    "provider_diversification": true,
+    "diversification_mode": "round_robin"
+  }
+}
+```
+
+**UI Location:** Stream Checker page → Stream Ordering section
+
+### Benefits
+
+✅ **Better Redundancy**: Automatic failover to different providers  
+✅ **Load Distribution**: Spreads load across multiple providers  
+✅ **Improved Reliability**: Single provider failure doesn't affect all top streams  
+✅ **Transparent**: Works with existing quality scoring  
+✅ **Optional**: Can be enabled/disabled per preference
+
+### Logging
+
+```
+INFO - Channel 123: Applied provider diversification - 3 providers interleaved
+DEBUG - Channel 123: Only 1 provider(s), skipping diversification
+```
+
+### Compatibility
+
+- Fully backward compatible
+- Disabled by default
+- Works with all existing features (account limits, dead stream removal, etc.)
+- No impact on quality scoring
+
+
+### Code Changes
+
+#### Backend: stream_checker_service.py
+
+**1. Add configuration in DEFAULT_CONFIG:**
+
+```diff
++        'stream_ordering': {
++            'provider_diversification': False,  # Enable provider diversification for better redundancy
++            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
++        }
+```
+
+**2. Add new method `_apply_provider_diversification()`:**
+
+```python
+def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
+    """Apply provider diversification to stream ordering for better redundancy.
+    
+    Instead of sorting purely by score (which groups all streams from the best provider together),
+    this method interleaves streams from different providers in a round-robin fashion.
+    
+    Example:
+        Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
+        After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
+    
+    This ensures that if one provider fails, the next stream is from a different provider,
+    providing better failover and redundancy.
+    
+    Args:
+        analyzed_streams: List of analyzed streams sorted by score
+        channel_id: Channel ID for logging
+        
+    Returns:
+        Reordered list with provider diversification applied
+    """
+    if not analyzed_streams:
+        return analyzed_streams
+    
+    # Get UDI manager to look up stream providers (M3U accounts)
+    udi = get_udi_manager()
+    
+    # Group streams by provider (M3U account)
+    provider_streams = defaultdict(list)
+    streams_without_provider = []
+    
+    for stream_data in analyzed_streams:
+        stream_id = stream_data.get('stream_id')
+        if not stream_id:
+            streams_without_provider.append(stream_data)
+            continue
+        
+        # Get stream to find its M3U account (provider)
+        stream = udi.get_stream_by_id(stream_id)
+        if not stream:
+            streams_without_provider.append(stream_data)
+            continue
+        
+        m3u_account = stream.get('m3u_account')
+        if m3u_account is None:
+            # Custom streams without provider
+            streams_without_provider.append(stream_data)
+        else:
+            provider_streams[m3u_account].append(stream_data)
+    
+    # If only one provider or no providers, return original order
+    if len(provider_streams) <= 1:
+        logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
+        return analyzed_streams
+    
+    # Apply round-robin diversification
+    diversified_streams = []
+    max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
+    
+    # Interleave streams from different providers
+    for i in range(max_streams_per_provider):
+        for provider_id in sorted(provider_streams.keys()):
+            streams = provider_streams[provider_id]
+            if i < len(streams):
+                diversified_streams.append(streams[i])
+    
+    # Append streams without provider at the end
+    diversified_streams.extend(streams_without_provider)
+    
+    logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
+    
+    return diversified_streams
+```
+
+**3. Apply in `_check_channel_concurrent()` (after line ~2027):**
+
+```diff
 +            # Apply provider diversification if enabled
 +            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
 +                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
-+            
-             # Apply account limits
-             original_count = len(analyzed_streams)
-             limited_streams = self._apply_account_limits_after_scoring(analyzed_streams, account_limits_config, channel_id, channel_name)
+```
 
---- a/frontend/src/pages/StreamChecker.jsx
-+++ b/frontend/src/pages/StreamChecker.jsx
-@@ -22,7 +22,8 @@ import {
+**4. Apply in `_check_channel_sequential()` (after line ~2509):**
+
+```diff
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+```
+
+**5. Apply in `apply_account_limits_to_existing_channels()` (after line ~3662):**
+
+```diff
++            # Apply provider diversification if enabled
++            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
++                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+```
+
+#### Frontend: StreamChecker.jsx
+
+**1. Add Info icon import:**
+
+```diff
+ import { 
+   Activity, 
+   CheckCircle2, 
+   Clock, 
+   PlayCircle, 
+   StopCircle, 
+   Loader2,
+   Settings,
    Trash2,
    AlertCircle,
    RefreshCw,
@@ -166,12 +2081,11 @@ PATCH 2: Provider Diversification
 +  List,
 +  Info
  } from 'lucide-react'
- 
- // Pagination constants
-@@ -551,7 +552,7 @@ export default function StreamChecker() {
- 
-               {/* Tabs for Configuration Sections */}
-               <Tabs defaultValue="analysis" className="w-full">
+```
+
+**2. Update TabsList grid columns (line ~554):**
+
+```diff
 -                <TabsList className="grid w-full grid-cols-5">
 +                <TabsList className="grid w-full grid-cols-6">
                    <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
@@ -181,71 +2095,1289 @@ PATCH 2: Provider Diversification
 +                  <TabsTrigger value="stream-ordering">Stream Ordering</TabsTrigger>
                    <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
                  </TabsList>
- 
-@@ -983,6 +984,58 @@ export default function StreamChecker() {
-                   </Card>
-                 </TabsContent>
- 
-+                {/* Stream Ordering Tab */}
-+                <TabsContent value="stream-ordering" className="space-y-4">
-+                  <Card>
-+                    <CardHeader>
-+                      <CardTitle>Provider Diversification</CardTitle>
-+                      <CardDescription>
-+                        Interleave streams from different providers for better redundancy and failover
-+                      </CardDescription>
-+                    </CardHeader>
-+                    <CardContent className="space-y-4">
-+                      <div className="flex items-center justify-between rounded-lg border p-4">
-+                        <div className="space-y-1">
-+                          <Label htmlFor="provider_diversification" className="text-base font-medium">
-+                            Enable Provider Diversification
-+                          </Label>
-+                          <p className="text-sm text-muted-foreground">
-+                            Distribute streams from different providers evenly instead of grouping by quality
-+                          </p>
-+                        </div>
-+                        <Switch
-+                          id="provider_diversification"
-+                          checked={editedConfig?.stream_ordering?.provider_diversification ?? false}
-+                          onCheckedChange={(checked) => updateConfigValue('stream_ordering.provider_diversification', checked)}
-+                          disabled={!configEditing}
-+                        />
-+                      </div>
-+
-+                      <Alert>
-+                        <Info className="h-4 w-4" />
-+                        <AlertTitle>How it works</AlertTitle>
-+                        <AlertDescription>
-+                          <div className="space-y-2 mt-2">
-+                            <p><strong>Without diversification:</strong></p>
-+                            <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
-+                            <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
-+                            
-+                            <p className="mt-3"><strong>With diversification:</strong></p>
-+                            <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
-+                            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
-+                          </div>
-+                        </AlertDescription>
-+                      </Alert>
-+
-+                      <div className="rounded-lg bg-muted p-4 space-y-2">
-+                        <h4 className="font-medium text-sm">Benefits</h4>
-+                        <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-+                          <li>Better redundancy across multiple providers</li>
-+                          <li>Automatic failover when one provider has issues</li>
-+                          <li>Load distribution across providers</li>
-+                          <li>Improved reliability for viewers</li>
-+                        </ul>
-+                      </div>
-+                    </CardContent>
-+                  </Card>
-+                </TabsContent>
-+
-                 {/* Dead Streams Tab */}
-                 <TabsContent value="dead-streams" className="space-y-4">
+```
+
+**3. Add Stream Ordering Tab (after account-limits tab, before dead-streams tab):**
+
+```jsx
+{/* Stream Ordering Tab */}
+<TabsContent value="stream-ordering" className="space-y-4">
+  <Card>
+    <CardHeader>
+      <CardTitle>Provider Diversification</CardTitle>
+      <CardDescription>
+        Interleave streams from different providers for better redundancy and failover
+      </CardDescription>
+    </CardHeader>
+    <CardContent className="space-y-4">
+      <div className="flex items-center justify-between rounded-lg border p-4">
+        <div className="space-y-1">
+          <Label htmlFor="provider_diversification" className="text-base font-medium">
+            Enable Provider Diversification
+          </Label>
+          <p className="text-sm text-muted-foreground">
+            Distribute streams from different providers evenly instead of grouping by quality
+          </p>
+        </div>
+        <Switch
+          id="provider_diversification"
+          checked={editedConfig?.stream_ordering?.provider_diversification ?? false}
+          onCheckedChange={(checked) => updateConfigValue('stream_ordering.provider_diversification', checked)}
+          disabled={!configEditing}
+        />
+      </div>
+
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertTitle>How it works</AlertTitle>
+        <AlertDescription>
+          <div className="space-y-2 mt-2">
+            <p><strong>Without diversification:</strong></p>
+            <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
+            <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
+            
+            <p className="mt-3"><strong>With diversification:</strong></p>
+            <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
+            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
+          </div>
+        </AlertDescription>
+      </Alert>
+
+      <div className="rounded-lg bg-muted p-4 space-y-2">
+        <h4 className="font-medium text-sm">Benefits</h4>
+        <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+          <li>Better redundancy across multiple providers</li>
+          <li>Automatic failover when one provider has issues</li>
+          <li>Load distribution across providers</li>
+          <li>Improved reliability for viewers</li>
+        </ul>
+      </div>
+    </CardContent>
+  </Card>
+</TabsContent>
+```
+
+
+
+# ============================================================================
+# OPTIONAL FEATURE: Profile Failover for Quality Check
+# ============================================================================
+
+## Overview
+
+Profile Failover ensures that streams are not incorrectly marked as dead when only
+one specific profile of an M3U account has issues. Instead, all available profiles
+are automatically tried.
+
+## Problem
+
+Without Profile Failover:
+- Stream fails with Profile 1 → Marked as DEAD
+- Profile 2 and 3 are never tried (even though they might work)
+- Stream is removed from channel unnecessarily
+
+With Profile Failover:
+- Stream fails with Profile 1 → Try Profile 2
+- Profile 2 fails → Try Profile 3
+- Profile 3 succeeds → Stream stays in channel ✅
+
+## Implementation
+
+### Backend Changes
+
+**File: `backend/udi/manager.py`**
+
+Add new method after `get_all_available_profiles_for_stream()`:
+
+```python
+def get_all_profiles_for_stream(self, stream: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Get ALL profiles for a stream, regardless of availability.
+    
+    This method returns ALL active profiles for comprehensive failover testing.
+    Used when a stream fails with available profiles and we want to try
+    ALL profiles (including full ones) before marking the stream as dead.
+    
+    Args:
+        stream: Stream dictionary with 'm3u_account' and 'url' fields
+        
+    Returns:
+        List of all active profile dictionaries, ordered by their position in the account
+    """
+    self._ensure_initialized()
+    
+    account_id = stream.get('m3u_account')
+    if not account_id:
+        logger.debug(f"Stream {stream.get('id')} has no m3u_account")
+        return []
+    
+    # Get the account and its profiles
+    account = self.get_m3u_account_by_id(account_id)
+    if not account:
+        logger.warning(f"Account {account_id} not found for stream {stream.get('id')}")
+        return []
+    
+    profiles = account.get('profiles', [])
+    if not profiles:
+        logger.debug(f"Account {account_id} has no profiles")
+        return []
+    
+    # Collect all active profiles (ignore capacity)
+    all_profiles = []
+    
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        
+        profile_id = profile.get('id')
+        if not profile_id:
+            continue
+        
+        # Only skip inactive profiles
+        if not profile.get('is_active', True):
+            logger.debug(f"Profile {profile_id} is inactive, skipping")
+            continue
+        
+        all_profiles.append(profile)
+        logger.debug(f"Profile {profile_id} added to comprehensive failover list")
+    
+    logger.debug(f"Found {len(all_profiles)} total active profile(s) for stream {stream.get('id')} in account {account_id}")
+    
+    return all_profiles
+```
+
+**File: `backend/stream_checker_service.py`**
+
+Add new method before `_calculate_stream_score()`:
+
+```python
+def _analyze_stream_with_profile_failover(self, stream: Dict, analysis_params: Dict, udi) -> Dict:
+    """Analyze a stream with automatic profile failover.
+    
+    If a stream fails with one profile, automatically tries other available profiles
+    before marking the stream as dead. This significantly improves reliability when
+    one profile has issues but others work fine.
+    
+    Strategy:
+    1. Try all immediately available profiles (with free slots)
+    2. If all fail, try ALL profiles (including full ones) - will wait for slots
+    3. Only mark as dead if ALL profiles fail
+    
+    Args:
+        stream: Stream dictionary with 'id', 'name', 'url', etc.
+        analysis_params: Analysis parameters from config
+        udi: UDI manager instance
+        
+    Returns:
+        Analysis result dictionary
+    """
+    from stream_check_utils import analyze_stream
+    from api_utils import get_stream_proxy
+    
+    stream_id = stream['id']
+    stream_name = stream.get('name', 'Unknown')
+    
+    # Phase 1: Try available profiles (with free slots)
+    available_profiles = []
+    if udi and stream.get('m3u_account'):
+        available_profiles = udi.get_all_available_profiles_for_stream(stream)
+    
+    # If no profiles or custom stream, use standard analysis
+    if not available_profiles and not stream.get('m3u_account'):
+        stream_url = stream.get('url', '')
+        if udi:
+            stream_url = udi.apply_profile_url_transformation(stream)
+        
+        proxy = get_stream_proxy(stream_id)
+        
+        return analyze_stream(
+            stream_url=stream_url,
+            stream_id=stream_id,
+            stream_name=stream_name,
+            ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+            timeout=analysis_params.get('timeout', 30),
+            retries=analysis_params.get('retries', 1),
+            retry_delay=analysis_params.get('retry_delay', 10),
+            user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+            stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+            proxy=proxy
+        )
+    
+    # Try available profiles first
+    logger.info(f"Stream {stream_id} ({stream_name}): Phase 1 - Trying {len(available_profiles)} available profile(s)")
+    
+    last_error = None
+    for profile_idx, profile in enumerate(available_profiles, 1):
+        profile_id = profile.get('id')
+        profile_name = profile.get('name', f'Profile {profile_id}')
+        
+        try:
+            stream_url = udi.apply_profile_url_transformation(stream, profile)
+            logger.info(f"Stream {stream_id}: Trying available profile {profile_idx}/{len(available_profiles)} - {profile_name} (ID: {profile_id})")
+            
+            proxy = get_stream_proxy(stream_id)
+            
+            analyzed = analyze_stream(
+                stream_url=stream_url,
+                stream_id=stream_id,
+                stream_name=stream_name,
+                ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                timeout=analysis_params.get('timeout', 30),
+                retries=analysis_params.get('retries', 1),
+                retry_delay=analysis_params.get('retry_delay', 10),
+                user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                proxy=proxy
+            )
+            
+            if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                logger.info(f"Stream {stream_id}: ✅ SUCCESS with available profile {profile_name} (ID: {profile_id})")
+                analyzed['used_profile_id'] = profile_id
+                analyzed['used_profile_name'] = profile_name
+                analyzed['profile_failover_attempts'] = profile_idx
+                analyzed['profile_failover_phase'] = 1
+                return analyzed
+            else:
+                status = analyzed.get('status', 'Unknown')
+                logger.warning(f"Stream {stream_id}: ❌ FAILED with available profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                last_error = analyzed
+                
+        except Exception as e:
+            logger.error(f"Stream {stream_id}: ❌ ERROR with available profile {profile_name} (ID: {profile_id}): {e}")
+            last_error = {
+                'stream_id': stream_id,
+                'stream_name': stream_name,
+                'stream_url': stream.get('url', ''),
+                'status': 'Error',
+                'error': str(e)
+            }
+    
+    # Phase 2: All available profiles failed - try ALL profiles (including full ones)
+    if udi and stream.get('m3u_account'):
+        all_profiles = udi.get_all_profiles_for_stream(stream)
+        tried_profile_ids = {p.get('id') for p in available_profiles}
+        remaining_profiles = [p for p in all_profiles if p.get('id') not in tried_profile_ids]
+        
+        if remaining_profiles:
+            logger.warning(f"Stream {stream_id} ({stream_name}): Phase 2 - All available profiles failed, trying {len(remaining_profiles)} additional profile(s) (may wait for slots)")
+            
+            for profile_idx, profile in enumerate(remaining_profiles, 1):
+                profile_id = profile.get('id')
+                profile_name = profile.get('name', f'Profile {profile_id}')
+                
+                try:
+                    stream_url = udi.apply_profile_url_transformation(stream, profile)
+                    logger.info(f"Stream {stream_id}: Trying additional profile {profile_idx}/{len(remaining_profiles)} - {profile_name} (ID: {profile_id}) [may wait for slot]")
+                    
+                    proxy = get_stream_proxy(stream_id)
+                    
+                    analyzed = analyze_stream(
+                        stream_url=stream_url,
+                        stream_id=stream_id,
+                        stream_name=stream_name,
+                        ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                        timeout=analysis_params.get('timeout', 30),
+                        retries=analysis_params.get('retries', 1),
+                        retry_delay=analysis_params.get('retry_delay', 10),
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                        proxy=proxy
+                    )
+                    
+                    if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                        logger.info(f"Stream {stream_id}: ✅ SUCCESS with additional profile {profile_name} (ID: {profile_id}) after waiting")
+                        analyzed['used_profile_id'] = profile_id
+                        analyzed['used_profile_name'] = profile_name
+                        analyzed['profile_failover_attempts'] = len(available_profiles) + profile_idx
+                        analyzed['profile_failover_phase'] = 2
+                        return analyzed
+                    else:
+                        status = analyzed.get('status', 'Unknown')
+                        logger.warning(f"Stream {stream_id}: ❌ FAILED with additional profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                        last_error = analyzed
+                        
+                except Exception as e:
+                    logger.error(f"Stream {stream_id}: ❌ ERROR with additional profile {profile_name} (ID: {profile_id}): {e}")
+                    last_error = {
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'stream_url': stream.get('url', ''),
+                        'status': 'Error',
+                        'error': str(e)
+                    }
+    
+    # All profiles failed
+    total_attempts = len(available_profiles) + len(remaining_profiles) if 'remaining_profiles' in locals() else len(available_profiles)
+    logger.error(f"Stream {stream_id} ({stream_name}): ❌ ALL {total_attempts} profile(s) FAILED (Phase 1 + Phase 2) - marking as dead")
+    
+    if last_error:
+        last_error['profile_failover_attempts'] = total_attempts
+        last_error['all_profiles_failed'] = True
+        return last_error
+    
+    return {
+        'stream_id': stream_id,
+        'stream_name': stream_name,
+        'stream_url': stream.get('url', ''),
+        'timestamp': datetime.now().isoformat(),
+        'video_codec': 'N/A',
+        'audio_codec': 'N/A',
+        'resolution': '0x0',
+        'fps': 0,
+        'bitrate_kbps': None,
+        'status': 'Error',
+        'profile_failover_attempts': total_attempts if 'total_attempts' in locals() else 0,
+        'all_profiles_failed': True
+    }
+```
+
+**Integration in `_check_channel_concurrent()` (around line 2330):**
+
+Replace:
+```python
+# Analyze stream
+analysis_params = self.config.get('stream_analysis', {})
+
+# Apply URL transformation if using M3U profile with search/replace patterns
+stream_url = stream.get('url', '')
+if udi:
+    stream_url = udi.apply_profile_url_transformation(stream)
+
+# Get HTTP proxy for this stream from its M3U account
+from api_utils import get_stream_proxy
+proxy = get_stream_proxy(stream['id'])
+
+analyzed = analyze_stream(
+    stream_url=stream_url,
+    stream_id=stream['id'],
+    stream_name=stream.get('name', 'Unknown'),
+    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+    timeout=analysis_params.get('timeout', 30),
+    retries=analysis_params.get('retries', 1),
+    retry_delay=analysis_params.get('retry_delay', 10),
+    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+    proxy=proxy
+)
+```
+
+With:
+```python
+# Analyze stream with profile failover
+analysis_params = self.config.get('stream_analysis', {})
+analyzed = self._analyze_stream_with_profile_failover(
+    stream=stream,
+    analysis_params=analysis_params,
+    udi=udi
+)
+```
+
+**Integration in `_check_channel_sequential()` (around line 2460):**
+
+Same replacement as above in the section where cached data cannot be fetched.
+
+## Benefits
+
+✅ **Higher Reliability**: Streams are not incorrectly marked as dead  
+✅ **Automatic Failover**: Tries all profiles before giving up  
+✅ **2-Phase Strategy**: Fast with available profiles, thorough with all profiles  
+✅ **Detailed Logging**: Shows exactly which profiles were tried  
+✅ **No Configuration**: Works automatically out-of-the-box
+
+## Logging Example
+
+```
+INFO - Stream 123 (ARD HD): Phase 1 - Trying 2 available profile(s)
+INFO - Stream 123: Trying available profile 1/2 - Premium (ID: 1)
+WARNING - Stream 123: ❌ FAILED with available profile Premium (ID: 1) - Status: Error
+INFO - Stream 123: Trying available profile 2/2 - Free1 (ID: 2)
+WARNING - Stream 123: ❌ FAILED with available profile Free1 (ID: 2) - Status: Timeout
+WARNING - Stream 123 (ARD HD): Phase 2 - All available profiles failed, trying 1 additional profile(s) (may wait for slots)
+INFO - Stream 123: Trying additional profile 1/1 - Free2 (ID: 3) [may wait for slot]
+INFO - Stream 123: ✅ SUCCESS with additional profile Free2 (ID: 3) after waiting
+```
+
+## Compatibility
+
+- Fully backward compatible
+- Works with Concurrent Stream Limiter
+- Works with Provider Diversification
+- Works with all existing features
+- No breaking changes
+
+## Documentation
+
+See `PROFILE_FAILOVER_README.md` for complete documentation.
+
+
 
 ---
 
-END OF PATCH
-============
+# Profile Failover v2.0 Update - Intelligent Polling
+
+## Updated Phase 2 Implementation
+
+**Replace the Phase 2 section in `_analyze_stream_with_profile_failover()` with intelligent polling:**
+
+```python
+# Phase 2: All available profiles failed - try ALL profiles (including full ones) with intelligent polling
+if udi and stream.get('m3u_account'):
+    all_profiles = udi.get_all_profiles_for_stream(stream)
+    tried_profile_ids = {p.get('id') for p in available_profiles}
+    remaining_profiles = [p for p in all_profiles if p.get('id') not in tried_profile_ids]
+    
+    if remaining_profiles:
+        # Get Phase 2 configuration
+        phase2_enabled = self.config.get('profile_failover', {}).get('try_full_profiles', True)
+        
+        if not phase2_enabled:
+            logger.info(f"Stream {stream_id} ({stream_name}): Phase 2 disabled, skipping {len(remaining_profiles)} full profile(s)")
+        else:
+            phase2_max_wait = self.config.get('profile_failover', {}).get('phase2_max_wait', 600)
+            phase2_poll_interval = self.config.get('profile_failover', {}).get('phase2_poll_interval', 10)
+            
+            logger.warning(f"Stream {stream_id} ({stream_name}): Phase 2 - All available profiles failed, trying {len(remaining_profiles)} additional profile(s) with intelligent polling")
+            logger.info(f"Stream {stream_id}: Phase 2 config - max_wait: {phase2_max_wait}s, poll_interval: {phase2_poll_interval}s")
+            
+            import time
+            start_time = time.time()
+            tested_profile_ids = set(tried_profile_ids)
+            
+            # Intelligent polling loop
+            while remaining_profiles and (time.time() - start_time) < phase2_max_wait:
+                # Check which profiles are NOW available
+                currently_available = udi.get_all_available_profiles_for_stream(stream)
+                currently_available_ids = {p.get('id') for p in currently_available}
+                
+                # Find profiles that are NOW available AND not yet tested
+                newly_available = [
+                    p for p in remaining_profiles 
+                    if p.get('id') in currently_available_ids 
+                    and p.get('id') not in tested_profile_ids
+                ]
+                
+                if newly_available:
+                    profile = newly_available[0]
+                    profile_id = profile.get('id')
+                    profile_name = profile.get('name', f'Profile {profile_id}')
+                    
+                    try:
+                        stream_url = udi.apply_profile_url_transformation(stream, profile)
+                        elapsed = time.time() - start_time
+                        logger.info(f"Stream {stream_id}: Testing newly available profile {profile_name} (ID: {profile_id}) [elapsed: {elapsed:.1f}s]")
+                        
+                        proxy = get_stream_proxy(stream_id)
+                        
+                        analyzed = analyze_stream(
+                            stream_url=stream_url,
+                            stream_id=stream_id,
+                            stream_name=stream_name,
+                            ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                            timeout=analysis_params.get('timeout', 30),
+                            retries=analysis_params.get('retries', 1),
+                            retry_delay=analysis_params.get('retry_delay', 10),
+                            user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                            stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                            proxy=proxy
+                        )
+                        
+                        tested_profile_ids.add(profile_id)
+                        remaining_profiles = [p for p in remaining_profiles if p.get('id') != profile_id]
+                        
+                        if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                            logger.info(f"Stream {stream_id}: ✅ SUCCESS with profile {profile_name} (ID: {profile_id}) in Phase 2")
+                            analyzed['used_profile_id'] = profile_id
+                            analyzed['used_profile_name'] = profile_name
+                            analyzed['profile_failover_attempts'] = len(tested_profile_ids)
+                            analyzed['profile_failover_phase'] = 2
+                            analyzed['phase2_elapsed_time'] = time.time() - start_time
+                            return analyzed
+                        else:
+                            status = analyzed.get('status', 'Unknown')
+                            logger.warning(f"Stream {stream_id}: ❌ FAILED with profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                            last_error = analyzed
+                            
+                    except Exception as e:
+                        logger.error(f"Stream {stream_id}: ❌ ERROR with profile {profile_name} (ID: {profile_id}): {e}")
+                        tested_profile_ids.add(profile_id)
+                        remaining_profiles = [p for p in remaining_profiles if p.get('id') != profile_id]
+                        last_error = {
+                            'stream_id': stream_id,
+                            'stream_name': stream_name,
+                            'stream_url': stream.get('url', ''),
+                            'status': 'Error',
+                            'error': str(e)
+                        }
+                else:
+                    if remaining_profiles:
+                        elapsed = time.time() - start_time
+                        remaining_time = phase2_max_wait - elapsed
+                        logger.debug(f"Stream {stream_id}: No profiles available, waiting {phase2_poll_interval}s (elapsed: {elapsed:.1f}s, remaining: {remaining_time:.1f}s)")
+                        time.sleep(phase2_poll_interval)
+            
+            elapsed = time.time() - start_time
+            if remaining_profiles:
+                logger.warning(f"Stream {stream_id}: Phase 2 timeout after {elapsed:.1f}s, {len(remaining_profiles)} profile(s) not tested")
+            else:
+                logger.info(f"Stream {stream_id}: Phase 2 completed after {elapsed:.1f}s, all profiles tested")
+```
+
+## Updated Configuration
+
+**Update DEFAULT_CONFIG in `backend/stream_checker_service.py`:**
+
+```python
+'profile_failover': {
+    'enabled': True,
+    'try_full_profiles': True,
+    'phase2_max_wait': 600,  # Maximum wait time in Phase 2 (seconds)
+    'phase2_poll_interval': 10  # Check for free profiles every X seconds
+}
+```
+
+---
+
+# New Feature: Test Streams Without Stats
+
+## Backend Endpoint
+
+**File: `backend/web_api.py`**
+
+Add after `apply_account_limits_to_channels()`:
+
+```python
+@app.route('/api/stream-checker/test-streams-without-stats', methods=['POST'])
+def test_streams_without_stats():
+    """Test all streams that have no quality stats (never been checked)."""
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        from udi.manager import get_udi_manager
+        udi = get_udi_manager()
+        
+        channels = udi.get_channels()
+        streams_to_test = []
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+            
+            streams = udi.get_channel_streams(channel_id)
+            if not streams:
+                continue
+            
+            for stream in streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                stream_data = udi.get_stream_by_id(stream_id)
+                if not stream_data:
+                    continue
+                
+                stream_stats = stream_data.get('stream_stats')
+                if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+                    streams_to_test.append({
+                        'stream_id': stream_id,
+                        'channel_id': channel_id
+                    })
+        
+        if not streams_to_test:
+            return jsonify({
+                "message": "No streams without stats found",
+                "streams_found": 0,
+                "channels_affected": 0
+            })
+        
+        channels_to_check = list(set(s['channel_id'] for s in streams_to_test))
+        
+        for channel_id in channels_to_check:
+            service.queue_channel(channel_id, priority=20, force_check=True)
+        
+        return jsonify({
+            "message": f"Queued {len(streams_to_test)} stream(s) without stats for testing",
+            "streams_found": len(streams_to_test),
+            "channels_affected": len(channels_to_check),
+            "status": "queued"
+        })
+    
+    except Exception as e:
+        logger.error(f"Error testing streams without stats: {e}")
+        return jsonify({"error": str(e)}), 500
+```
+
+## Frontend API
+
+**File: `frontend/src/services/api.js`**
+
+```javascript
+export const streamCheckerAPI = {
+  // ... existing functions ...
+  triggerGlobalAction: () => api.post('/stream-checker/global-action'),
+  testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
+};
+```
+
+## Frontend Button
+
+**File: `frontend/src/pages/StreamChecker.jsx`**
+
+Add TestTube icon import:
+```javascript
+import { 
+  // ... existing imports ...
+  TestTube
+} from 'lucide-react'
+```
+
+Add handler:
+```javascript
+const handleTestStreamsWithoutStats = async () => {
+  try {
+    setActionLoading('test-without-stats')
+    const response = await streamCheckerAPI.testStreamsWithoutStats()
+    toast({
+      title: "Success",
+      description: response.data.message
+    })
+    await loadData()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to test streams without stats",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+```
+
+Add button:
+```jsx
+<Button
+  onClick={handleTestStreamsWithoutStats}
+  disabled={actionLoading === 'test-without-stats' || isChecking}
+  variant="outline"
+>
+  {actionLoading === 'test-without-stats' ? (
+    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+  ) : (
+    <TestTube className="mr-2 h-4 w-4" />
+  )}
+  Test Streams Without Stats
+</Button>
+```
+
+---
+
+# Frontend Profile Failover Settings
+
+**File: `frontend/src/pages/StreamChecker.jsx`**
+
+Add in Stream Ordering tab:
+
+```jsx
+<Card>
+  <CardHeader>
+    <CardTitle>Profile Failover</CardTitle>
+    <CardDescription>
+      Automatically retry failed streams with different profiles
+    </CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <div className="flex items-center justify-between rounded-lg border p-4">
+      <div className="space-y-1">
+        <Label htmlFor="profile_failover_enabled">Enable Profile Failover</Label>
+        <p className="text-sm text-muted-foreground">
+          Test streams with multiple profiles if one fails
+        </p>
+      </div>
+      <Switch
+        id="profile_failover_enabled"
+        checked={editedConfig?.profile_failover?.enabled ?? true}
+        onCheckedChange={(checked) => updateConfigValue('profile_failover.enabled', checked)}
+        disabled={!configEditing}
+      />
+    </div>
+
+    <div className="flex items-center justify-between rounded-lg border p-4">
+      <div className="space-y-1">
+        <Label htmlFor="try_full_profiles">Try Full Profiles (Phase 2)</Label>
+        <p className="text-sm text-muted-foreground">
+          Wait for full profiles to become available
+        </p>
+      </div>
+      <Switch
+        id="try_full_profiles"
+        checked={editedConfig?.profile_failover?.try_full_profiles ?? true}
+        onCheckedChange={(checked) => updateConfigValue('profile_failover.try_full_profiles', checked)}
+        disabled={!configEditing || !editedConfig?.profile_failover?.enabled}
+      />
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="phase2_max_wait">Phase 2 Maximum Wait Time (seconds)</Label>
+      <Input
+        id="phase2_max_wait"
+        type="number"
+        min="60"
+        max="1800"
+        value={editedConfig?.profile_failover?.phase2_max_wait ?? 600}
+        onChange={(e) => updateConfigValue('profile_failover.phase2_max_wait', parseInt(e.target.value))}
+        disabled={!configEditing || !editedConfig?.profile_failover?.enabled || !editedConfig?.profile_failover?.try_full_profiles}
+      />
+      <p className="text-xs text-muted-foreground">
+        Maximum time to wait for full profiles (default: 600s)
+      </p>
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="phase2_poll_interval">Phase 2 Poll Interval (seconds)</Label>
+      <Input
+        id="phase2_poll_interval"
+        type="number"
+        min="5"
+        max="60"
+        value={editedConfig?.profile_failover?.phase2_poll_interval ?? 10}
+        onChange={(e) => updateConfigValue('profile_failover.phase2_poll_interval', parseInt(e.target.value))}
+        disabled={!configEditing || !editedConfig?.profile_failover?.enabled || !editedConfig?.profile_failover?.try_full_profiles}
+      />
+      <p className="text-xs text-muted-foreground">
+        How often to check for free profiles (default: 10s)
+      </p>
+    </div>
+
+    <Alert>
+      <Info className="h-4 w-4" />
+      <AlertTitle>How Profile Failover works</AlertTitle>
+      <AlertDescription>
+        <div className="space-y-2 mt-2">
+          <p><strong>Phase 1:</strong> Tests all profiles with free slots immediately (fast)</p>
+          <p><strong>Phase 2:</strong> Intelligently polls for profiles every {editedConfig?.profile_failover?.phase2_poll_interval ?? 10}s</p>
+          <p className="text-xs text-muted-foreground">
+            Stops after {editedConfig?.profile_failover?.phase2_max_wait ?? 600}s or when all profiles tested
+          </p>
+        </div>
+      </AlertDescription>
+    </Alert>
+  </CardContent>
+</Card>
+```
+
+---
+
+# Priority + Diversification Info
+
+**Update Provider Diversification Alert:**
+
+```jsx
+<Alert>
+  <Info className="h-4 w-4" />
+  <AlertTitle>How it works</AlertTitle>
+  <AlertDescription>
+    <div className="space-y-2 mt-2">
+      <p><strong>Without diversification:</strong></p>
+      <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93)...</p>
+      <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
+      
+      <p className="mt-3"><strong>With diversification:</strong></p>
+      <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89)...</p>
+      <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over</p>
+      
+      <p className="mt-3"><strong>With M3U Account Priority System:</strong></p>
+      <p className="text-xs text-muted-foreground">
+        Priority boosts are applied to stream scores BEFORE diversification. 
+        Higher priority providers get better scores, then diversification interleaves them.
+      </p>
+    </div>
+  </AlertDescription>
+</Alert>
+```
+
+---
+
+---
+
+# New Feature: Re-Score & Re-Sort All Channels
+
+## Overview
+
+Re-Score & Re-Sort allows you to recalculate stream scores and re-sort all channels **without performing new quality checks**. This is much faster than Global Action since it skips time-consuming ffmpeg analysis and uses existing stream_stats.
+
+## Use Cases
+
+Use Re-Score & Re-Sort after changing:
+- ✅ M3U Account Priorities
+- ✅ Account Stream Limits (global or per-account)
+- ✅ Quality Preferences (prefer 4K, max 1080p, etc.)
+- ✅ Scoring Weights (bitrate, resolution, FPS, codec)
+- ✅ Provider Diversification settings
+
+## Backend Implementation
+
+**File: `backend/stream_checker_service.py`**
+
+Add new method after `trigger_global_action()`:
+
+```python
+def rescore_and_resort_all_channels(self):
+    """Re-calculate scores and re-sort all channels using existing stream stats.
+    
+    This function does NOT perform new quality checks. Instead, it:
+    1. Gets all channels and their streams
+    2. Uses existing stream_stats from UDI cache
+    3. Re-calculates scores based on current config (priorities, quality preferences, weights)
+    4. Re-sorts streams by score
+    5. Re-applies account stream limits
+    6. Updates channel-stream assignments
+    
+    Useful after changing:
+    - M3U account priorities
+    - Account stream limits
+    - Quality preferences
+    - Scoring weights
+    - Provider diversification settings
+    
+    Returns:
+        Dict with statistics about the re-scoring operation
+    """
+    if not self.running:
+        logger.warning("Cannot re-score channels - service is not running")
+        return {'success': False, 'error': 'Service is not running'}
+    
+    logger.info("=" * 80)
+    logger.info("RE-SCORE & RE-SORT ALL CHANNELS (using existing stats)")
+    logger.info("=" * 80)
+    
+    start_time = time_module.time()
+    
+    try:
+        udi = get_udi_manager()
+        channels = udi.get_channels()
+        
+        if not channels:
+            logger.warning("No channels found")
+            return {'success': False, 'error': 'No channels found'}
+        
+        stats = {
+            'channels_processed': 0,
+            'channels_updated': 0,
+            'total_streams_before': 0,
+            'total_streams_after': 0,
+            'streams_removed_by_limits': 0,
+            'channels_with_changes': []
+        }
+        
+        account_limits_config = self.config.get('account_stream_limits', {})
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            channel_name = channel.get('name', f'Channel {channel_id}')
+            
+            if not channel_id:
+                continue
+            
+            logger.info(f"Processing channel: {channel_name} (ID: {channel_id})")
+            
+            # Get current streams for this channel
+            current_streams = udi.get_channel_streams(channel_id)
+            if not current_streams:
+                logger.debug(f"Channel {channel_name} has no streams, skipping")
+                continue
+            
+            stats['channels_processed'] += 1
+            streams_before = len(current_streams)
+            stats['total_streams_before'] += streams_before
+            
+            # Build analyzed stream data from existing stats
+            analyzed_streams = []
+            
+            for stream in current_streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                # Get full stream data with stats
+                full_stream = udi.get_stream_by_id(stream_id)
+                if not full_stream:
+                    continue
+                
+                # Get stream_stats
+                stream_stats = full_stream.get('stream_stats')
+                if stream_stats is None:
+                    stream_stats = {}
+                if isinstance(stream_stats, str):
+                    try:
+                        stream_stats = json.loads(stream_stats)
+                        if stream_stats is None:
+                            stream_stats = {}
+                    except json.JSONDecodeError:
+                        stream_stats = {}
+                
+                # Build stream data dict for score calculation
+                score_data = {
+                    'stream_id': stream_id,
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'stream_url': stream.get('url', ''),
+                    'resolution': stream_stats.get('resolution', '0x0'),
+                    'fps': stream_stats.get('source_fps', 0),
+                    'video_codec': stream_stats.get('video_codec', 'N/A'),
+                    'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                    'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                    'status': 'OK' if stream_stats.get('resolution') not in ['0x0', 'N/A', ''] else 'Error'
+                }
+                
+                # Calculate score with current config
+                score = self._calculate_stream_score(score_data, channel_id)
+                score_data['score'] = score
+                
+                analyzed_streams.append(score_data)
+            
+            if not analyzed_streams:
+                logger.debug(f"No streams with stats found for channel {channel_name}")
+                continue
+            
+            # Sort by score (highest first)
+            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            logger.info(f"Channel {channel_name}: {len(analyzed_streams)} streams scored and sorted")
+            
+            # Apply provider diversification if enabled
+            if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+                logger.info(f"Channel {channel_name}: Applied provider diversification")
+            
+            # Apply account stream limits AFTER scoring (and diversification)
+            if account_limits_config.get('enabled', True):
+                streams_before_limits = len(analyzed_streams)
+                analyzed_streams = self._apply_account_limits_after_scoring(
+                    analyzed_streams, account_limits_config, channel_id, channel_name
+                )
+                streams_removed = streams_before_limits - len(analyzed_streams)
+                if streams_removed > 0:
+                    logger.info(f"Channel {channel_name}: Removed {streams_removed} stream(s) due to account limits")
+                    stats['streams_removed_by_limits'] += streams_removed
+            
+            streams_after = len(analyzed_streams)
+            stats['total_streams_after'] += streams_after
+            
+            # Update channel streams if there are changes
+            if streams_after != streams_before or streams_after > 0:
+                # Extract stream IDs in new order
+                new_stream_ids = [s['stream_id'] for s in analyzed_streams]
+                
+                # Update channel streams in UDI
+                from api_utils import update_channel_streams
+                success = update_channel_streams(channel_id, [{'id': sid} for sid in new_stream_ids])
+                
+                if success:
+                    stats['channels_updated'] += 1
+                    stats['channels_with_changes'].append({
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'streams_before': streams_before,
+                        'streams_after': streams_after,
+                        'streams_removed': streams_before - streams_after
+                    })
+                    logger.info(f"✓ Updated channel {channel_name}: {streams_before} → {streams_after} streams")
+                else:
+                    logger.error(f"Failed to update channel {channel_name}")
+        
+        # Calculate duration
+        duration = time_module.time() - start_time
+        stats['duration_seconds'] = round(duration, 2)
+        
+        logger.info("=" * 80)
+        logger.info(f"RE-SCORE & RE-SORT COMPLETED in {duration:.2f}s")
+        logger.info(f"  Channels processed: {stats['channels_processed']}")
+        logger.info(f"  Channels updated: {stats['channels_updated']}")
+        logger.info(f"  Total streams before: {stats['total_streams_before']}")
+        logger.info(f"  Total streams after: {stats['total_streams_after']}")
+        logger.info(f"  Streams removed by limits: {stats['streams_removed_by_limits']}")
+        logger.info("=" * 80)
+        
+        stats['success'] = True
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error during re-score and re-sort: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
+```
+
+## Backend API Endpoint
+
+**File: `backend/web_api.py`**
+
+Add after `trigger_global_action()` endpoint:
+
+```python
+@app.route('/api/stream-checker/rescore-resort', methods=['POST'])
+def rescore_and_resort_all_channels():
+    """Re-score and re-sort all channels using existing stream stats (no quality checks).
+    
+    This function:
+    1. Gets all channels and their streams
+    2. Uses existing stream_stats (no new ffmpeg analysis)
+    3. Re-calculates scores based on current config:
+       - M3U account priorities
+       - Quality preferences
+       - Scoring weights
+       - Provider diversification
+    4. Re-sorts streams by score (best first)
+    5. Re-applies account stream limits
+    6. Updates channel-stream assignments
+    
+    Useful after changing configuration without wanting to run time-consuming quality checks.
+    Much faster than Global Action since it skips ffmpeg analysis.
+    """
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        result = service.rescore_and_resort_all_channels()
+        
+        if result.get('success'):
+            return jsonify({
+                "message": "Re-score and re-sort completed successfully",
+                "status": "completed",
+                "stats": {
+                    "channels_processed": result.get('channels_processed', 0),
+                    "channels_updated": result.get('channels_updated', 0),
+                    "streams_before": result.get('total_streams_before', 0),
+                    "streams_after": result.get('total_streams_after', 0),
+                    "streams_removed": result.get('streams_removed_by_limits', 0),
+                    "duration_seconds": result.get('duration_seconds', 0)
+                },
+                "channels_with_changes": result.get('channels_with_changes', [])
+            })
+        else:
+            return jsonify({"error": result.get('error', 'Unknown error')}), 500
+    
+    except Exception as e:
+        logger.error(f"Error during re-score and re-sort: {e}")
+        return jsonify({"error": str(e)}), 500
+```
+
+## Frontend API Function
+
+**File: `frontend/src/services/api.js`**
+
+Add to streamCheckerAPI object:
+
+```javascript
+export const streamCheckerAPI = {
+  // ... existing functions ...
+  triggerGlobalAction: () => api.post('/stream-checker/global-action'),
+  testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
+  rescoreAndResort: () => api.post('/stream-checker/rescore-resort'),  // NEW
+};
+```
+
+## Frontend Button - Stream Checker Page
+
+**File: `frontend/src/pages/StreamChecker.jsx`**
+
+Add Sparkles icon import:
+```javascript
+import { 
+  // ... existing imports ...
+  TestTube,
+  Sparkles  // NEW
+} from 'lucide-react'
+```
+
+Add handler function:
+```javascript
+const handleRescoreAndResort = async () => {
+  try {
+    setActionLoading('rescore-resort')
+    const response = await streamCheckerAPI.rescoreAndResort()
+    const stats = response.data.stats || {}
+    toast({
+      title: "Success",
+      description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+    })
+    await loadData()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to re-score and re-sort channels",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+```
+
+Add button next to Global Action button:
+```jsx
+<div className="flex gap-2">
+  <Button
+    onClick={handleTriggerGlobalAction}
+    disabled={actionLoading === 'global-action' || isChecking}
+    variant="default"
+  >
+    {actionLoading === 'global-action' ? (
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+    ) : (
+      <RefreshCw className="mr-2 h-4 w-4" />
+    )}
+    Global Action
+  </Button>
+  <Button
+    onClick={handleRescoreAndResort}
+    disabled={actionLoading === 'rescore-resort' || isChecking}
+    variant="secondary"
+  >
+    {actionLoading === 'rescore-resort' ? (
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+    ) : (
+      <Sparkles className="mr-2 h-4 w-4" />
+    )}
+    Re-Score & Re-Sort
+  </Button>
+</div>
+```
+
+## Frontend Buttons - Dashboard Quick Actions
+
+**File: `frontend/src/pages/Dashboard.jsx`**
+
+Add Sparkles and TestTube icon imports:
+```javascript
+import { 
+  // ... existing imports ...
+  TestTube, 
+  Sparkles 
+} from 'lucide-react'
+```
+
+Add handler functions:
+```javascript
+const handleTestStreamsWithoutStats = async () => {
+  try {
+    setActionLoading('test-without-stats')
+    const response = await streamCheckerAPI.testStreamsWithoutStats()
+    toast({
+      title: "Success",
+      description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
+    })
+    await loadStatus()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to test streams without stats",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+
+const handleRescoreAndResort = async () => {
+  try {
+    setActionLoading('rescore-resort')
+    const response = await streamCheckerAPI.rescoreAndResort()
+    const stats = response.data.stats || {}
+    toast({
+      title: "Success",
+      description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+    })
+    await loadStatus()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to re-score and re-sort channels",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+```
+
+Add buttons in Quick Actions section:
+```jsx
+<Card>
+  <CardHeader>
+    <CardTitle>Quick Actions</CardTitle>
+    <CardDescription>Common stream management tasks</CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-3">
+    <Button
+      onClick={handleTriggerGlobalAction}
+      disabled={shouldDisableActions}
+      variant="default"
+      className="w-full"
+    >
+      {actionLoading === 'global' ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <RefreshCw className="mr-2 h-4 w-4" />
+      )}
+      Trigger Global Action
+    </Button>
+    
+    <Button
+      onClick={handleTestStreamsWithoutStats}
+      disabled={shouldDisableActions}
+      variant="outline"
+      className="w-full"
+    >
+      {actionLoading === 'test-without-stats' ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <TestTube className="mr-2 h-4 w-4" />
+      )}
+      Test Streams Without Stats
+    </Button>
+    
+    <Button
+      onClick={handleRescoreAndResort}
+      disabled={shouldDisableActions}
+      variant="secondary"
+      className="w-full"
+    >
+      {actionLoading === 'rescore-resort' ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <Sparkles className="mr-2 h-4 w-4" />
+      )}
+      Re-Score & Re-Sort
+    </Button>
+  </CardContent>
+</Card>
+```
+
+## Performance
+
+**Speed Comparison:**
+
+| Operation | Duration | Quality Checks |
+|-----------|----------|----------------|
+| **Global Action** | 30-60 minutes | ✅ Yes (ffmpeg) |
+| **Re-Score & Re-Sort** | 2-5 seconds | ❌ No |
+
+**Example:**
+- 150 channels with 2500 streams
+- Re-Score & Re-Sort: **~3 seconds**
+- Global Action: **~45 minutes**
+
+## Documentation
+
+See `RESCORE_RESORT_README.md` for complete documentation.
+
+---
+
+## Version History
+
+- **v1.0**: Initial enhancements (Provider Diversification, Fallback Score Fix, Profile Failover v1)
+- **v2.0**: Profile Failover v2 with intelligent polling, Test Streams Without Stats button, Priority+Diversification info
+- **v2.1**: Re-Score & Re-Sort feature, Dashboard Quick Actions buttons (Test Streams Without Stats + Re-Score & Re-Sort)

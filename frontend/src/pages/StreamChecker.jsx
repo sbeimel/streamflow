@@ -25,7 +25,8 @@ import {
   RefreshCw,
   List,
   Info,
-  TestTube
+  TestTube,
+  Sparkles
 } from 'lucide-react'
 
 // Pagination constants
@@ -140,6 +141,27 @@ export default function StreamChecker() {
       toast({
         title: "Error",
         description: err.response?.data?.error || "Failed to test streams without stats",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleRescoreAndResort = async () => {
+    try {
+      setActionLoading('rescore-resort')
+      const response = await streamCheckerAPI.rescoreAndResort()
+      const stats = response.data.stats || {}
+      toast({
+        title: "Success",
+        description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+      })
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to re-score and re-sort channels",
         variant: "destructive"
       })
     } finally {
@@ -404,6 +426,18 @@ export default function StreamChecker() {
               <TestTube className="mr-2 h-4 w-4" />
             )}
             Test Streams Without Stats
+          </Button>
+          <Button
+            onClick={handleRescoreAndResort}
+            disabled={actionLoading === 'rescore-resort'}
+            variant="secondary"
+          >
+            {actionLoading === 'rescore-resort' ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="mr-2 h-4 w-4" />
+            )}
+            Re-Score & Re-Sort
           </Button>
         </div>
       </div>
