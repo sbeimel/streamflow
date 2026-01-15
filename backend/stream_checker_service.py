@@ -3669,6 +3669,8 @@ class StreamCheckerService:
         Returns:
             Dict with statistics about the re-scoring operation
         """
+        import time as time_module
+        
         if not self.running:
             logger.warning("Cannot re-score channels - service is not running")
             return {'success': False, 'error': 'Service is not running'}
