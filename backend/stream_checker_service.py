@@ -3670,6 +3670,7 @@ class StreamCheckerService:
             Dict with statistics about the re-scoring operation
         """
         import time as time_module
+        import json
         
         if not self.running:
             logger.warning("Cannot re-score channels - service is not running")
@@ -3701,117 +3702,141 @@ class StreamCheckerService:
             account_limits_config = self.config.get('account_stream_limits', {})
             
             for channel in channels:
-                channel_id = channel.get('id')
-                channel_name = channel.get('name', f'Channel {channel_id}')
-                
-                if not channel_id:
-                    continue
-                
-                logger.info(f"Processing channel: {channel_name} (ID: {channel_id})")
-                
-                # Get current streams for this channel
-                current_streams = udi.get_channel_streams(channel_id)
-                if not current_streams:
-                    logger.debug(f"Channel {channel_name} has no streams, skipping")
-                    continue
-                
-                stats['channels_processed'] += 1
-                streams_before = len(current_streams)
-                stats['total_streams_before'] += streams_before
-                
-                # Build analyzed stream data from existing stats
-                analyzed_streams = []
-                
-                for stream in current_streams:
-                    stream_id = stream.get('id')
-                    if not stream_id:
+                try:
+                    channel_id = channel.get('id')
+                    channel_name = channel.get('name', f'Channel {channel_id}')
+                    
+                    if not channel_id:
                         continue
                     
-                    # Get full stream data with stats
-                    full_stream = udi.get_stream_by_id(stream_id)
-                    if not full_stream:
+                    logger.info(f"Processing channel: {channel_name} (ID: {channel_id})")
+                    
+                    # Get current streams for this channel
+                    current_streams = udi.get_channel_streams(channel_id)
+                    if not current_streams:
+                        logger.debug(f"Channel {channel_name} has no streams, skipping")
                         continue
                     
-                    # Get stream_stats
-                    stream_stats = full_stream.get('stream_stats')
-                    if stream_stats is None:
-                        stream_stats = {}
-                    if isinstance(stream_stats, str):
+                    stats['channels_processed'] += 1
+                    streams_before = len(current_streams)
+                    stats['total_streams_before'] += streams_before
+                    
+                    # Build analyzed stream data from existing stats
+                    analyzed_streams = []
+                    
+                    for stream in current_streams:
                         try:
-                            stream_stats = json.loads(stream_stats)
+                            stream_id = stream.get('id')
+                            if not stream_id:
+                                continue
+                            
+                            # Get full stream data with stats
+                            full_stream = udi.get_stream_by_id(stream_id)
+                            if not full_stream:
+                                continue
+                            
+                            # Get stream_stats - handle all possible formats safely
+                            stream_stats = full_stream.get('stream_stats')
                             if stream_stats is None:
                                 stream_stats = {}
-                        except json.JSONDecodeError:
-                            stream_stats = {}
+                            elif isinstance(stream_stats, str):
+                                try:
+                                    parsed_stats = json.loads(stream_stats)
+                                    stream_stats = parsed_stats if isinstance(parsed_stats, dict) else {}
+                                except (json.JSONDecodeError, TypeError):
+                                    stream_stats = {}
+                            elif not isinstance(stream_stats, dict):
+                                stream_stats = {}
+                            
+                            # Build stream data dict for score calculation
+                            score_data = {
+                                'stream_id': stream_id,
+                                'stream_name': stream.get('name', 'Unknown'),
+                                'stream_url': stream.get('url', ''),
+                                'resolution': stream_stats.get('resolution', '0x0'),
+                                'fps': stream_stats.get('source_fps', 0),
+                                'video_codec': stream_stats.get('video_codec', 'N/A'),
+                                'audio_codec': stream_stats.get('audio_codec', 'N/A'),
+                                'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
+                                'status': 'OK' if stream_stats.get('resolution') not in ['0x0', 'N/A', ''] else 'Error'
+                            }
+                            
+                            # Calculate score with current config
+                            score = self._calculate_stream_score(score_data, channel_id)
+                            score_data['score'] = score
+                            
+                            analyzed_streams.append(score_data)
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing stream {stream.get('id', 'unknown')} in channel {channel_name}: {e}")
+                            continue
                     
-                    # Build stream data dict for score calculation
-                    score_data = {
-                        'stream_id': stream_id,
-                        'stream_name': stream.get('name', 'Unknown'),
-                        'stream_url': stream.get('url', ''),
-                        'resolution': stream_stats.get('resolution', '0x0'),
-                        'fps': stream_stats.get('source_fps', 0),
-                        'video_codec': stream_stats.get('video_codec', 'N/A'),
-                        'audio_codec': stream_stats.get('audio_codec', 'N/A'),
-                        'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
-                        'status': 'OK' if stream_stats.get('resolution') not in ['0x0', 'N/A', ''] else 'Error'
-                    }
+                    if not analyzed_streams:
+                        logger.debug(f"No streams with stats found for channel {channel_name}")
+                        continue
                     
-                    # Calculate score with current config
-                    score = self._calculate_stream_score(score_data, channel_id)
-                    score_data['score'] = score
+                    # Sort by score (highest first)
+                    try:
+                        analyzed_streams.sort(key=lambda x: float(x.get('score', 0)), reverse=True)
+                    except (TypeError, ValueError) as e:
+                        logger.error(f"Error sorting streams for channel {channel_name}: {e}")
+                        continue
                     
-                    analyzed_streams.append(score_data)
-                
-                if not analyzed_streams:
-                    logger.debug(f"No streams with stats found for channel {channel_name}")
+                    logger.info(f"Channel {channel_name}: {len(analyzed_streams)} streams scored and sorted")
+                    
+                    # Apply provider diversification if enabled
+                    if self.config.get('stream_ordering', {}).get('provider_diversification', False):
+                        try:
+                            analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
+                            logger.info(f"Channel {channel_name}: Applied provider diversification")
+                        except Exception as e:
+                            logger.error(f"Error applying provider diversification for channel {channel_name}: {e}")
+                    
+                    # Apply account stream limits AFTER scoring (and diversification)
+                    if account_limits_config.get('enabled', True):
+                        try:
+                            streams_before_limits = len(analyzed_streams)
+                            analyzed_streams = self._apply_account_limits_after_scoring(
+                                analyzed_streams, account_limits_config, channel_id, channel_name
+                            )
+                            streams_removed = streams_before_limits - len(analyzed_streams)
+                            if streams_removed > 0:
+                                logger.info(f"Channel {channel_name}: Removed {streams_removed} stream(s) due to account limits")
+                                stats['streams_removed_by_limits'] += streams_removed
+                        except Exception as e:
+                            logger.error(f"Error applying account limits for channel {channel_name}: {e}")
+                    
+                    streams_after = len(analyzed_streams)
+                    stats['total_streams_after'] += streams_after
+                    
+                    # Update channel streams if there are changes
+                    if streams_after != streams_before or streams_after > 0:
+                        try:
+                            # Extract stream IDs in new order
+                            new_stream_ids = [str(s['stream_id']) for s in analyzed_streams]
+                            
+                            # Update channel streams in UDI
+                            from api_utils import update_channel_streams
+                            success = update_channel_streams(channel_id, [{'id': sid} for sid in new_stream_ids])
+                            
+                            if success:
+                                stats['channels_updated'] += 1
+                                stats['channels_with_changes'].append({
+                                    'channel_id': int(channel_id),
+                                    'channel_name': str(channel_name),
+                                    'streams_before': int(streams_before),
+                                    'streams_after': int(streams_after),
+                                    'streams_removed': int(streams_before - streams_after)
+                                })
+                                logger.info(f"✓ Updated channel {channel_name}: {streams_before} → {streams_after} streams")
+                            else:
+                                logger.error(f"Failed to update channel {channel_name}")
+                        except Exception as e:
+                            logger.error(f"Error updating channel {channel_name}: {e}")
+                            
+                except Exception as e:
+                    logger.error(f"Error processing channel {channel.get('name', 'unknown')}: {e}")
                     continue
-                
-                # Sort by score (highest first)
-                analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
-                
-                logger.info(f"Channel {channel_name}: {len(analyzed_streams)} streams scored and sorted")
-                
-                # Apply provider diversification if enabled
-                if self.config.get('stream_ordering', {}).get('provider_diversification', False):
-                    analyzed_streams = self._apply_provider_diversification(analyzed_streams, channel_id)
-                    logger.info(f"Channel {channel_name}: Applied provider diversification")
-                
-                # Apply account stream limits AFTER scoring (and diversification)
-                if account_limits_config.get('enabled', True):
-                    streams_before_limits = len(analyzed_streams)
-                    analyzed_streams = self._apply_account_limits_after_scoring(
-                        analyzed_streams, account_limits_config, channel_id, channel_name
-                    )
-                    streams_removed = streams_before_limits - len(analyzed_streams)
-                    if streams_removed > 0:
-                        logger.info(f"Channel {channel_name}: Removed {streams_removed} stream(s) due to account limits")
-                        stats['streams_removed_by_limits'] += streams_removed
-                
-                streams_after = len(analyzed_streams)
-                stats['total_streams_after'] += streams_after
-                
-                # Update channel streams if there are changes
-                if streams_after != streams_before or streams_after > 0:
-                    # Extract stream IDs in new order
-                    new_stream_ids = [s['stream_id'] for s in analyzed_streams]
-                    
-                    # Update channel streams in UDI
-                    from api_utils import update_channel_streams
-                    success = update_channel_streams(channel_id, [{'id': sid} for sid in new_stream_ids])
-                    
-                    if success:
-                        stats['channels_updated'] += 1
-                        stats['channels_with_changes'].append({
-                            'channel_id': channel_id,
-                            'channel_name': channel_name,
-                            'streams_before': streams_before,
-                            'streams_after': streams_after,
-                            'streams_removed': streams_before - streams_after
-                        })
-                        logger.info(f"✓ Updated channel {channel_name}: {streams_before} → {streams_after} streams")
-                    else:
-                        logger.error(f"Failed to update channel {channel_name}")
             
             # Calculate duration
             duration = time_module.time() - start_time
