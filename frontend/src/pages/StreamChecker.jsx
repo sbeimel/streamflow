@@ -24,7 +24,8 @@ import {
   AlertCircle,
   RefreshCw,
   List,
-  Info
+  Info,
+  TestTube
 } from 'lucide-react'
 
 // Pagination constants
@@ -119,6 +120,26 @@ export default function StreamChecker() {
       toast({
         title: "Error",
         description: err.response?.data?.error || "Failed to trigger global action",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleTestStreamsWithoutStats = async () => {
+    try {
+      setActionLoading('test-without-stats')
+      const response = await streamCheckerAPI.testStreamsWithoutStats()
+      toast({
+        title: "Success",
+        description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
+      })
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to test streams without stats",
         variant: "destructive"
       })
     } finally {
@@ -371,6 +392,18 @@ export default function StreamChecker() {
               <RefreshCw className="mr-2 h-4 w-4" />
             )}
             Global Action
+          </Button>
+          <Button
+            onClick={handleTestStreamsWithoutStats}
+            disabled={actionLoading === 'test-without-stats' || isChecking}
+            variant="outline"
+          >
+            {actionLoading === 'test-without-stats' ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <TestTube className="mr-2 h-4 w-4" />
+            )}
+            Test Streams Without Stats
           </Button>
         </div>
       </div>
@@ -1023,6 +1056,15 @@ export default function StreamChecker() {
                             <p className="mt-3"><strong>With diversification:</strong></p>
                             <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
                             <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
+                            
+                            <p className="mt-3"><strong>With M3U Account Priority System:</strong></p>
+                            <p className="text-xs text-muted-foreground">
+                              Priority boosts are applied to stream scores BEFORE diversification. 
+                              Higher priority providers get better scores, then diversification interleaves them.
+                            </p>
+                            <p className="text-xs font-mono mt-1">
+                              Example: Provider A (priority 5) → scores boosted → then interleaved with other providers
+                            </p>
                           </div>
                         </AlertDescription>
                       </Alert>
@@ -1036,6 +1078,97 @@ export default function StreamChecker() {
                           <li>Improved reliability for viewers</li>
                         </ul>
                       </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Profile Failover</CardTitle>
+                      <CardDescription>
+                        Automatically retry failed streams with different profiles for better reliability
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-1">
+                          <Label htmlFor="profile_failover_enabled" className="text-base font-medium">
+                            Enable Profile Failover
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Test streams with multiple profiles if one fails
+                          </p>
+                        </div>
+                        <Switch
+                          id="profile_failover_enabled"
+                          checked={editedConfig?.profile_failover?.enabled ?? true}
+                          onCheckedChange={(checked) => updateConfigValue('profile_failover.enabled', checked)}
+                          disabled={!configEditing}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-1">
+                          <Label htmlFor="try_full_profiles" className="text-base font-medium">
+                            Try Full Profiles (Phase 2)
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Wait for full profiles to become available if all free profiles fail
+                          </p>
+                        </div>
+                        <Switch
+                          id="try_full_profiles"
+                          checked={editedConfig?.profile_failover?.try_full_profiles ?? true}
+                          onCheckedChange={(checked) => updateConfigValue('profile_failover.try_full_profiles', checked)}
+                          disabled={!configEditing || !editedConfig?.profile_failover?.enabled}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="phase2_max_wait">Phase 2 Maximum Wait Time (seconds)</Label>
+                        <Input
+                          id="phase2_max_wait"
+                          type="number"
+                          min="60"
+                          max="1800"
+                          value={editedConfig?.profile_failover?.phase2_max_wait ?? 600}
+                          onChange={(e) => updateConfigValue('profile_failover.phase2_max_wait', parseInt(e.target.value))}
+                          disabled={!configEditing || !editedConfig?.profile_failover?.enabled || !editedConfig?.profile_failover?.try_full_profiles}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Maximum time to wait for full profiles (default: 600s / 10 minutes)
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="phase2_poll_interval">Phase 2 Poll Interval (seconds)</Label>
+                        <Input
+                          id="phase2_poll_interval"
+                          type="number"
+                          min="5"
+                          max="60"
+                          value={editedConfig?.profile_failover?.phase2_poll_interval ?? 10}
+                          onChange={(e) => updateConfigValue('profile_failover.phase2_poll_interval', parseInt(e.target.value))}
+                          disabled={!configEditing || !editedConfig?.profile_failover?.enabled || !editedConfig?.profile_failover?.try_full_profiles}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          How often to check for free profiles (default: 10s)
+                        </p>
+                      </div>
+
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertTitle>How Profile Failover works</AlertTitle>
+                        <AlertDescription>
+                          <div className="space-y-2 mt-2">
+                            <p><strong>Phase 1 - Available Profiles:</strong></p>
+                            <p className="text-xs text-muted-foreground">Tests all profiles with free slots immediately (fast)</p>
+                            
+                            <p className="mt-2"><strong>Phase 2 - Full Profiles (optional):</strong></p>
+                            <p className="text-xs text-muted-foreground">Intelligently polls for profiles to become available every {editedConfig?.profile_failover?.phase2_poll_interval ?? 10}s</p>
+                            <p className="text-xs text-muted-foreground">Stops after {editedConfig?.profile_failover?.phase2_max_wait ?? 600}s or when all profiles tested</p>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
                     </CardContent>
                   </Card>
                 </TabsContent>

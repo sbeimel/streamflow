@@ -2958,6 +2958,94 @@ def apply_account_limits_to_channels():
         logger.error(f"Error applying account limits: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/stream-checker/test-streams-without-stats', methods=['POST'])
+def test_streams_without_stats():
+    """Test all streams that have no quality stats (never been checked).
+    
+    This is useful for:
+    - Testing newly added streams
+    - Retesting streams that failed during initial check
+    - Ensuring all streams have quality data
+    
+    Only tests streams where stream_stats is null or empty.
+    """
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        # Get UDI manager to find streams without stats
+        from udi.manager import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Get all channels
+        channels = udi.get_channels()
+        streams_to_test = []
+        channel_count = 0
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+            
+            # Get streams for this channel
+            streams = udi.get_channel_streams(channel_id)
+            if not streams:
+                continue
+            
+            # Find streams without stats
+            channel_has_streams_to_test = False
+            for stream in streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                # Get full stream data
+                stream_data = udi.get_stream_by_id(stream_id)
+                if not stream_data:
+                    continue
+                
+                # Check if stream has stats
+                stream_stats = stream_data.get('stream_stats')
+                if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+                    streams_to_test.append({
+                        'stream_id': stream_id,
+                        'stream_name': stream.get('name', 'Unknown'),
+                        'channel_id': channel_id,
+                        'channel_name': channel.get('name', f'Channel {channel_id}')
+                    })
+                    channel_has_streams_to_test = True
+            
+            if channel_has_streams_to_test:
+                channel_count += 1
+        
+        if not streams_to_test:
+            return jsonify({
+                "message": "No streams without stats found",
+                "streams_found": 0,
+                "channels_affected": 0
+            })
+        
+        # Queue channels for checking with force_check flag
+        channels_to_check = list(set(s['channel_id'] for s in streams_to_test))
+        
+        for channel_id in channels_to_check:
+            service.queue_channel(channel_id, priority=20, force_check=True)
+        
+        return jsonify({
+            "message": f"Queued {len(streams_to_test)} stream(s) without stats for testing",
+            "streams_found": len(streams_to_test),
+            "channels_affected": len(channels_to_check),
+            "status": "queued",
+            "description": f"Testing streams from {len(channels_to_check)} channel(s)"
+        })
+    
+    except Exception as e:
+        logger.error(f"Error testing streams without stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ============================================================================
 # Scheduling API Endpoints
 # ============================================================================

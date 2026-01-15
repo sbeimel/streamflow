@@ -107,6 +107,7 @@ export const streamCheckerAPI = {
   markUpdated: (data) => api.post('/stream-checker/mark-updated', data),
   queueAllChannels: () => api.post('/stream-checker/queue-all'),
   triggerGlobalAction: () => api.post('/stream-checker/global-action'),
+  testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
 };
 
 export const changelogAPI = {
