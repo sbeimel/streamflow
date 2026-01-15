@@ -2481,3 +2481,399 @@ INFO - Stream 123: ✅ SUCCESS with additional profile Free2 (ID: 3) after waiti
 
 See `PROFILE_FAILOVER_README.md` for complete documentation.
 
+
+
+---
+
+# Profile Failover v2.0 Update - Intelligent Polling
+
+## Updated Phase 2 Implementation
+
+**Replace the Phase 2 section in `_analyze_stream_with_profile_failover()` with intelligent polling:**
+
+```python
+# Phase 2: All available profiles failed - try ALL profiles (including full ones) with intelligent polling
+if udi and stream.get('m3u_account'):
+    all_profiles = udi.get_all_profiles_for_stream(stream)
+    tried_profile_ids = {p.get('id') for p in available_profiles}
+    remaining_profiles = [p for p in all_profiles if p.get('id') not in tried_profile_ids]
+    
+    if remaining_profiles:
+        # Get Phase 2 configuration
+        phase2_enabled = self.config.get('profile_failover', {}).get('try_full_profiles', True)
+        
+        if not phase2_enabled:
+            logger.info(f"Stream {stream_id} ({stream_name}): Phase 2 disabled, skipping {len(remaining_profiles)} full profile(s)")
+        else:
+            phase2_max_wait = self.config.get('profile_failover', {}).get('phase2_max_wait', 600)
+            phase2_poll_interval = self.config.get('profile_failover', {}).get('phase2_poll_interval', 10)
+            
+            logger.warning(f"Stream {stream_id} ({stream_name}): Phase 2 - All available profiles failed, trying {len(remaining_profiles)} additional profile(s) with intelligent polling")
+            logger.info(f"Stream {stream_id}: Phase 2 config - max_wait: {phase2_max_wait}s, poll_interval: {phase2_poll_interval}s")
+            
+            import time
+            start_time = time.time()
+            tested_profile_ids = set(tried_profile_ids)
+            
+            # Intelligent polling loop
+            while remaining_profiles and (time.time() - start_time) < phase2_max_wait:
+                # Check which profiles are NOW available
+                currently_available = udi.get_all_available_profiles_for_stream(stream)
+                currently_available_ids = {p.get('id') for p in currently_available}
+                
+                # Find profiles that are NOW available AND not yet tested
+                newly_available = [
+                    p for p in remaining_profiles 
+                    if p.get('id') in currently_available_ids 
+                    and p.get('id') not in tested_profile_ids
+                ]
+                
+                if newly_available:
+                    profile = newly_available[0]
+                    profile_id = profile.get('id')
+                    profile_name = profile.get('name', f'Profile {profile_id}')
+                    
+                    try:
+                        stream_url = udi.apply_profile_url_transformation(stream, profile)
+                        elapsed = time.time() - start_time
+                        logger.info(f"Stream {stream_id}: Testing newly available profile {profile_name} (ID: {profile_id}) [elapsed: {elapsed:.1f}s]")
+                        
+                        proxy = get_stream_proxy(stream_id)
+                        
+                        analyzed = analyze_stream(
+                            stream_url=stream_url,
+                            stream_id=stream_id,
+                            stream_name=stream_name,
+                            ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                            timeout=analysis_params.get('timeout', 30),
+                            retries=analysis_params.get('retries', 1),
+                            retry_delay=analysis_params.get('retry_delay', 10),
+                            user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                            stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
+                            proxy=proxy
+                        )
+                        
+                        tested_profile_ids.add(profile_id)
+                        remaining_profiles = [p for p in remaining_profiles if p.get('id') != profile_id]
+                        
+                        if not self._is_stream_dead(analyzed) and analyzed.get('status') == 'OK':
+                            logger.info(f"Stream {stream_id}: ✅ SUCCESS with profile {profile_name} (ID: {profile_id}) in Phase 2")
+                            analyzed['used_profile_id'] = profile_id
+                            analyzed['used_profile_name'] = profile_name
+                            analyzed['profile_failover_attempts'] = len(tested_profile_ids)
+                            analyzed['profile_failover_phase'] = 2
+                            analyzed['phase2_elapsed_time'] = time.time() - start_time
+                            return analyzed
+                        else:
+                            status = analyzed.get('status', 'Unknown')
+                            logger.warning(f"Stream {stream_id}: ❌ FAILED with profile {profile_name} (ID: {profile_id}) - Status: {status}")
+                            last_error = analyzed
+                            
+                    except Exception as e:
+                        logger.error(f"Stream {stream_id}: ❌ ERROR with profile {profile_name} (ID: {profile_id}): {e}")
+                        tested_profile_ids.add(profile_id)
+                        remaining_profiles = [p for p in remaining_profiles if p.get('id') != profile_id]
+                        last_error = {
+                            'stream_id': stream_id,
+                            'stream_name': stream_name,
+                            'stream_url': stream.get('url', ''),
+                            'status': 'Error',
+                            'error': str(e)
+                        }
+                else:
+                    if remaining_profiles:
+                        elapsed = time.time() - start_time
+                        remaining_time = phase2_max_wait - elapsed
+                        logger.debug(f"Stream {stream_id}: No profiles available, waiting {phase2_poll_interval}s (elapsed: {elapsed:.1f}s, remaining: {remaining_time:.1f}s)")
+                        time.sleep(phase2_poll_interval)
+            
+            elapsed = time.time() - start_time
+            if remaining_profiles:
+                logger.warning(f"Stream {stream_id}: Phase 2 timeout after {elapsed:.1f}s, {len(remaining_profiles)} profile(s) not tested")
+            else:
+                logger.info(f"Stream {stream_id}: Phase 2 completed after {elapsed:.1f}s, all profiles tested")
+```
+
+## Updated Configuration
+
+**Update DEFAULT_CONFIG in `backend/stream_checker_service.py`:**
+
+```python
+'profile_failover': {
+    'enabled': True,
+    'try_full_profiles': True,
+    'phase2_max_wait': 600,  # Maximum wait time in Phase 2 (seconds)
+    'phase2_poll_interval': 10  # Check for free profiles every X seconds
+}
+```
+
+---
+
+# New Feature: Test Streams Without Stats
+
+## Backend Endpoint
+
+**File: `backend/web_api.py`**
+
+Add after `apply_account_limits_to_channels()`:
+
+```python
+@app.route('/api/stream-checker/test-streams-without-stats', methods=['POST'])
+def test_streams_without_stats():
+    """Test all streams that have no quality stats (never been checked)."""
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        from udi.manager import get_udi_manager
+        udi = get_udi_manager()
+        
+        channels = udi.get_channels()
+        streams_to_test = []
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+            
+            streams = udi.get_channel_streams(channel_id)
+            if not streams:
+                continue
+            
+            for stream in streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                stream_data = udi.get_stream_by_id(stream_id)
+                if not stream_data:
+                    continue
+                
+                stream_stats = stream_data.get('stream_stats')
+                if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+                    streams_to_test.append({
+                        'stream_id': stream_id,
+                        'channel_id': channel_id
+                    })
+        
+        if not streams_to_test:
+            return jsonify({
+                "message": "No streams without stats found",
+                "streams_found": 0,
+                "channels_affected": 0
+            })
+        
+        channels_to_check = list(set(s['channel_id'] for s in streams_to_test))
+        
+        for channel_id in channels_to_check:
+            service.queue_channel(channel_id, priority=20, force_check=True)
+        
+        return jsonify({
+            "message": f"Queued {len(streams_to_test)} stream(s) without stats for testing",
+            "streams_found": len(streams_to_test),
+            "channels_affected": len(channels_to_check),
+            "status": "queued"
+        })
+    
+    except Exception as e:
+        logger.error(f"Error testing streams without stats: {e}")
+        return jsonify({"error": str(e)}), 500
+```
+
+## Frontend API
+
+**File: `frontend/src/services/api.js`**
+
+```javascript
+export const streamCheckerAPI = {
+  // ... existing functions ...
+  triggerGlobalAction: () => api.post('/stream-checker/global-action'),
+  testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
+};
+```
+
+## Frontend Button
+
+**File: `frontend/src/pages/StreamChecker.jsx`**
+
+Add TestTube icon import:
+```javascript
+import { 
+  // ... existing imports ...
+  TestTube
+} from 'lucide-react'
+```
+
+Add handler:
+```javascript
+const handleTestStreamsWithoutStats = async () => {
+  try {
+    setActionLoading('test-without-stats')
+    const response = await streamCheckerAPI.testStreamsWithoutStats()
+    toast({
+      title: "Success",
+      description: response.data.message
+    })
+    await loadData()
+  } catch (err) {
+    toast({
+      title: "Error",
+      description: err.response?.data?.error || "Failed to test streams without stats",
+      variant: "destructive"
+    })
+  } finally {
+    setActionLoading('')
+  }
+}
+```
+
+Add button:
+```jsx
+<Button
+  onClick={handleTestStreamsWithoutStats}
+  disabled={actionLoading === 'test-without-stats' || isChecking}
+  variant="outline"
+>
+  {actionLoading === 'test-without-stats' ? (
+    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+  ) : (
+    <TestTube className="mr-2 h-4 w-4" />
+  )}
+  Test Streams Without Stats
+</Button>
+```
+
+---
+
+# Frontend Profile Failover Settings
+
+**File: `frontend/src/pages/StreamChecker.jsx`**
+
+Add in Stream Ordering tab:
+
+```jsx
+<Card>
+  <CardHeader>
+    <CardTitle>Profile Failover</CardTitle>
+    <CardDescription>
+      Automatically retry failed streams with different profiles
+    </CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <div className="flex items-center justify-between rounded-lg border p-4">
+      <div className="space-y-1">
+        <Label htmlFor="profile_failover_enabled">Enable Profile Failover</Label>
+        <p className="text-sm text-muted-foreground">
+          Test streams with multiple profiles if one fails
+        </p>
+      </div>
+      <Switch
+        id="profile_failover_enabled"
+        checked={editedConfig?.profile_failover?.enabled ?? true}
+        onCheckedChange={(checked) => updateConfigValue('profile_failover.enabled', checked)}
+        disabled={!configEditing}
+      />
+    </div>
+
+    <div className="flex items-center justify-between rounded-lg border p-4">
+      <div className="space-y-1">
+        <Label htmlFor="try_full_profiles">Try Full Profiles (Phase 2)</Label>
+        <p className="text-sm text-muted-foreground">
+          Wait for full profiles to become available
+        </p>
+      </div>
+      <Switch
+        id="try_full_profiles"
+        checked={editedConfig?.profile_failover?.try_full_profiles ?? true}
+        onCheckedChange={(checked) => updateConfigValue('profile_failover.try_full_profiles', checked)}
+        disabled={!configEditing || !editedConfig?.profile_failover?.enabled}
+      />
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="phase2_max_wait">Phase 2 Maximum Wait Time (seconds)</Label>
+      <Input
+        id="phase2_max_wait"
+        type="number"
+        min="60"
+        max="1800"
+        value={editedConfig?.profile_failover?.phase2_max_wait ?? 600}
+        onChange={(e) => updateConfigValue('profile_failover.phase2_max_wait', parseInt(e.target.value))}
+        disabled={!configEditing || !editedConfig?.profile_failover?.enabled || !editedConfig?.profile_failover?.try_full_profiles}
+      />
+      <p className="text-xs text-muted-foreground">
+        Maximum time to wait for full profiles (default: 600s)
+      </p>
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="phase2_poll_interval">Phase 2 Poll Interval (seconds)</Label>
+      <Input
+        id="phase2_poll_interval"
+        type="number"
+        min="5"
+        max="60"
+        value={editedConfig?.profile_failover?.phase2_poll_interval ?? 10}
+        onChange={(e) => updateConfigValue('profile_failover.phase2_poll_interval', parseInt(e.target.value))}
+        disabled={!configEditing || !editedConfig?.profile_failover?.enabled || !editedConfig?.profile_failover?.try_full_profiles}
+      />
+      <p className="text-xs text-muted-foreground">
+        How often to check for free profiles (default: 10s)
+      </p>
+    </div>
+
+    <Alert>
+      <Info className="h-4 w-4" />
+      <AlertTitle>How Profile Failover works</AlertTitle>
+      <AlertDescription>
+        <div className="space-y-2 mt-2">
+          <p><strong>Phase 1:</strong> Tests all profiles with free slots immediately (fast)</p>
+          <p><strong>Phase 2:</strong> Intelligently polls for profiles every {editedConfig?.profile_failover?.phase2_poll_interval ?? 10}s</p>
+          <p className="text-xs text-muted-foreground">
+            Stops after {editedConfig?.profile_failover?.phase2_max_wait ?? 600}s or when all profiles tested
+          </p>
+        </div>
+      </AlertDescription>
+    </Alert>
+  </CardContent>
+</Card>
+```
+
+---
+
+# Priority + Diversification Info
+
+**Update Provider Diversification Alert:**
+
+```jsx
+<Alert>
+  <Info className="h-4 w-4" />
+  <AlertTitle>How it works</AlertTitle>
+  <AlertDescription>
+    <div className="space-y-2 mt-2">
+      <p><strong>Without diversification:</strong></p>
+      <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93)...</p>
+      <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
+      
+      <p className="mt-3"><strong>With diversification:</strong></p>
+      <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89)...</p>
+      <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over</p>
+      
+      <p className="mt-3"><strong>With M3U Account Priority System:</strong></p>
+      <p className="text-xs text-muted-foreground">
+        Priority boosts are applied to stream scores BEFORE diversification. 
+        Higher priority providers get better scores, then diversification interleaves them.
+      </p>
+    </div>
+  </AlertDescription>
+</Alert>
+```
+
+---
+
+## Version History
+
+- **v1.0**: Initial enhancements (Provider Diversification, Fallback Score Fix, Profile Failover v1)
+- **v2.0**: Profile Failover v2 with intelligent polling, Test Streams Without Stats button, Priority+Diversification info
