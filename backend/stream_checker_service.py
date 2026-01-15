@@ -1892,34 +1892,38 @@ class StreamCheckerService:
                     step_detail=f'Using smart scheduler with per-account limits'
                 )
                 
-                # Create a wrapper function that includes proxy support
-                def analyze_stream_with_proxy(stream_url, stream_id, stream_name, **kwargs):
-                    """Wrapper function that adds proxy support to analyze_stream for concurrent checking."""
-                    # Get HTTP proxy for this stream from its M3U account
-                    from api_utils import get_stream_proxy
-                    proxy = get_stream_proxy(stream_id)
+                # Create a wrapper function that uses profile failover
+                def analyze_stream_with_profile_failover_wrapper(stream_url, stream_id, stream_name, **kwargs):
+                    """Wrapper function that uses profile failover for concurrent checking.
                     
-                    # Call analyze_stream with proxy parameter
-                    return analyze_stream(
-                        stream_url=stream_url,
-                        stream_id=stream_id,
-                        stream_name=stream_name,
-                        proxy=proxy,
-                        **kwargs
+                    Note: stream_url parameter is ignored - we get the stream from UDI and let
+                    profile failover handle URL transformation per profile.
+                    """
+                    # Get full stream data from UDI
+                    stream = udi.get_stream_by_id(stream_id)
+                    if not stream:
+                        logger.error(f"Stream {stream_id} not found in UDI")
+                        return {
+                            'stream_id': stream_id,
+                            'stream_name': stream_name,
+                            'stream_url': stream_url,
+                            'status': 'Error',
+                            'error': 'Stream not found in UDI'
+                        }
+                    
+                    # Use profile failover analysis (Phase 1 + Phase 2)
+                    return self._analyze_stream_with_profile_failover(
+                        stream=stream,
+                        analysis_params=analysis_params,
+                        udi=udi
                     )
                 
-                # Check streams in parallel with account-aware limits
+                # Check streams in parallel with account-aware limits and profile failover
                 results = smart_scheduler.check_streams_with_limits(
                     streams=streams_to_check,
-                    check_function=analyze_stream_with_proxy,
+                    check_function=analyze_stream_with_profile_failover_wrapper,
                     progress_callback=progress_callback,
-                    stagger_delay=stagger_delay,
-                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
-                    timeout=analysis_params.get('timeout', 30),
-                    retries=analysis_params.get('retries', 1),
-                    retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
-                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
+                    stagger_delay=stagger_delay
                 )
                 
                 # Process results - ALL checks are complete at this point
