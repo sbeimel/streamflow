@@ -3889,8 +3889,14 @@ class StreamCheckerService:
                 limited_streams.append(stream_data)
                 continue
             
+            # Ensure m3u_account is hashable (convert to string if needed)
+            if isinstance(m3u_account, dict):
+                account_key = str(m3u_account.get('id', m3u_account))
+            else:
+                account_key = str(m3u_account)
+            
             # Determine limit for this account
-            account_limit = account_specific_limits.get(str(m3u_account), global_limit)
+            account_limit = account_specific_limits.get(account_key, global_limit)
             
             # If limit is 0, no limit applies
             if account_limit == 0:
@@ -3898,14 +3904,14 @@ class StreamCheckerService:
                 continue
             
             # Check if we're within the limit for this account
-            if account_counts[m3u_account] < account_limit:
+            if account_counts[account_key] < account_limit:
                 limited_streams.append(stream_data)
-                account_counts[m3u_account] += 1
-                logger.debug(f"Keeping stream {stream_id} from account {m3u_account} (score: {stream_data.get('score', 0):.2f}, {account_counts[m3u_account]}/{account_limit})")
+                account_counts[account_key] += 1
+                logger.debug(f"Keeping stream {stream_id} from account {account_key} (score: {stream_data.get('score', 0):.2f}, {account_counts[account_key]}/{account_limit})")
             else:
                 # Stream exceeds limit - remove it (keeping only the best ones)
                 removed_count += 1
-                logger.debug(f"Removing stream {stream_id} from account {m3u_account} (score: {stream_data.get('score', 0):.2f}) - exceeds limit ({account_limit})")
+                logger.debug(f"Removing stream {stream_id} from account {account_key} (score: {stream_data.get('score', 0):.2f}) - exceeds limit ({account_limit})")
         
         if removed_count > 0:
             logger.info(f"Applied account stream limits: kept {len(limited_streams)} streams, removed {removed_count} lower-quality streams from channel {channel_name}")
@@ -3965,7 +3971,14 @@ class StreamCheckerService:
                 # Custom streams without provider
                 streams_without_provider.append(stream_data)
             else:
-                provider_streams[m3u_account].append(stream_data)
+                # Ensure m3u_account is hashable (convert to string if needed)
+                if isinstance(m3u_account, dict):
+                    # If it's a dict, use the ID field or convert to string
+                    account_key = str(m3u_account.get('id', m3u_account))
+                else:
+                    account_key = str(m3u_account)
+                
+                provider_streams[account_key].append(stream_data)
         
         # If only one provider or no providers, return original order
         if len(provider_streams) <= 1:

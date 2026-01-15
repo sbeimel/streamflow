@@ -2011,7 +2011,14 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
             # Custom streams without provider
             streams_without_provider.append(stream_data)
         else:
-            provider_streams[m3u_account].append(stream_data)
+            # Ensure m3u_account is hashable (convert to string if needed)
+            if isinstance(m3u_account, dict):
+                # If it's a dict, use the ID field or convert to string
+                account_key = str(m3u_account.get('id', m3u_account))
+            else:
+                account_key = str(m3u_account)
+            
+            provider_streams[account_key].append(stream_data)
     
     # If only one provider or no providers, return original order
     if len(provider_streams) <= 1:
