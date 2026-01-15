@@ -72,6 +72,22 @@ Die folgenden Dateien müssen noch manuell aktualisiert werden, da sie sehr umfa
 
 ## 🎯 Neue Features in v2.1
 
+### Feature 1: Provider Diversification v2.0 🔄 AKTUALISIERT
+
+**Dateien:**
+- Backend: `backend/stream_checker_service.py`
+- Frontend: `frontend/src/pages/StreamChecker.jsx`
+- Doku: `../PROVIDER_DIVERSIFICATION_README.md`
+
+**Neu in v2.0:**
+- ✅ **Dual-Mode Support:** Round Robin + Priority Weighted
+- ✅ **Round Robin Mode:** Alphabetische Provider-Rotation (A → B → C)
+- ✅ **Priority Weighted Mode:** M3U-Prioritäts-basierte Rotation (Premium → Basic)
+- ✅ **UI-Auswahl:** Radio Buttons für Mode-Auswahl
+- ✅ **M3U Integration:** Perfekte Kombination mit M3U Account Priority System
+
+---
+
 ### Feature 3: Account Stream Limits ⭐ NEU
 
 **Dateien:**
@@ -183,17 +199,22 @@ git apply git_pulls/patches/00_complete_enhancements.patch
 ### 2. Neue Features testen
 
 ```bash
-# 1. Account Limits setzen
+# 1. Provider Diversification v2.0 testen
+# Stream Checker → Stream Ordering → Provider Diversification
+# - Enable Provider Diversification: ON
+# - Mode: Priority Weighted (für M3U Priority Integration)
+
+# 2. Account Limits setzen
 # Stream Checker → Account Limits Tab → Global Limit: 3
 
-# 2. Quality Preferences setzen
+# 3. Quality Preferences setzen
 # Channel Configuration → Quality Preference: max_1080p
 
-# 3. Re-Score & Re-Sort testen (HIGHLIGHT!)
+# 4. Re-Score & Re-Sort testen (HIGHLIGHT!)
 # Dashboard → Quick Actions → "Re-Score & Re-Sort"
 # Sollte 2-5 Sekunden dauern!
 
-# 4. Test Streams Without Stats
+# 5. Test Streams Without Stats
 # Dashboard → Quick Actions → "Test Streams Without Stats"
 ```
 
@@ -247,6 +268,7 @@ Alle Features sind vollständig dokumentiert im Hauptverzeichnis:
 ### Patches
 
 - [ ] 00_complete_enhancements.patch (aus streamflow_enhancements.patch kopieren)
+- [ ] 01_provider_diversification.patch (auf v2.0 aktualisieren - dual-mode)
 - [ ] 03_account_stream_limits.patch (extrahieren)
 - [ ] 04_quality_preferences.patch (extrahieren)
 - [ ] 05_profile_failover_v2.patch (extrahieren)
@@ -286,6 +308,7 @@ Alle Features sind aufeinander abgestimmt und getestet.
 ## 🎉 Zusammenfassung
 
 **v2.1 ist ein MAJOR UPDATE:**
+- 1 aktualisiertes Feature (Provider Diversification v2.0)
 - 5 neue Features
 - Massive Performance-Verbesserung (Re-Score & Re-Sort)
 - Bessere User Experience

@@ -12,7 +12,7 @@
 
 | # | Feature | Version | Status |
 |---|---------|---------|--------|
-| 1 | Provider Diversification | v1.0 | ✅ Bereits vorhanden |
+| 1 | **Provider Diversification v2.0** | v2.0 | 🔄 AKTUALISIERT |
 | 2 | Fallback Score Fix | v1.0 | ✅ Bereits vorhanden |
 | 3 | **Account Stream Limits** | v2.0 | ➕ NEU |
 | 4 | **Channel Quality Preferences** | v2.0 | ➕ NEU |
@@ -36,7 +36,7 @@
 ### Patches
 
 - ⏳ `patches/00_complete_enhancements.patch` - Muss mit streamflow_enhancements.patch synchronisiert werden
-- ✅ `patches/01_provider_diversification.patch` - Bereits vorhanden
+- 🔄 `patches/01_provider_diversification.patch` - Aktualisieren auf v2.0 (dual-mode)
 - ✅ `patches/02_fallback_score_fix.patch` - Bereits vorhanden
 - ➕ `patches/03_account_stream_limits.patch` - Neu erstellen
 - ➕ `patches/04_quality_preferences.patch` - Neu erstellen
@@ -47,6 +47,46 @@
 ---
 
 ## 🎯 Neue Features im Detail
+
+### Feature 1: Provider Diversification v2.0 (AKTUALISIERT)
+
+**Was:** Dual-Mode Provider Diversification mit M3U Priority Support
+
+**Neu in v2.0:**
+- ✅ **Round Robin Mode:** Alphabetische Provider-Rotation (A → B → C)
+- ✅ **Priority Weighted Mode:** M3U-Prioritäts-basierte Provider-Rotation (Premium → Basic)
+- ✅ **UI-Auswahl:** Radio Buttons für Mode-Auswahl in Stream Checker
+- ✅ **Intelligente Integration:** Perfekte Kombination mit M3U Account Priority System
+
+**Modi im Vergleich:**
+
+| Modus | Provider-Reihenfolge | Ideal für |
+|-------|---------------------|-----------|
+| Round Robin | Alphabetisch (A → B → C) | Gleichwertige Provider |
+| Priority Weighted | Nach M3U-Priorität (Premium → Basic) | Premium/Basic Setups |
+
+**Beispiel Priority Weighted:**
+```
+Provider: Premium(100), Basic(10)
+Scores: Premium(50.95), Basic(5.92)
+Reihenfolge: Premium → Basic → Premium → Basic...
+```
+
+**Konfiguration:**
+```json
+{
+  "stream_ordering": {
+    "provider_diversification": true,
+    "diversification_mode": "priority_weighted"
+  }
+}
+```
+
+**UI:** Stream Checker → Stream Ordering → Provider Diversification → Mode Selection
+
+**Dokumentation:** `../PROVIDER_DIVERSIFICATION_README.md`
+
+---
 
 ### Feature 3: Account Stream Limits
 
@@ -239,6 +279,7 @@ cd frontend && npm test
 ### Patches
 
 - [ ] 00_complete_enhancements.patch mit streamflow_enhancements.patch synchronisieren
+- [ ] 01_provider_diversification.patch auf v2.0 aktualisieren (dual-mode)
 - [ ] 03_account_stream_limits.patch erstellen
 - [ ] 04_quality_preferences.patch erstellen
 - [ ] 05_profile_failover_v2.patch erstellen
@@ -256,14 +297,17 @@ cd frontend && npm test
 
 ## 🎉 Zusammenfassung
 
-**v2.1 bringt 5 neue Features:**
+**v2.1 bringt 1 aktualisiertes + 5 neue Features:**
+- Provider Diversification v2.0 (Dual-Mode mit M3U Priority Support)
 - Account Stream Limits (Flexibilität)
 - Quality Preferences (Kontrolle)
 - Profile Failover v2.0 (Geschwindigkeit)
 - Test Streams Without Stats (Effizienz)
 - Re-Score & Re-Sort (Performance)
 
-**Hauptvorteil:** Re-Score & Re-Sort ermöglicht Konfigurations-Änderungen in **2-5 Sekunden** statt 30-60 Minuten!
+**Hauptvorteile:** 
+- **Re-Score & Re-Sort:** Konfigurations-Änderungen in **2-5 Sekunden** statt 30-60 Minuten!
+- **Provider Diversification v2.0:** Perfekte Integration mit M3U Priority System
 
 ---
 

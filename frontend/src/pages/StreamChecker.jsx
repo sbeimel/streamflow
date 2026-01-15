@@ -1078,6 +1078,58 @@ export default function StreamChecker() {
                         />
                       </div>
 
+                      {/* Diversification Mode Selection */}
+                      {editedConfig?.stream_ordering?.provider_diversification && (
+                        <div className="rounded-lg border p-4 space-y-3">
+                          <div className="space-y-1">
+                            <Label className="text-base font-medium">Diversification Mode</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Choose how providers are ordered during diversification
+                            </p>
+                          </div>
+                          
+                          <div className="space-y-3">
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="radio"
+                                id="mode_round_robin"
+                                name="diversification_mode"
+                                value="round_robin"
+                                checked={(editedConfig?.stream_ordering?.diversification_mode ?? 'round_robin') === 'round_robin'}
+                                onChange={(e) => updateConfigValue('stream_ordering.diversification_mode', e.target.value)}
+                                disabled={!configEditing}
+                                className="h-4 w-4"
+                              />
+                              <Label htmlFor="mode_round_robin" className="text-sm font-medium">
+                                Round Robin (Alphabetical)
+                              </Label>
+                            </div>
+                            <p className="text-xs text-muted-foreground ml-6">
+                              Providers ordered alphabetically: A → B → C → A → B → C...
+                            </p>
+                            
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="radio"
+                                id="mode_priority_weighted"
+                                name="diversification_mode"
+                                value="priority_weighted"
+                                checked={(editedConfig?.stream_ordering?.diversification_mode ?? 'round_robin') === 'priority_weighted'}
+                                onChange={(e) => updateConfigValue('stream_ordering.diversification_mode', e.target.value)}
+                                disabled={!configEditing}
+                                className="h-4 w-4"
+                              />
+                              <Label htmlFor="mode_priority_weighted" className="text-sm font-medium">
+                                Priority Weighted
+                              </Label>
+                            </div>
+                            <p className="text-xs text-muted-foreground ml-6">
+                              Providers ordered by M3U priority: Premium(100) → Basic(10) → Premium(100) → Basic(10)...
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       <Alert>
                         <Info className="h-4 w-4" />
                         <AlertTitle>How it works</AlertTitle>
@@ -1087,17 +1139,18 @@ export default function StreamChecker() {
                             <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
                             <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
                             
-                            <p className="mt-3"><strong>With diversification:</strong></p>
+                            <p className="mt-3"><strong>Round Robin Mode:</strong></p>
                             <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
-                            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
+                            <p className="text-xs text-muted-foreground">✅ Simple alphabetical provider rotation</p>
+                            
+                            <p className="mt-3"><strong>Priority Weighted Mode:</strong></p>
+                            <p className="text-xs font-mono">Premium(100) (50.95), Basic(10) (5.92), Premium(100) (50.94), Basic(10) (5.91)...</p>
+                            <p className="text-xs text-muted-foreground">✅ Respects M3U priorities while maintaining diversification</p>
                             
                             <p className="mt-3"><strong>With M3U Account Priority System:</strong></p>
                             <p className="text-xs text-muted-foreground">
                               Priority boosts are applied to stream scores BEFORE diversification. 
-                              Higher priority providers get better scores, then diversification interleaves them.
-                            </p>
-                            <p className="text-xs font-mono mt-1">
-                              Example: Provider A (priority 5) → scores boosted → then interleaved with other providers
+                              In Priority Weighted mode, providers are then ordered by their M3U priority.
                             </p>
                           </div>
                         </AlertDescription>

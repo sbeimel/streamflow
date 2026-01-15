@@ -1859,7 +1859,7 @@ Added new configuration option:
 ```python
 'stream_ordering': {
     'provider_diversification': False,  # Enable provider diversification
-    'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
+    'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'priority_weighted'
 }
 ```
 
@@ -1957,25 +1957,33 @@ DEBUG - Channel 123: Only 1 provider(s), skipping diversification
 ```diff
 +        'stream_ordering': {
 +            'provider_diversification': False,  # Enable provider diversification for better redundancy
-+            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'weighted'
++            'diversification_mode': 'round_robin'  # Mode: 'round_robin' or 'priority_weighted'
 +        }
 ```
 
-**2. Add new method `_apply_provider_diversification()`:**
+**2. Add new method `_apply_provider_diversification()` with dual-mode support:**
 
 ```python
 def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
     """Apply provider diversification to stream ordering for better redundancy.
     
-    Instead of sorting purely by score (which groups all streams from the best provider together),
-    this method interleaves streams from different providers in a round-robin fashion.
+    Supports two modes:
+    1. 'round_robin': Alphabetical/ID-based provider ordering (simple round-robin)
+    2. 'priority_weighted': M3U Priority-based provider ordering (priority-weighted round-robin)
     
-    Example:
+    Mode 1 - Round Robin (alphabetical):
         Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
         After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
     
-    This ensures that if one provider fails, the next stream is from a different provider,
-    providing better failover and redundancy.
+    Mode 2 - Priority Weighted (by M3U priority):
+        Providers: A(prio:100), B(prio:50), C(prio:10)
+        Before: [A1(50.95), A2(50.94), A3(50.93), B1(5.92), B2(5.91), C1(1.89)]
+        After:  [A1(50.95), B1(5.92), C1(1.89), A2(50.94), B2(5.91), A3(50.93)]
+    
+    This ensures:
+    - Better failover and redundancy (if one provider fails, next is different)
+    - Respects M3U priorities in priority_weighted mode
+    - Simple alphabetical ordering in round_robin mode
     
     Args:
         analyzed_streams: List of analyzed streams sorted by score
@@ -1987,9 +1995,19 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
     if not analyzed_streams:
         return analyzed_streams
     
+    # Get diversification mode from config
+    diversification_mode = self.config.get('stream_ordering', {}).get('diversification_mode', 'round_robin')
+    
     # Get UDI manager to look up stream providers (M3U accounts)
     udi = get_udi_manager()
     
+    if diversification_mode == 'priority_weighted':
+        return self._apply_priority_weighted_diversification(analyzed_streams, channel_id, udi)
+    else:
+        return self._apply_round_robin_diversification(analyzed_streams, channel_id, udi)
+
+def _apply_round_robin_diversification(self, analyzed_streams: List[Dict], channel_id: int, udi) -> List[Dict]:
+    """Apply simple round-robin diversification (alphabetical provider ordering)."""
     # Group streams by provider (M3U account)
     provider_streams = defaultdict(list)
     streams_without_provider = []
@@ -2013,7 +2031,6 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
         else:
             # Ensure m3u_account is hashable (convert to string if needed)
             if isinstance(m3u_account, dict):
-                # If it's a dict, use the ID field or convert to string
                 account_key = str(m3u_account.get('id', m3u_account))
             else:
                 account_key = str(m3u_account)
@@ -2025,21 +2042,106 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
         logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
         return analyzed_streams
     
-    # Apply round-robin diversification
+    # Apply simple round-robin diversification (alphabetical provider order)
     diversified_streams = []
     max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
     
-    # Interleave streams from different providers
-    for i in range(max_streams_per_provider):
-        for provider_id in sorted(provider_streams.keys()):
-            streams = provider_streams[provider_id]
-            if i < len(streams):
-                diversified_streams.append(streams[i])
+    # Sort providers alphabetically for consistent ordering
+    sorted_provider_keys = sorted(provider_streams.keys())
+    
+    logger.info(f"Channel {channel_id}: Round-robin diversification order: {' → '.join(sorted_provider_keys)}")
+    
+    # Interleave streams from different providers (alphabetical order)
+    for stream_index in range(max_streams_per_provider):
+        for provider_key in sorted_provider_keys:
+            streams = provider_streams[provider_key]
+            if stream_index < len(streams):
+                stream = streams[stream_index]
+                diversified_streams.append(stream)
+                logger.debug(f"Channel {channel_id}: Position {len(diversified_streams)}: Provider {provider_key} stream {stream_index+1} (score: {stream.get('score', 0):.2f})")
     
     # Append streams without provider at the end
     diversified_streams.extend(streams_without_provider)
     
-    logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
+    logger.info(f"Channel {channel_id}: Applied round-robin provider diversification - {len(provider_streams)} providers interleaved alphabetically")
+    
+    return diversified_streams
+
+def _apply_priority_weighted_diversification(self, analyzed_streams: List[Dict], channel_id: int, udi) -> List[Dict]:
+    """Apply priority-weighted diversification (M3U priority-based provider ordering)."""
+    # Group streams by provider (M3U account) with priority info
+    provider_info = {}  # {account_key: {'priority': int, 'streams': [...]}}
+    streams_without_provider = []
+    
+    for stream_data in analyzed_streams:
+        stream_id = stream_data.get('stream_id')
+        if not stream_id:
+            streams_without_provider.append(stream_data)
+            continue
+        
+        # Get stream to find its M3U account (provider)
+        stream = udi.get_stream_by_id(stream_id)
+        if not stream:
+            streams_without_provider.append(stream_data)
+            continue
+        
+        m3u_account = stream.get('m3u_account')
+        if m3u_account is None:
+            # Custom streams without provider
+            streams_without_provider.append(stream_data)
+        else:
+            # Ensure m3u_account is hashable (convert to string if needed)
+            if isinstance(m3u_account, dict):
+                account_key = str(m3u_account.get('id', m3u_account))
+                account_id = m3u_account.get('id', account_key)
+            else:
+                account_key = str(m3u_account)
+                account_id = m3u_account
+            
+            # Get provider priority
+            if account_key not in provider_info:
+                # Get M3U account info for priority
+                m3u_account_data = udi.get_m3u_account_by_id(account_id)
+                priority = m3u_account_data.get('priority', 0) if m3u_account_data else 0
+                
+                provider_info[account_key] = {
+                    'priority': priority,
+                    'streams': []
+                }
+            
+            provider_info[account_key]['streams'].append(stream_data)
+    
+    # If only one provider or no providers, return original order
+    if len(provider_info) <= 1:
+        logger.debug(f"Channel {channel_id}: Only {len(provider_info)} provider(s), skipping diversification")
+        return analyzed_streams
+    
+    # Sort providers by priority (highest first)
+    sorted_providers = sorted(provider_info.items(), key=lambda x: x[1]['priority'], reverse=True)
+    
+    # Log provider priorities for debugging
+    priority_info = []
+    for account_key, info in sorted_providers:
+        priority_info.append(f"{account_key}(prio:{info['priority']}, {len(info['streams'])}streams)")
+    logger.info(f"Channel {channel_id}: Priority-weighted diversification order: {' → '.join(priority_info)}")
+    
+    # Apply Priority-Weighted Round-Robin diversification
+    diversified_streams = []
+    max_streams_per_provider = max(len(info['streams']) for _, info in sorted_providers)
+    
+    # Interleave streams: 1st from each provider (by priority), then 2nd from each, etc.
+    for stream_index in range(max_streams_per_provider):
+        for account_key, info in sorted_providers:
+            streams = info['streams']
+            if stream_index < len(streams):
+                stream = streams[stream_index]
+                diversified_streams.append(stream)
+                logger.debug(f"Channel {channel_id}: Position {len(diversified_streams)}: Provider {account_key} stream {stream_index+1} (score: {stream.get('score', 0):.2f})")
+    
+    # Append streams without provider at the end
+    diversified_streams.extend(streams_without_provider)
+    
+    logger.info(f"Channel {channel_id}: Applied priority-weighted provider diversification - {len(provider_info)} providers interleaved by priority")
     
     return diversified_streams
 ```
@@ -2134,6 +2236,58 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
         />
       </div>
 
+      {/* Diversification Mode Selection */}
+      {editedConfig?.stream_ordering?.provider_diversification && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="space-y-1">
+            <Label className="text-base font-medium">Diversification Mode</Label>
+            <p className="text-sm text-muted-foreground">
+              Choose how providers are ordered during diversification
+            </p>
+          </div>
+          
+          <div className="space-y-3">
+            <div className="flex items-center space-x-2">
+              <input
+                type="radio"
+                id="mode_round_robin"
+                name="diversification_mode"
+                value="round_robin"
+                checked={(editedConfig?.stream_ordering?.diversification_mode ?? 'round_robin') === 'round_robin'}
+                onChange={(e) => updateConfigValue('stream_ordering.diversification_mode', e.target.value)}
+                disabled={!configEditing}
+                className="h-4 w-4"
+              />
+              <Label htmlFor="mode_round_robin" className="text-sm font-medium">
+                Round Robin (Alphabetical)
+              </Label>
+            </div>
+            <p className="text-xs text-muted-foreground ml-6">
+              Providers ordered alphabetically: A → B → C → A → B → C...
+            </p>
+            
+            <div className="flex items-center space-x-2">
+              <input
+                type="radio"
+                id="mode_priority_weighted"
+                name="diversification_mode"
+                value="priority_weighted"
+                checked={(editedConfig?.stream_ordering?.diversification_mode ?? 'round_robin') === 'priority_weighted'}
+                onChange={(e) => updateConfigValue('stream_ordering.diversification_mode', e.target.value)}
+                disabled={!configEditing}
+                className="h-4 w-4"
+              />
+              <Label htmlFor="mode_priority_weighted" className="text-sm font-medium">
+                Priority Weighted
+              </Label>
+            </div>
+            <p className="text-xs text-muted-foreground ml-6">
+              Providers ordered by M3U priority: Premium(100) → Basic(10) → Premium(100) → Basic(10)...
+            </p>
+          </div>
+        </div>
+      )}
+
       <Alert>
         <Info className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
@@ -2143,9 +2297,13 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
             <p className="text-xs font-mono">Provider A (0.95), Provider A (0.94), Provider A (0.93), Provider B (0.92)...</p>
             <p className="text-xs text-muted-foreground">❌ If Provider A fails → Multiple streams dead</p>
             
-            <p className="mt-3"><strong>With diversification:</strong></p>
+            <p className="mt-3"><strong>Round Robin Mode:</strong></p>
             <p className="text-xs font-mono">Provider A (0.95), Provider B (0.92), Provider C (0.89), Provider A (0.94)...</p>
-            <p className="text-xs text-muted-foreground">✅ If Provider A fails → Provider B/C take over immediately</p>
+            <p className="text-xs text-muted-foreground">✅ Simple alphabetical provider rotation</p>
+            
+            <p className="mt-3"><strong>Priority Weighted Mode:</strong></p>
+            <p className="text-xs font-mono">Premium(100) (50.95), Basic(10) (5.92), Premium(100) (50.94), Basic(10) (5.91)...</p>
+            <p className="text-xs text-muted-foreground">✅ Respects M3U priorities while maintaining diversification</p>
           </div>
         </AlertDescription>
       </Alert>
@@ -2157,6 +2315,7 @@ def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_
           <li>Automatic failover when one provider has issues</li>
           <li>Load distribution across providers</li>
           <li>Improved reliability for viewers</li>
+          <li>Respects M3U priorities in Priority Weighted mode</li>
         </ul>
       </div>
     </CardContent>

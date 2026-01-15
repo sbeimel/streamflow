@@ -46,9 +46,11 @@ cd frontend && npm test
 
 ### ✨ 7 Neue Features
 
-1. **Provider-Diversifikation**
+1. **Provider-Diversifikation v2.0**
+   - Dual-Mode: Round Robin (alphabetisch) + Priority Weighted (M3U-Prioritäten)
    - Intelligente Verteilung von Streams verschiedener Provider
    - Bessere Redundanz und automatisches Failover
+   - Perfekte Integration mit M3U Account Priority System
    - Optional, standardmäßig deaktiviert
 
 2. **Fallback-Score Fix**
@@ -92,7 +94,7 @@ cd frontend && npm test
 ### 🔧 Patches
 
 - `00_complete_enhancements.patch` - Alle Änderungen (empfohlen)
-- `01_provider_diversification.patch` - Nur Feature 1
+- `01_provider_diversification.patch` - Nur Feature 1 (v2.0 dual-mode)
 - `02_fallback_score_fix.patch` - Nur Feature 2
 - `03_account_stream_limits.patch` - Nur Feature 3
 - `04_quality_preferences.patch` - Nur Feature 4
@@ -165,7 +167,7 @@ cd frontend && npm test
 - Profile Failover zu langsam
 
 **Folie 3: Lösung**
-- Provider-Diversifikation (Round-Robin)
+- Provider-Diversifikation v2.0 (Round-Robin + Priority Weighted)
 - Fallback-Score Fix (40.0 → 0.40)
 - Account Stream Limits (global + per-account)
 - Quality Preferences (4K, 1080p, 720p)
@@ -210,7 +212,7 @@ git apply git_pulls/patches/00_complete_enhancements.patch
 # - Account Limits konfigurieren
 
 # 4. Demo durchführen
-# - Provider Diversification zeigen
+# - Provider Diversification v2.0 zeigen (beide Modi)
 # - Quality Preferences testen
 # - Re-Score & Re-Sort demonstrieren (2-5 Sekunden!)
 ```
