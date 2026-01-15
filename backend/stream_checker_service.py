@@ -3952,22 +3952,26 @@ class StreamCheckerService:
     def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
         """Apply provider diversification to stream ordering for better redundancy.
         
-        Instead of sorting purely by score (which groups all streams from the best provider together),
-        this method interleaves streams from different providers in a round-robin fashion.
+        Uses Priority-Weighted Round-Robin:
+        1. Groups streams by provider (M3U account)
+        2. Sorts providers by their priority (highest first)
+        3. Interleaves streams: Best from A, Best from B, Best from C, 2nd from A, 2nd from B, 2nd from C...
         
-        Example:
+        Example with 3 providers (A=100, B=50, C=10):
             Before: [A1(0.95), A2(0.94), A3(0.93), B1(0.92), B2(0.91), C1(0.89)]
             After:  [A1(0.95), B1(0.92), C1(0.89), A2(0.94), B2(0.91), A3(0.93)]
         
-        This ensures that if one provider fails, the next stream is from a different provider,
-        providing better failover and redundancy.
+        This ensures:
+        - Higher priority providers get more prominent positions
+        - If one provider fails, the next stream is from a different provider
+        - Better failover and redundancy while respecting priorities
         
         Args:
             analyzed_streams: List of analyzed streams sorted by score
             channel_id: Channel ID for logging
             
         Returns:
-            Reordered list with provider diversification applied
+            Reordered list with priority-weighted provider diversification applied
         """
         if not analyzed_streams:
             return analyzed_streams
@@ -3975,8 +3979,8 @@ class StreamCheckerService:
         # Get UDI manager to look up stream providers (M3U accounts)
         udi = get_udi_manager()
         
-        # Group streams by provider (M3U account)
-        provider_streams = defaultdict(list)
+        # Group streams by provider (M3U account) with priority info
+        provider_info = {}  # {account_key: {'priority': int, 'streams': [...]}}
         streams_without_provider = []
         
         for stream_data in analyzed_streams:
@@ -3998,33 +4002,56 @@ class StreamCheckerService:
             else:
                 # Ensure m3u_account is hashable (convert to string if needed)
                 if isinstance(m3u_account, dict):
-                    # If it's a dict, use the ID field or convert to string
                     account_key = str(m3u_account.get('id', m3u_account))
+                    account_id = m3u_account.get('id', account_key)
                 else:
                     account_key = str(m3u_account)
+                    account_id = m3u_account
                 
-                provider_streams[account_key].append(stream_data)
+                # Get provider priority
+                if account_key not in provider_info:
+                    # Get M3U account info for priority
+                    m3u_account_data = udi.get_m3u_account_by_id(account_id)
+                    priority = m3u_account_data.get('priority', 0) if m3u_account_data else 0
+                    
+                    provider_info[account_key] = {
+                        'priority': priority,
+                        'streams': []
+                    }
+                
+                provider_info[account_key]['streams'].append(stream_data)
         
         # If only one provider or no providers, return original order
-        if len(provider_streams) <= 1:
-            logger.debug(f"Channel {channel_id}: Only {len(provider_streams)} provider(s), skipping diversification")
+        if len(provider_info) <= 1:
+            logger.debug(f"Channel {channel_id}: Only {len(provider_info)} provider(s), skipping diversification")
             return analyzed_streams
         
-        # Apply round-robin diversification
-        diversified_streams = []
-        max_streams_per_provider = max(len(streams) for streams in provider_streams.values())
+        # Sort providers by priority (highest first)
+        sorted_providers = sorted(provider_info.items(), key=lambda x: x[1]['priority'], reverse=True)
         
-        # Interleave streams from different providers
-        for i in range(max_streams_per_provider):
-            for provider_id in sorted(provider_streams.keys()):
-                streams = provider_streams[provider_id]
-                if i < len(streams):
-                    diversified_streams.append(streams[i])
+        # Log provider priorities for debugging
+        priority_info = []
+        for account_key, info in sorted_providers:
+            priority_info.append(f"{account_key}(prio:{info['priority']}, {len(info['streams'])}streams)")
+        logger.info(f"Channel {channel_id}: Provider diversification order: {' → '.join(priority_info)}")
+        
+        # Apply Priority-Weighted Round-Robin diversification
+        diversified_streams = []
+        max_streams_per_provider = max(len(info['streams']) for _, info in sorted_providers)
+        
+        # Interleave streams: 1st from each provider (by priority), then 2nd from each, etc.
+        for stream_index in range(max_streams_per_provider):
+            for account_key, info in sorted_providers:
+                streams = info['streams']
+                if stream_index < len(streams):
+                    stream = streams[stream_index]
+                    diversified_streams.append(stream)
+                    logger.debug(f"Channel {channel_id}: Position {len(diversified_streams)}: Provider {account_key} stream {stream_index+1} (score: {stream.get('score', 0):.2f})")
         
         # Append streams without provider at the end
         diversified_streams.extend(streams_without_provider)
         
-        logger.info(f"Channel {channel_id}: Applied provider diversification - {len(provider_streams)} providers interleaved")
+        logger.info(f"Channel {channel_id}: Applied priority-weighted provider diversification - {len(provider_info)} providers interleaved by priority")
         
         return diversified_streams
     
