@@ -1893,7 +1893,7 @@ export default function ChannelConfiguration() {
           regex: [newPattern],
           m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : undefined
         }],
-        max_matches: 50
+        max_matches: 10000  // Increased from 50 to show all matches
       })
       
       // Only update state if this is still the latest request
