@@ -1965,22 +1965,34 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[editingChannelId] || patterns[String(editingChannelId)]
       const channel = channels.find(ch => ch.id === editingChannelId)
       
-      let updatedRegex = []
-      if (editingPatternIndex !== null && channelPatterns?.regex) {
+      // Normalize existing patterns to new format
+      let existingPatterns = normalizePatternData(channelPatterns)
+      
+      let updatedPatterns = []
+      if (editingPatternIndex !== null) {
         // Editing existing pattern
-        updatedRegex = [...channelPatterns.regex]
-        updatedRegex[editingPatternIndex] = newPattern
+        updatedPatterns = [...existingPatterns]
+        updatedPatterns[editingPatternIndex] = {
+          pattern: newPattern,
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+        }
       } else {
         // Adding new pattern
-        updatedRegex = channelPatterns?.regex ? [...channelPatterns.regex, newPattern] : [newPattern]
+        updatedPatterns = [
+          ...existingPatterns,
+          {
+            pattern: newPattern,
+            m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+          }
+        ]
       }
 
+      // Send in new format
       await regexAPI.addPattern({
         channel_id: editingChannelId,
         name: channel?.name || '',
-        regex: updatedRegex,
-        enabled: channelPatterns?.enabled !== false,
-        m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null  // null = all M3U accounts
+        regex: updatedPatterns,  // Backend accepts this and converts to regex_patterns
+        enabled: channelPatterns?.enabled !== false
       })
 
       toast({
