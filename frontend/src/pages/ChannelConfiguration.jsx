@@ -1851,16 +1851,18 @@ export default function ChannelConfiguration() {
     if (patternIndex !== null) {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
       
-      // Normalize patterns to new format
-      const normalizedPatterns = normalizePatternData(channelPatterns)
-      
-      if (normalizedPatterns[patternIndex]) {
-        const patternObj = normalizedPatterns[patternIndex]
-        setNewPattern(patternObj.pattern)
-        
-        // Load M3U account selection for this specific pattern
-        if (patternObj.m3u_accounts && patternObj.m3u_accounts.length > 0) {
-          setSelectedM3uAccounts(patternObj.m3u_accounts)
+      // Support both new and old format
+      if (channelPatterns?.regex_patterns && channelPatterns.regex_patterns[patternIndex]) {
+        // New format with per-pattern m3u_accounts
+        const patternObj = channelPatterns.regex_patterns[patternIndex]
+        setNewPattern(patternObj.pattern || '')
+        setSelectedM3uAccounts(patternObj.m3u_accounts || [])
+      } else if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
+        // Old format - pattern is a string, m3u_accounts is channel-level
+        setNewPattern(channelPatterns.regex[patternIndex])
+        // Load channel-level M3U account selection (if any)
+        if (channelPatterns.m3u_accounts) {
+          setSelectedM3uAccounts(channelPatterns.m3u_accounts)
         } else {
           setSelectedM3uAccounts([])  // Empty means all M3U accounts
         }
@@ -1971,33 +1973,41 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[editingChannelId] || patterns[String(editingChannelId)]
       const channel = channels.find(ch => ch.id === editingChannelId)
       
-      // Normalize existing patterns to new format
-      let existingPatterns = normalizePatternData(channelPatterns)
+      // Build regex_patterns array in new format with per-pattern m3u_accounts
+      let updatedRegexPatterns = []
       
-      let updatedPatterns = []
+      // Get existing patterns in new format
+      if (channelPatterns?.regex_patterns) {
+        // Already in new format
+        updatedRegexPatterns = [...channelPatterns.regex_patterns]
+      } else if (channelPatterns?.regex) {
+        // Convert from old format
+        const oldM3uAccounts = channelPatterns.m3u_accounts
+        updatedRegexPatterns = channelPatterns.regex.map(p => ({
+          pattern: p,
+          m3u_accounts: oldM3uAccounts
+        }))
+      }
+      
       if (editingPatternIndex !== null) {
         // Editing existing pattern
-        updatedPatterns = [...existingPatterns]
-        updatedPatterns[editingPatternIndex] = {
+        updatedRegexPatterns[editingPatternIndex] = {
           pattern: newPattern,
           m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
         }
       } else {
         // Adding new pattern
-        updatedPatterns = [
-          ...existingPatterns,
-          {
-            pattern: newPattern,
-            m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
-          }
-        ]
+        updatedRegexPatterns.push({
+          pattern: newPattern,
+          m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : null
+        })
       }
 
       // Send in new format
       await regexAPI.addPattern({
         channel_id: editingChannelId,
         name: channel?.name || '',
-        regex: updatedPatterns,  // Backend accepts this and converts to regex_patterns
+        regex: updatedRegexPatterns,  // Send array of objects with per-pattern m3u_accounts
         enabled: channelPatterns?.enabled !== false
       })
 
@@ -2006,13 +2016,22 @@ export default function ChannelConfiguration() {
         description: editingPatternIndex !== null ? "Pattern updated successfully" : "Pattern added successfully"
       })
 
-      // Reload patterns
-      await loadData()
+      // Update patterns state directly instead of reloading the entire page
+      setPatterns(prevPatterns => ({
+        ...prevPatterns,
+        [editingChannelId]: {
+          ...channelPatterns,
+          regex_patterns: updatedRegexPatterns,
+          enabled: channelPatterns?.enabled !== false
+        }
+      }))
+      
       handleCloseDialog()
     } catch (err) {
+      console.error('Save pattern error:', err)
       toast({
         title: "Error",
-        description: "Failed to save pattern",
+        description: err.response?.data?.error || "Failed to save pattern",
         variant: "destructive"
       })
     }
@@ -2023,32 +2042,58 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
       const channel = channels.find(ch => ch.id === channelId)
       
-      // Normalize existing patterns to new format
-      let existingPatterns = normalizePatternData(channelPatterns)
-      
-      if (existingPatterns.length === 0) return
+      // Get regex patterns in the appropriate format
+      let regexPatterns = []
+      if (channelPatterns?.regex_patterns) {
+        regexPatterns = channelPatterns.regex_patterns
+      } else if (channelPatterns?.regex) {
+        // Convert old format
+        const oldM3uAccounts = channelPatterns.m3u_accounts
+        regexPatterns = channelPatterns.regex.map(p => ({
+          pattern: p,
+          m3u_accounts: oldM3uAccounts
+        }))
+      } else {
+        return // No patterns to delete
+      }
 
-      const updatedPatterns = existingPatterns.filter((_, index) => index !== patternIndex)
+      const updatedRegexPatterns = regexPatterns.filter((_, index) => index !== patternIndex)
       
-      if (updatedPatterns.length === 0) {
+      if (updatedRegexPatterns.length === 0) {
         // If no patterns left, delete the entire pattern config
         await regexAPI.deletePattern(channelId)
+        
+        // Update state to remove patterns
+        setPatterns(prevPatterns => {
+          const newPatterns = { ...prevPatterns }
+          delete newPatterns[channelId]
+          delete newPatterns[String(channelId)]
+          return newPatterns
+        })
       } else {
-        // Update with remaining patterns in new format
+        // Update with remaining patterns
         await regexAPI.addPattern({
           channel_id: channelId,
           name: channel?.name || '',
-          regex: updatedPatterns,  // Backend accepts this and converts to regex_patterns
-          enabled: channelPatterns?.enabled !== false
+          regex: updatedRegexPatterns,  // Send array of objects
+          enabled: channelPatterns.enabled !== false
         })
+        
+        // Update patterns state directly
+        setPatterns(prevPatterns => ({
+          ...prevPatterns,
+          [channelId]: {
+            ...channelPatterns,
+            regex_patterns: updatedRegexPatterns,
+            enabled: channelPatterns.enabled !== false
+          }
+        }))
       }
 
       toast({
         title: "Success",
         description: "Pattern deleted successfully"
       })
-
-      await loadData()
     } catch (err) {
       toast({
         title: "Error",
