@@ -1571,7 +1571,7 @@ export default function ChannelConfiguration() {
           regex: [newPattern],
           m3u_accounts: selectedM3uAccounts.length > 0 ? selectedM3uAccounts : undefined
         }],
-        max_matches: 50
+        max_matches: 10000
       })
       
       // Only update state if this is still the latest request
@@ -2903,8 +2903,8 @@ export default function ChannelConfiguration() {
                         Valid pattern - {testResults.matches?.length || 0} matches found
                       </div>
                       {testResults.matches && testResults.matches.length > 0 && (
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          {testResults.matches.slice(0, 10).map((match, idx) => (
+                        <div className="space-y-1 max-h-96 overflow-y-auto">
+                          {testResults.matches.map((match, idx) => (
                             <div 
                               key={idx} 
                               className="text-xs text-muted-foreground animate-in fade-in slide-in-from-left-1 duration-200"
@@ -2923,11 +2923,6 @@ export default function ChannelConfiguration() {
                               </div>
                             </div>
                           ))}
-                          {testResults.matches.length > 10 && (
-                            <div className="text-xs text-muted-foreground italic animate-in fade-in duration-200">
-                              ... and {testResults.matches.length - 10} more
-                            </div>
-                          )}
                         </div>
                       )}
                     </>
