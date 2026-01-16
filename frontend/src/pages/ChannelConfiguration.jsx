@@ -1850,14 +1850,20 @@ export default function ChannelConfiguration() {
     // If editing an existing pattern, load it
     if (patternIndex !== null) {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
-      if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
-        setNewPattern(channelPatterns.regex[patternIndex])
-      }
-      // Load existing M3U account selection (if any)
-      if (channelPatterns && channelPatterns.m3u_accounts) {
-        setSelectedM3uAccounts(channelPatterns.m3u_accounts)
-      } else {
-        setSelectedM3uAccounts([])  // Empty means all M3U accounts
+      
+      // Normalize patterns to new format
+      const normalizedPatterns = normalizePatternData(channelPatterns)
+      
+      if (normalizedPatterns[patternIndex]) {
+        const patternObj = normalizedPatterns[patternIndex]
+        setNewPattern(patternObj.pattern)
+        
+        // Load M3U account selection for this specific pattern
+        if (patternObj.m3u_accounts && patternObj.m3u_accounts.length > 0) {
+          setSelectedM3uAccounts(patternObj.m3u_accounts)
+        } else {
+          setSelectedM3uAccounts([])  // Empty means all M3U accounts
+        }
       }
     } else {
       setNewPattern('')
@@ -2017,21 +2023,23 @@ export default function ChannelConfiguration() {
       const channelPatterns = patterns[channelId] || patterns[String(channelId)]
       const channel = channels.find(ch => ch.id === channelId)
       
-      if (!channelPatterns?.regex) return
-
-      const updatedRegex = channelPatterns.regex.filter((_, index) => index !== patternIndex)
+      // Normalize existing patterns to new format
+      let existingPatterns = normalizePatternData(channelPatterns)
       
-      if (updatedRegex.length === 0) {
+      if (existingPatterns.length === 0) return
+
+      const updatedPatterns = existingPatterns.filter((_, index) => index !== patternIndex)
+      
+      if (updatedPatterns.length === 0) {
         // If no patterns left, delete the entire pattern config
         await regexAPI.deletePattern(channelId)
       } else {
-        // Update with remaining patterns, preserving playlist configuration
+        // Update with remaining patterns in new format
         await regexAPI.addPattern({
           channel_id: channelId,
           name: channel?.name || '',
-          regex: updatedRegex,
-          enabled: channelPatterns.enabled !== false,
-          m3u_accounts: channelPatterns.m3u_accounts  // Preserve M3U account filtering
+          regex: updatedPatterns,  // Backend accepts this and converts to regex_patterns
+          enabled: channelPatterns?.enabled !== false
         })
       }
 
