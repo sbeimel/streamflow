@@ -367,29 +367,35 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                 </Button>
               </div>
             
-            {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
+            {channelPatterns && (channelPatterns.regex_patterns || channelPatterns.regex) && 
+             ((channelPatterns.regex_patterns && channelPatterns.regex_patterns.length > 0) || 
+              (channelPatterns.regex && channelPatterns.regex.length > 0)) ? (
               <div className="space-y-2">
-                {channelPatterns.regex.map((pattern, index) => (
-                  <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
-                    <code className="text-sm flex-1 break-all">{pattern}</code>
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onEditRegex(channel.id, index)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onDeletePattern(channel.id, index)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                {(channelPatterns.regex_patterns || channelPatterns.regex).map((pattern, index) => {
+                  // Support both formats
+                  const patternText = typeof pattern === 'string' ? pattern : pattern.pattern
+                  return (
+                    <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                      <code className="text-sm flex-1 break-all">{patternText}</code>
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onEditRegex(channel.id, index)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onDeletePattern(channel.id, index)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No regex patterns configured</p>
