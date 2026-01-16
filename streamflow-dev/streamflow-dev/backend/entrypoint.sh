@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# StreamFlow Entrypoint
+# Starts Flask API directly
+
+set -e
+
+echo "[INFO] Starting StreamFlow Container: $(date)"
+
+# Environment variables with defaults
+API_HOST="${API_HOST:-0.0.0.0}"
+API_PORT="${API_PORT:-5000}"
+DEBUG_MODE="${DEBUG_MODE:-false}"
+CONFIG_DIR="${CONFIG_DIR:-/app/data}"
+
+# Export environment variables for the Flask application
+export API_HOST API_PORT DEBUG_MODE CONFIG_DIR
+
+# Deprecated: Old manual interval approach (kept for backward compatibility warnings)
+if [ -n "$INTERVAL_SECONDS" ]; then
+    echo "[WARNING] INTERVAL_SECONDS environment variable is deprecated."
+    echo "[WARNING] The system now uses automated scheduling via the web API."
+    echo "[WARNING] Please configure automation via the web interface or API endpoints."
+fi
+
+# Check if configuration files exist, create defaults if needed
+echo "[INFO] Checking configuration files..."
+
+# Ensure required directories exist (including the persisted data directory)
+mkdir -p csv logs "$CONFIG_DIR"
+echo "[INFO] Config directory: $CONFIG_DIR"
+
+# Validate environment setup
+if [ ! -f ".env" ]; then
+    echo "[INFO] No .env file found. Configuration will be loaded from JSON config files or environment variables."
+    
+    # Check if required environment variables are set (optional override)
+    if [ -n "$DISPATCHARR_BASE_URL" ] && [ -n "$DISPATCHARR_USER" ] && [ -n "$DISPATCHARR_PASS" ]; then
+        echo "[INFO] Using environment variables for Dispatcharr configuration (override mode)."
+    else
+        echo "[INFO] Dispatcharr credentials will be configured via the Setup Wizard."
+        echo "[INFO] Configuration is stored in: $CONFIG_DIR/dispatcharr_config.json"
+    fi
+else
+    echo "[INFO] Using .env file for configuration."
+fi
+
+# Start StreamFlow service
+echo "[INFO] ============================================"
+echo "[INFO] Starting StreamFlow Container"
+echo "[INFO] ============================================"
+echo "[INFO] Flask API: ${API_HOST}:${API_PORT}"
+echo "[INFO] Debug mode: ${DEBUG_MODE}"
+echo "[INFO] ============================================"
+echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
+echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
+echo "[INFO] ============================================"
+
+# Start Flask API directly
+echo "[INFO] Starting Flask API..."
+
+# Use exec to ensure Flask becomes PID 1 and receives signals properly
+exec python3 web_api.py --host "${API_HOST}" --port "${API_PORT}"

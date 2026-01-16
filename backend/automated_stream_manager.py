@@ -18,7 +18,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 from collections import defaultdict
 
 # Pre-compiled regex pattern for whitespace conversion (performance optimization)
@@ -398,44 +398,72 @@ class RegexChannelMatcher:
         
         return True, None
     
-    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: List[str], enabled: bool = True, m3u_accounts: Optional[List[int]] = None):
+    def add_channel_pattern(self, channel_id: str, name: str, regex_patterns: 'Union[List[str], List[Dict]]', enabled: bool = True, m3u_accounts: Optional[List[int]] = None, silent: bool = False):
         """Add or update a channel pattern.
         
         Args:
             channel_id: Channel ID
             name: Channel name
-            regex_patterns: List of regex patterns
+            regex_patterns: Can be either:
+                          - List[str]: Legacy format, list of regex pattern strings
+                          - List[Dict]: New format with per-pattern m3u_accounts
+                              [{"pattern": str, "m3u_accounts": List[int] | None}, ...]
             enabled: Whether the pattern is enabled
-            m3u_accounts: Optional list of M3U account IDs that this regex should apply to.
+            m3u_accounts: Optional list of M3U account IDs (legacy, channel-level).
+                         Only used when regex_patterns is List[str].
                          Examples:
                          - None: Field not stored, applies to all M3U accounts (backward compatible)
                          - []: Empty list stored, explicitly means "all M3U accounts"
                          - [1, 2, 3]: Only match streams from M3U accounts with these IDs
+            silent: If True, log at DEBUG level instead of INFO (useful for batch operations)
             
         Raises:
             ValueError: If any regex pattern is invalid
         """
-        # Validate patterns before saving
-        is_valid, error_msg = self.validate_regex_patterns(regex_patterns)
+        # Normalize regex_patterns to new format
+        normalized_patterns = []
+        
+        if isinstance(regex_patterns, list) and len(regex_patterns) > 0:
+            if isinstance(regex_patterns[0], dict):
+                # New format: List[Dict]
+                for item in regex_patterns:
+                    if not isinstance(item, dict) or "pattern" not in item:
+                        raise ValueError("Each pattern object must have a 'pattern' field")
+                    normalized_patterns.append({
+                        "pattern": item["pattern"],
+                        "m3u_accounts": item.get("m3u_accounts")
+                    })
+            else:
+                # Legacy format: List[str] - convert to new format
+                for pattern in regex_patterns:
+                    normalized_patterns.append({
+                        "pattern": pattern,
+                        "m3u_accounts": m3u_accounts  # Use channel-level m3u_accounts for all patterns
+                    })
+        else:
+            raise ValueError("At least one regex pattern is required")
+        
+        # Validate patterns
+        pattern_strings = [p["pattern"] for p in normalized_patterns]
+        is_valid, error_msg = self.validate_regex_patterns(pattern_strings)
         if not is_valid:
             raise ValueError(error_msg)
         
+        # Store in new format
         pattern_data = {
             "name": name,
-            "regex": regex_patterns,
+            "regex_patterns": normalized_patterns,  # New field name
             "enabled": enabled
         }
         
-        # Store m3u_accounts field when explicitly provided
-        # - Not provided (None): field not stored, backward compatible (applies to all)
-        # - Empty list []: stored as [], explicitly means "all M3U accounts"
-        # - Specific IDs [1,2,3]: stored as-is, only those M3U accounts
-        if m3u_accounts is not None:
-            pattern_data["m3u_accounts"] = m3u_accounts
-        
         self.channel_patterns["patterns"][str(channel_id)] = pattern_data
         self._save_patterns(self.channel_patterns)
-        logger.info(f"Added/updated pattern for channel {channel_id}: {name} (M3U accounts: {m3u_accounts or 'all'})")
+        
+        # Log at appropriate level based on silent flag
+        if silent:
+            logger.debug(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
+        else:
+            logger.info(f"Added/updated {len(normalized_patterns)} pattern(s) for channel {channel_id}: {name}")
     
     
     def reload_patterns(self):

@@ -913,6 +913,471 @@ def import_regex_patterns():
         logger.error(f"Error importing regex patterns: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/regex-patterns/common', methods=['POST'])
+def get_common_regex_patterns():
+    """Get common regex patterns across multiple channels, ordered by frequency."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        channel_ids = data.get('channel_ids', [])
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        matcher = get_regex_matcher()
+        patterns_data = matcher.get_patterns()
+        
+        # Count pattern occurrences across selected channels
+        pattern_count = {}
+        pattern_to_channels = {}
+        
+        for channel_id in channel_ids:
+            channel_patterns = patterns_data.get('patterns', {}).get(str(channel_id), {})
+            
+            # Support both old format (regex) and new format (regex_patterns)
+            regex_patterns = channel_patterns.get('regex_patterns')
+            if regex_patterns is None:
+                # Fallback to old format
+                regex_patterns = [{"pattern": p} for p in channel_patterns.get('regex', [])]
+            
+            for pattern_obj in regex_patterns:
+                if isinstance(pattern_obj, dict):
+                    pattern = pattern_obj.get('pattern', '')
+                else:
+                    # Legacy string format
+                    pattern = pattern_obj
+                
+                if pattern:
+                    if pattern not in pattern_count:
+                        pattern_count[pattern] = 0
+                        pattern_to_channels[pattern] = []
+                    
+                    pattern_count[pattern] += 1
+                    pattern_to_channels[pattern].append(str(channel_id))
+        
+        # Sort patterns by frequency (most common first)
+        sorted_patterns = sorted(pattern_count.items(), key=lambda x: x[1], reverse=True)
+        
+        # Format results
+        common_patterns = []
+        for pattern, count in sorted_patterns:
+            common_patterns.append({
+                "pattern": pattern,
+                "count": count,
+                "channel_ids": pattern_to_channels[pattern],
+                "percentage": round((count / len(channel_ids)) * 100, 1)
+            })
+        
+        return jsonify({
+            "patterns": common_patterns,
+            "total_channels": len(channel_ids),
+            "total_patterns": len(common_patterns)
+        })
+    except Exception as e:
+        logger.error(f"Error getting common regex patterns: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/bulk-edit', methods=['POST'])
+def bulk_edit_regex_pattern():
+    """Edit a specific regex pattern across multiple channels.
+    
+    This endpoint allows editing both the pattern itself and its associated playlists (m3u_accounts).
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        required_fields = ['channel_ids', 'old_pattern', 'new_pattern']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        
+        channel_ids = data['channel_ids']
+        old_pattern = data['old_pattern']
+        new_pattern = data['new_pattern']
+        new_m3u_accounts = data.get('new_m3u_accounts')  # Optional: new playlist filter
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        # Validate new pattern
+        matcher = get_regex_matcher()
+        is_valid, error_msg = matcher.validate_regex_patterns([new_pattern])
+        if not is_valid:
+            return jsonify({"error": error_msg}), 400
+        
+        # Get UDI manager to fetch channel names
+        udi = get_udi_manager()
+        
+        # Update pattern in each channel
+        success_count = 0
+        failed_channels = []
+        
+        for channel_id in channel_ids:
+            try:
+                # Get channel info
+                channel = udi.get_channel_by_id(channel_id)
+                if not channel:
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Channel not found"
+                    })
+                    continue
+                
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get existing patterns
+                patterns = matcher.get_patterns()
+                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
+                
+                # Support both old format (regex) and new format (regex_patterns)
+                regex_patterns = existing_patterns.get('regex_patterns')
+                if regex_patterns is None:
+                    # Fallback to old format
+                    old_regex = existing_patterns.get('regex', [])
+                    old_m3u_accounts = existing_patterns.get('m3u_accounts')
+                    regex_patterns = [{"pattern": p, "m3u_accounts": old_m3u_accounts} for p in old_regex]
+                
+                # Find and replace pattern
+                pattern_found = False
+                updated_patterns = []
+                seen_patterns = set()  # Track patterns to avoid duplicates
+                
+                for pattern_obj in regex_patterns:
+                    if isinstance(pattern_obj, dict):
+                        pattern = pattern_obj.get("pattern", "")
+                        pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                    else:
+                        # Legacy string format
+                        pattern = pattern_obj
+                        pattern_m3u_accounts = None
+                    
+                    if pattern == old_pattern:
+                        pattern_found = True
+                        # Update the pattern and optionally the m3u_accounts
+                        # Only add if we haven't seen the new pattern yet (avoid duplicates)
+                        if new_pattern not in seen_patterns:
+                            updated_pattern = {
+                                "pattern": new_pattern,
+                                "m3u_accounts": new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts
+                            }
+                            updated_patterns.append(updated_pattern)
+                            seen_patterns.add(new_pattern)
+                    else:
+                        # Only add if we haven't seen this pattern yet (avoid duplicates)
+                        if pattern not in seen_patterns:
+                            updated_patterns.append({
+                                "pattern": pattern,
+                                "m3u_accounts": pattern_m3u_accounts
+                            })
+                            seen_patterns.add(pattern)
+                
+                if pattern_found:
+                    # Update pattern using new format
+                    matcher.add_channel_pattern(
+                        str(channel_id),
+                        channel_name,
+                        updated_patterns,
+                        existing_patterns.get('enabled', True),
+                        silent=True  # Suppress per-channel logging during batch operations
+                    )
+                    success_count += 1
+                else:
+                    # Pattern not found in this channel, skip
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Pattern not found in channel"
+                    })
+            except Exception as e:
+                logger.error(f"Error editing pattern in channel {channel_id}: {e}")
+                failed_channels.append({
+                    "channel_id": channel_id,
+                    "error": str(e)
+                })
+        
+        logger.info(f"Bulk edit completed: {success_count} channels updated")
+        
+        response_data = {
+            "message": f"Successfully edited pattern in {success_count} channel(s)",
+            "success_count": success_count,
+            "total_channels": len(channel_ids)
+        }
+        
+        if failed_channels:
+            response_data["failed_channels"] = failed_channels
+            response_data["failed_count"] = len(failed_channels)
+        
+        return jsonify(response_data)
+    except ValueError as e:
+        logger.warning(f"Validation error in bulk pattern edit: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error bulk editing regex pattern: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/mass-edit-preview', methods=['POST'])
+def mass_edit_preview():
+    """Preview the results of a mass find/replace operation on regex patterns.
+    
+    This endpoint shows what patterns will be affected by the find/replace operation
+    without actually making changes.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        required_fields = ['channel_ids', 'find_pattern', 'replace_pattern']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        
+        channel_ids = data['channel_ids']
+        find_pattern = data['find_pattern']
+        replace_pattern = data['replace_pattern']
+        use_regex = data.get('use_regex', False)  # Whether to use regex for find/replace
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        matcher = get_regex_matcher()
+        udi = get_udi_manager()
+        
+        # Compile regex if needed
+        if use_regex:
+            try:
+                find_regex = re.compile(find_pattern)
+            except re.error as e:
+                return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
+        
+        affected_channels = []
+        total_patterns_affected = 0
+        
+        for channel_id in channel_ids:
+            try:
+                # Get channel info
+                channel = udi.get_channel_by_id(channel_id)
+                if not channel:
+                    continue
+                
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get existing patterns
+                patterns = matcher.get_patterns()
+                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
+                regex_patterns = existing_patterns.get('regex_patterns', [])
+                
+                if not regex_patterns:
+                    continue
+                
+                # Find patterns that will be affected
+                affected_patterns = []
+                for pattern_obj in regex_patterns:
+                    if isinstance(pattern_obj, dict):
+                        pattern = pattern_obj.get("pattern", "")
+                        pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                    else:
+                        pattern = pattern_obj
+                        pattern_m3u_accounts = None
+                    
+                    # Check if this pattern will be affected
+                    try:
+                        if use_regex:
+                            # Use regex replace
+                            new_pattern = find_regex.sub(replace_pattern, pattern)
+                        else:
+                            # Use simple string replace
+                            new_pattern = pattern.replace(find_pattern, replace_pattern)
+                    except re.error as e:
+                        # Invalid replacement pattern (e.g., bad backreference)
+                        return jsonify({"error": f"Invalid replacement pattern: {str(e)}"}), 400
+                    
+                    # Only include if the pattern actually changes
+                    if new_pattern != pattern:
+                        affected_patterns.append({
+                            "old_pattern": pattern,
+                            "new_pattern": new_pattern,
+                            "m3u_accounts": pattern_m3u_accounts
+                        })
+                
+                if affected_patterns:
+                    affected_channels.append({
+                        "channel_id": channel_id,
+                        "channel_name": channel_name,
+                        "affected_patterns": affected_patterns,
+                        "total_affected": len(affected_patterns)
+                    })
+                    total_patterns_affected += len(affected_patterns)
+            
+            except Exception as e:
+                logger.error(f"Error previewing patterns for channel {channel_id}: {e}")
+                continue
+        
+        return jsonify({
+            "affected_channels": affected_channels,
+            "total_channels_affected": len(affected_channels),
+            "total_patterns_affected": total_patterns_affected,
+            "find_pattern": find_pattern,
+            "replace_pattern": replace_pattern,
+            "use_regex": use_regex
+        })
+    
+    except Exception as e:
+        logger.error(f"Error previewing mass edit: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/regex-patterns/mass-edit', methods=['POST'])
+def mass_edit_regex_patterns():
+    """Apply a mass find/replace operation on regex patterns across multiple channels.
+    
+    This endpoint performs find/replace on all patterns in the selected channels,
+    optionally updating M3U accounts as well.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        required_fields = ['channel_ids', 'find_pattern', 'replace_pattern']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields: {required_fields}"}), 400
+        
+        channel_ids = data['channel_ids']
+        find_pattern = data['find_pattern']
+        replace_pattern = data['replace_pattern']
+        use_regex = data.get('use_regex', False)
+        new_m3u_accounts = data.get('new_m3u_accounts')  # Optional: update M3U accounts for affected patterns
+        
+        if not isinstance(channel_ids, list) or len(channel_ids) == 0:
+            return jsonify({"error": "channel_ids must be a non-empty list"}), 400
+        
+        matcher = get_regex_matcher()
+        udi = get_udi_manager()
+        
+        # Compile regex if needed
+        if use_regex:
+            try:
+                find_regex = re.compile(find_pattern)
+            except re.error as e:
+                return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
+        
+        success_count = 0
+        failed_channels = []
+        total_patterns_updated = 0
+        
+        for channel_id in channel_ids:
+            try:
+                # Get channel info
+                channel = udi.get_channel_by_id(channel_id)
+                if not channel:
+                    failed_channels.append({
+                        "channel_id": channel_id,
+                        "error": "Channel not found"
+                    })
+                    continue
+                
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get existing patterns
+                patterns = matcher.get_patterns()
+                existing_patterns = patterns.get('patterns', {}).get(str(channel_id), {})
+                regex_patterns = existing_patterns.get('regex_patterns', [])
+                
+                if not regex_patterns:
+                    continue
+                
+                # Apply find/replace to all patterns
+                updated_patterns = []
+                seen_patterns = set()
+                patterns_changed = False
+                channel_failed = False
+                
+                for pattern_obj in regex_patterns:
+                    if isinstance(pattern_obj, dict):
+                        pattern = pattern_obj.get("pattern", "")
+                        pattern_m3u_accounts = pattern_obj.get("m3u_accounts")
+                    else:
+                        pattern = pattern_obj
+                        pattern_m3u_accounts = None
+                    
+                    # Apply find/replace
+                    try:
+                        if use_regex:
+                            new_pattern = find_regex.sub(replace_pattern, pattern)
+                        else:
+                            new_pattern = pattern.replace(find_pattern, replace_pattern)
+                    except re.error as e:
+                        failed_channels.append({
+                            "channel_id": channel_id,
+                            "error": f"Invalid replacement pattern: {str(e)}"
+                        })
+                        channel_failed = True
+                        break
+                    
+                    # Track if anything changed
+                    if new_pattern != pattern:
+                        patterns_changed = True
+                    
+                    # Validate the new pattern
+                    is_valid, error_msg = matcher.validate_regex_patterns([new_pattern])
+                    if not is_valid:
+                        failed_channels.append({
+                            "channel_id": channel_id,
+                            "error": f"Invalid resulting pattern '{new_pattern}': {error_msg}"
+                        })
+                        channel_failed = True
+                        break
+                    
+                    # Only add if not duplicate
+                    if new_pattern not in seen_patterns:
+                        # Update M3U accounts if specified, otherwise keep existing
+                        final_m3u_accounts = new_m3u_accounts if new_m3u_accounts is not None else pattern_m3u_accounts
+                        
+                        updated_patterns.append({
+                            "pattern": new_pattern,
+                            "m3u_accounts": final_m3u_accounts
+                        })
+                        seen_patterns.add(new_pattern)
+                
+                # Only update if patterns actually changed and no failures occurred
+                if not channel_failed and patterns_changed and updated_patterns:
+                    matcher.add_channel_pattern(
+                        str(channel_id),
+                        channel_name,
+                        updated_patterns,
+                        existing_patterns.get('enabled', True),
+                        silent=True  # Suppress per-channel logging during batch operations
+                    )
+                    success_count += 1
+                    total_patterns_updated += len(updated_patterns)
+            
+            except Exception as e:
+                logger.error(f"Error applying mass edit to channel {channel_id}: {e}")
+                failed_channels.append({
+                    "channel_id": channel_id,
+                    "error": str(e)
+                })
+        
+        logger.info(f"Mass edit completed: {success_count} channels updated, {total_patterns_updated} patterns affected")
+        
+        response_data = {
+            "message": f"Successfully updated {success_count} channel(s)",
+            "success_count": success_count,
+            "total_channels": len(channel_ids),
+            "total_patterns_updated": total_patterns_updated
+        }
+        
+        if failed_channels:
+            response_data["failed_channels"] = failed_channels
+            response_data["failed_count"] = len(failed_channels)
+        
+        return jsonify(response_data)
+    
+    except Exception as e:
+        logger.error(f"Error in mass edit: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/test-regex', methods=['POST'])
 def test_regex_pattern():
     """Test a regex pattern against a stream name."""

@@ -12,9 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Settings } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown, MoreVertical, Eye, ChevronDown, Info, Activity, Settings, ArrowRight } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
+import { Separator } from '@/components/ui/separator.jsx'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip.jsx'
 import ProfileManagement from '@/components/ProfileManagement.jsx'
 import {
@@ -1150,6 +1151,28 @@ export default function ChannelConfiguration() {
   // Bulk health check state
   const [bulkCheckingChannels, setBulkCheckingChannels] = useState(false)
   
+  // Delete confirmation dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  
+  // Edit common regex dialog state
+  const [editCommonDialogOpen, setEditCommonDialogOpen] = useState(false)
+  const [commonPatterns, setCommonPatterns] = useState([])
+  const [loadingCommonPatterns, setLoadingCommonPatterns] = useState(false)
+  const [editingCommonPattern, setEditingCommonPattern] = useState(null)
+  const [newCommonPattern, setNewCommonPattern] = useState('')
+  const [newCommonPatternM3uAccounts, setNewCommonPatternM3uAccounts] = useState(null) // null = all playlists, array = selected playlists
+  const [selectedCommonPatterns, setSelectedCommonPatterns] = useState(new Set())
+  const [commonPatternsSearch, setCommonPatternsSearch] = useState('')
+  
+  // Mass edit state
+  const [massEditMode, setMassEditMode] = useState(false)
+  const [massEditFindPattern, setMassEditFindPattern] = useState('')
+  const [massEditReplacePattern, setMassEditReplacePattern] = useState('')
+  const [massEditUseRegex, setMassEditUseRegex] = useState(false)
+  const [massEditM3uAccounts, setMassEditM3uAccounts] = useState(null) // null = keep existing, array = update to selected
+  const [massEditPreview, setMassEditPreview] = useState(null)
+  const [loadingMassEditPreview, setLoadingMassEditPreview] = useState(false)
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -1475,6 +1498,305 @@ export default function ChannelConfiguration() {
       })
     } finally {
       setBulkCheckingChannels(false)
+    }
+  }
+  
+  // Mass edit handlers
+  const handleMassEditPreview = async () => {
+    if (!massEditFindPattern.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a find pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      setLoadingMassEditPreview(true)
+      const response = await regexAPI.massEditPreview({
+        channel_ids: Array.from(selectedChannels),
+        find_pattern: massEditFindPattern,
+        replace_pattern: massEditReplacePattern,
+        use_regex: massEditUseRegex
+      })
+      
+      setMassEditPreview(response.data)
+      
+      if (response.data.total_patterns_affected === 0) {
+        toast({
+          title: "No Changes",
+          description: "No patterns will be affected by this find/replace operation",
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to preview mass edit",
+        variant: "destructive"
+      })
+      setMassEditPreview(null)
+    } finally {
+      setLoadingMassEditPreview(false)
+    }
+  }
+  
+  const handleApplyMassEdit = async () => {
+    if (!massEditFindPattern.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a find pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const response = await regexAPI.massEdit({
+        channel_ids: Array.from(selectedChannels),
+        find_pattern: massEditFindPattern,
+        replace_pattern: massEditReplacePattern,
+        use_regex: massEditUseRegex,
+        new_m3u_accounts: massEditM3uAccounts
+      })
+      
+      toast({
+        title: "Success",
+        description: response.data.message || `Updated ${response.data.success_count} channels`,
+      })
+      
+      // Reset mass edit mode
+      setMassEditMode(false)
+      setMassEditFindPattern('')
+      setMassEditReplacePattern('')
+      setMassEditUseRegex(false)
+      setMassEditM3uAccounts(null)
+      setMassEditPreview(null)
+      
+      // Reload data and common patterns
+      await loadData()
+      if (selectedChannels.size > 0 && editCommonDialogOpen) {
+        const patternsResponse = await regexAPI.getCommonPatterns({
+          channel_ids: Array.from(selectedChannels)
+        })
+        setCommonPatterns(patternsResponse.data.patterns || [])
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to apply mass edit",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  // Helper function to normalize pattern data
+  const normalizePatternData = (channelPatterns) => {
+    if (!channelPatterns) return []
+    
+    // Support both old format (regex) and new format (regex_patterns)
+    let regexPatterns = channelPatterns.regex_patterns
+    if (!regexPatterns) {
+      // Fallback to old format
+      const oldRegex = channelPatterns.regex || []
+      const oldM3uAccounts = channelPatterns.m3u_accounts
+      regexPatterns = oldRegex.map(p => ({
+        pattern: p,
+        m3u_accounts: oldM3uAccounts
+      }))
+    }
+    
+    // Ensure all patterns are in object format
+    return regexPatterns.map(p => {
+      if (typeof p === 'string') {
+        return { pattern: p, m3u_accounts: null }
+      }
+      return p
+    })
+  }
+  
+  // Common patterns handlers
+  const handleEditCommonPattern = async () => {
+    if (!editingCommonPattern || !newCommonPattern.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a new pattern",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      // Filter to only include channels that are currently selected
+      const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+      const channelsToEdit = editingCommonPattern.channel_ids.filter(id => 
+        selectedChannelIdsSet.has(String(id))
+      )
+      
+      if (channelsToEdit.length === 0) {
+        toast({
+          title: "Error",
+          description: "No selected channels have this pattern",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      const response = await regexAPI.bulkEditPattern({
+        channel_ids: channelsToEdit,
+        old_pattern: editingCommonPattern.pattern,
+        new_pattern: newCommonPattern,
+        new_m3u_accounts: newCommonPatternM3uAccounts
+      })
+      
+      toast({
+        title: "Success",
+        description: response.data.message || `Updated pattern in ${response.data.success_count} channels`,
+      })
+      
+      // Reload data and common patterns
+      await loadData()
+      
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+      
+      // Close edit mode
+      setEditingCommonPattern(null)
+      setNewCommonPattern('')
+      setNewCommonPatternM3uAccounts(null)
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to edit pattern",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleDeleteSingleCommonPattern = async (patternInfo) => {
+    try {
+      const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+      const channelsToDelete = patternInfo.channel_ids.filter(id => 
+        selectedChannelIdsSet.has(String(id))
+      )
+      
+      if (channelsToDelete.length === 0) {
+        toast({
+          title: "Error",
+          description: "No selected channels have this pattern",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      let successCount = 0
+      for (const channelId of channelsToDelete) {
+        try {
+          const channelPatterns = patterns[channelId] || patterns[String(channelId)]
+          const channel = channels.find(ch => ch.id === channelId || ch.id === String(channelId))
+          
+          let regexPatterns = normalizePatternData(channelPatterns)
+          const updatedPatterns = regexPatterns.filter(p => p.pattern !== patternInfo.pattern)
+          
+          if (updatedPatterns.length === 0) {
+            await regexAPI.deletePattern(channelId)
+          } else {
+            await regexAPI.addPattern({
+              channel_id: channelId,
+              name: channel?.name || `Channel ${channelId}`,
+              regex_patterns: updatedPatterns,
+              enabled: channelPatterns?.enabled ?? true
+            })
+          }
+          successCount++
+        } catch (err) {
+          console.error(`Error deleting pattern from channel ${channelId}:`, err)
+        }
+      }
+      
+      toast({
+        title: "Success",
+        description: `Deleted pattern from ${successCount} channel(s)`,
+      })
+      
+      await loadData()
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to delete pattern",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleDeleteCommonPatterns = async () => {
+    if (selectedCommonPatterns.size === 0) {
+      toast({
+        title: "No Patterns Selected",
+        description: "Please select patterns to delete",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      const patternsToDelete = Array.from(selectedCommonPatterns).map(idx => commonPatterns[idx])
+      let totalDeleted = 0
+      
+      for (const patternInfo of patternsToDelete) {
+        const selectedChannelIdsSet = new Set(Array.from(selectedChannels).map(id => String(id)))
+        const channelsToDelete = patternInfo.channel_ids.filter(id => 
+          selectedChannelIdsSet.has(String(id))
+        )
+        
+        for (const channelId of channelsToDelete) {
+          try {
+            const channelPatterns = patterns[channelId] || patterns[String(channelId)]
+            const channel = channels.find(ch => ch.id === channelId || ch.id === String(channelId))
+            
+            let regexPatterns = normalizePatternData(channelPatterns)
+            const updatedPatterns = regexPatterns.filter(p => p.pattern !== patternInfo.pattern)
+            
+            if (updatedPatterns.length === 0) {
+              await regexAPI.deletePattern(channelId)
+            } else {
+              await regexAPI.addPattern({
+                channel_id: channelId,
+                name: channel?.name || `Channel ${channelId}`,
+                regex_patterns: updatedPatterns,
+                enabled: channelPatterns?.enabled ?? true
+              })
+            }
+            totalDeleted++
+          } catch (err) {
+            console.error(`Error deleting pattern from channel ${channelId}:`, err)
+          }
+        }
+      }
+      
+      toast({
+        title: "Success",
+        description: `Deleted ${selectedCommonPatterns.size} pattern(s) from ${totalDeleted} channel instance(s)`,
+      })
+      
+      setSelectedCommonPatterns(new Set())
+      await loadData()
+      const patternsResponse = await regexAPI.getCommonPatterns({
+        channel_ids: Array.from(selectedChannels)
+      })
+      setCommonPatterns(patternsResponse.data.patterns || [])
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to delete patterns",
+        variant: "destructive"
+      })
     }
   }
 
@@ -2243,6 +2565,42 @@ export default function ChannelConfiguration() {
                       )}
                       Health Check
                     </Button>
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        if (selectedChannels.size === 0) {
+                          toast({
+                            title: "No Channels Selected",
+                            description: "Please select at least one channel",
+                            variant: "destructive"
+                          })
+                          return
+                        }
+                        setEditCommonDialogOpen(true)
+                        setLoadingCommonPatterns(true)
+                        try {
+                          const response = await regexAPI.getCommonPatterns({
+                            channel_ids: Array.from(selectedChannels)
+                          })
+                          setCommonPatterns(response.data.patterns || [])
+                        } catch (err) {
+                          console.error('Error loading common patterns:', err)
+                          toast({
+                            title: "Error",
+                            description: "Failed to load common patterns",
+                            variant: "destructive"
+                          })
+                        } finally {
+                          setLoadingCommonPatterns(false)
+                        }
+                      }}
+                      disabled={selectedChannels.size === 0}
+                      className="text-orange-600 border-orange-600 hover:bg-orange-50"
+                      variant="outline"
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Bulk/Common Patterns
+                    </Button>
                   </div>
                 </div>
               </CardContent>
@@ -2903,8 +3261,8 @@ export default function ChannelConfiguration() {
                         Valid pattern - {testResults.matches?.length || 0} matches found
                       </div>
                       {testResults.matches && testResults.matches.length > 0 && (
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          {testResults.matches.slice(0, 10).map((match, idx) => (
+                        <div className="space-y-1 max-h-96 overflow-y-auto">
+                          {testResults.matches.map((match, idx) => (
                             <div 
                               key={idx} 
                               className="text-xs text-muted-foreground animate-in fade-in slide-in-from-left-1 duration-200"
@@ -2923,11 +3281,6 @@ export default function ChannelConfiguration() {
                               </div>
                             </div>
                           ))}
-                          {testResults.matches.length > 10 && (
-                            <div className="text-xs text-muted-foreground italic animate-in fade-in duration-200">
-                              ... and {testResults.matches.length - 10} more
-                            </div>
-                          )}
                         </div>
                       )}
                     </>
@@ -3100,6 +3453,373 @@ export default function ChannelConfiguration() {
             </Button>
             <Button onClick={handleBulkQualityPreference}>
               Update {selectedChannels.size} Channel{selectedChannels.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Common Patterns Dialog */}
+      <Dialog open={editCommonDialogOpen} onOpenChange={setEditCommonDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bulk/Common Patterns</DialogTitle>
+            <DialogDescription>
+              View and edit patterns that appear across multiple selected channels ({selectedChannels.size} selected)
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {/* Search and Actions */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search patterns..."
+                  value={commonPatternsSearch}
+                  onChange={(e) => setCommonPatternsSearch(e.target.value)}
+                  className="pl-8"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedCommonPatterns(new Set())
+                  setMassEditMode(false)
+                }}
+                disabled={selectedCommonPatterns.size === 0}
+              >
+                Clear Selection
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMassEditMode(!massEditMode)}
+                disabled={selectedCommonPatterns.size === 0}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Selected ({selectedCommonPatterns.size})
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeleteCommonPatterns}
+                disabled={selectedCommonPatterns.size === 0}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Selected
+              </Button>
+            </div>
+            
+            {/* Mass Edit Section */}
+            {massEditMode && selectedCommonPatterns.size > 0 && (
+              <Card className="border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">Mass Find & Replace</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setMassEditMode(false)
+                        setMassEditFindPattern('')
+                        setMassEditReplacePattern('')
+                        setMassEditUseRegex(false)
+                        setMassEditM3uAccounts(null)
+                        setMassEditPreview(null)
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Find/Replace Inputs */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="mass-edit-find">Find Pattern</Label>
+                      <Input
+                        id="mass-edit-find"
+                        value={massEditFindPattern}
+                        onChange={(e) => setMassEditFindPattern(e.target.value)}
+                        placeholder="Enter text or regex to find"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="mass-edit-replace">Replace With</Label>
+                      <Input
+                        id="mass-edit-replace"
+                        value={massEditReplacePattern}
+                        onChange={(e) => setMassEditReplacePattern(e.target.value)}
+                        placeholder="Enter replacement text"
+                        className="font-mono"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Options */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="mass-edit-use-regex"
+                        checked={massEditUseRegex}
+                        onCheckedChange={setMassEditUseRegex}
+                      />
+                      <label htmlFor="mass-edit-use-regex" className="text-sm cursor-pointer">
+                        Use Regular Expression
+                      </label>
+                    </div>
+                    {massEditUseRegex && (
+                      <Alert className="bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800">
+                        <Info className="h-4 w-4" />
+                        <AlertDescription className="text-xs">
+                          <strong>Regex replacement supports backreferences:</strong>
+                          <ul className="list-disc list-inside mt-1 space-y-0.5">
+                            <li><code className="bg-background px-1 rounded">{`\\g<0>`}</code> - Full match (equivalent to $0)</li>
+                            <li><code className="bg-background px-1 rounded">{`\\1, \\2, ...`}</code> - Capture groups</li>
+                            <li><code className="bg-background px-1 rounded">{`\\g<name>`}</code> - Named groups</li>
+                          </ul>
+                          <div className="mt-2">
+                            <strong>Example:</strong> Find: <code className="bg-background px-1 rounded">{`(\\w+)_HD`}</code>, Replace: <code className="bg-background px-1 rounded">{`\\1_4K`}</code> → Changes ESPN_HD to ESPN_4K
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                  
+                  {/* M3U Account Selection */}
+                  <div className="space-y-2">
+                    <Label>Update Playlists (Optional)</Label>
+                    <div className="space-y-2 border rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="mass-edit-keep-playlists"
+                          checked={massEditM3uAccounts === null}
+                          onCheckedChange={(checked) => {
+                            setMassEditM3uAccounts(checked ? null : [])
+                          }}
+                        />
+                        <label htmlFor="mass-edit-keep-playlists" className="text-sm cursor-pointer">
+                          Keep Existing Playlists
+                        </label>
+                      </div>
+                      
+                      {massEditM3uAccounts !== null && (
+                        <>
+                          <Separator />
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id="mass-edit-all-playlists"
+                              checked={massEditM3uAccounts.length === 0}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setMassEditM3uAccounts([])
+                                } else {
+                                  // Select first available playlist when unchecking "All"
+                                  const availablePlaylists = m3uAccounts.filter(acc => acc.id !== 'custom')
+                                  setMassEditM3uAccounts(availablePlaylists.length > 0 ? [availablePlaylists[0].id] : [])
+                                }
+                              }}
+                            />
+                            <label htmlFor="mass-edit-all-playlists" className="text-sm cursor-pointer">
+                              All Playlists
+                            </label>
+                          </div>
+                          
+                          {m3uAccounts.filter(acc => acc.id !== 'custom').map(account => (
+                            <div key={account.id} className="flex items-center gap-2">
+                              <Checkbox
+                                id={`mass-edit-playlist-${account.id}`}
+                                checked={massEditM3uAccounts.length > 0 && massEditM3uAccounts.includes(account.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setMassEditM3uAccounts(prev => [...prev, account.id])
+                                  } else {
+                                    setMassEditM3uAccounts(prev => prev.filter(id => id !== account.id))
+                                  }
+                                }}
+                              />
+                              <label htmlFor={`mass-edit-playlist-${account.id}`} className="text-sm cursor-pointer">
+                                {account.name}
+                              </label>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Preview Button */}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleMassEditPreview}
+                      disabled={!massEditFindPattern.trim() || loadingMassEditPreview}
+                    >
+                      {loadingMassEditPreview ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Loading Preview...
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="h-4 w-4 mr-2" />
+                          Preview Changes
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleApplyMassEdit}
+                      disabled={!massEditFindPattern.trim() || !massEditPreview || massEditPreview.total_patterns_affected === 0}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      Apply Changes
+                    </Button>
+                  </div>
+                  
+                  {/* Preview Results */}
+                  {massEditPreview && (
+                    <div className="space-y-3 border rounded-lg p-4 bg-background">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold">Preview Results</h4>
+                        <div className="text-sm text-muted-foreground">
+                          {massEditPreview.total_patterns_affected} pattern{massEditPreview.total_patterns_affected !== 1 ? 's' : ''} in {massEditPreview.total_channels_affected} channel{massEditPreview.total_channels_affected !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                      
+                      <div className="max-h-[300px] overflow-y-auto space-y-2">
+                        {massEditPreview.affected_channels.map(channelInfo => (
+                          <div key={channelInfo.channel_id} className="border rounded p-3 space-y-2">
+                            <div className="font-medium text-sm">
+                              {channelInfo.channel_name}
+                              <span className="text-muted-foreground ml-2">({channelInfo.total_affected} pattern{channelInfo.total_affected !== 1 ? 's' : ''})</span>
+                            </div>
+                            <div className="space-y-1">
+                              {channelInfo.affected_patterns.map((patternChange, idx) => (
+                                <div key={idx} className="text-xs font-mono bg-muted p-2 rounded space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-red-600 dark:text-red-400 line-through">{patternChange.old_pattern}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <ArrowRight className="h-3 w-3" />
+                                    <span className="text-green-600 dark:text-green-400">{patternChange.new_pattern}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Patterns List */}
+            <div className="max-h-[400px] overflow-y-auto">
+              {loadingCommonPatterns ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : commonPatterns.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No common patterns found across selected channels
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {commonPatterns
+                    .filter(p => p.pattern.toLowerCase().includes(commonPatternsSearch.toLowerCase()))
+                    .map((patternInfo, idx) => (
+                      <div key={idx} className="border rounded-lg p-3 space-y-2">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={selectedCommonPatterns.has(idx)}
+                            onCheckedChange={(checked) => {
+                              const newSet = new Set(selectedCommonPatterns)
+                              if (checked) {
+                                newSet.add(idx)
+                              } else {
+                                newSet.delete(idx)
+                              }
+                              setSelectedCommonPatterns(newSet)
+                            }}
+                          />
+                          <div className="flex-1 space-y-1">
+                            <div className="font-mono text-sm">{patternInfo.pattern}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Found in {patternInfo.count} of {selectedChannels.size} selected channels ({patternInfo.percentage}%)
+                            </div>
+                          </div>
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEditingCommonPattern(patternInfo)
+                                setNewCommonPattern(patternInfo.pattern)
+                                setNewCommonPatternM3uAccounts(null)
+                              }}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteSingleCommonPattern(patternInfo)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        {/* Edit Mode */}
+                        {editingCommonPattern && editingCommonPattern.pattern === patternInfo.pattern && (
+                          <div className="space-y-3 pt-2 border-t">
+                            <div className="space-y-2">
+                              <Label>New Pattern</Label>
+                              <Input
+                                value={newCommonPattern}
+                                onChange={(e) => setNewCommonPattern(e.target.value)}
+                                className="font-mono"
+                                placeholder="Enter new pattern"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={handleEditCommonPattern}>
+                                <Save className="h-4 w-4 mr-2" />
+                                Save
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setEditingCommonPattern(null)
+                                  setNewCommonPattern('')
+                                  setNewCommonPatternM3uAccounts(null)
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setEditCommonDialogOpen(false)
+              setSelectedCommonPatterns(new Set())
+              setMassEditMode(false)
+              setCommonPatternsSearch('')
+            }}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
