@@ -1,3 +1,14 @@
+Dover Streams jetzt ohne quality check vorher Discover Streams hat immer alle channels wo eine neue zuteilung gab alle streams getestet
+
+
+
+
+
+
+
+
+
+
 # StreamFlow for Dispatcharr
 ![Docker Pulls](https://ghcr-badge.elias.eu.org/shield/krinkuto11/streamflow/streamflow)
 
