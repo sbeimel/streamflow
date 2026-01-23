@@ -1156,8 +1156,8 @@ class AutomatedStreamManager:
                         try:
                             from stream_checker_service import get_stream_checker_service
                             stream_checker = get_stream_checker_service()
-                            stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts)
-                            logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for stream quality checking")
+                            stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts, force_check=False)
+                            logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for automatic quality checking (respects 2-hour immunity)")
                             # Trigger immediate check instead of waiting for scheduled interval
                             # Skip if caller will handle the check (e.g., check_single_channel)
                             if not skip_check_trigger:

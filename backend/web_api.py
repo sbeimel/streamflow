@@ -2072,15 +2072,22 @@ def clear_channel_order():
 
 @app.route('/api/discover-streams', methods=['POST'])
 def discover_streams():
-    """Trigger stream discovery and assignment (manual Quick Action)."""
+    """Trigger stream discovery and assignment (manual Quick Action).
+    
+    This performs ONLY stream matching and assignment. Quality checking
+    is handled automatically by the "Automatic Quality Checking" automation
+    which respects the 2-hour immunity for efficient resource usage.
+    """
     try:
         manager = get_automation_manager()
         # Use force=True to bypass feature flags for manual Quick Actions
-        assignments = manager.discover_and_assign_streams(force=True)
+        # Use skip_check_trigger=True to let Automatic Quality Checking handle optimization
+        assignments = manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
         return jsonify({
             "message": "Stream discovery completed",
             "assignments": assignments,
-            "total_assigned": sum(assignments.values())
+            "total_assigned": sum(assignments.values()),
+            "note": "Quality checking will be handled automatically by the system"
         })
     except Exception as e:
         logger.error(f"Error discovering streams: {e}")

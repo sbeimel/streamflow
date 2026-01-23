@@ -404,13 +404,14 @@ class ChannelUpdateTracker:
                 }
             self._save_updates()
     
-    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None):
+    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None, force_check: bool = False):
         """Mark multiple channels as updated.
         
         Args:
             channel_ids: List of channel IDs to mark
             timestamp: When the update occurred (defaults to now)
             stream_counts: Optional dict mapping channel_id to stream count
+            force_check: If True, also mark channels for force checking (bypasses 2-hour immunity)
         """
         if timestamp is None:
             timestamp = datetime.now().isoformat()
@@ -448,11 +449,15 @@ class ChannelUpdateTracker:
                         'checked_stream_ids': []
                     }
                 marked_count += 1
+                
+                # Mark for force check if requested (bypasses 2-hour immunity)
+                if force_check:
+                    self.mark_channel_for_force_check(channel_id)
             
             if marked_count > 0:
                 self._save_updates()
         
-        logger.info(f"Marked {marked_count} channels as updated")
+        logger.info(f"Marked {marked_count} channels as updated{' (with force check)' if force_check else ''}")
     
     def get_channels_needing_check(self) -> List[int]:
         """Get list of channel IDs that need checking (read-only, doesn't clear flag).

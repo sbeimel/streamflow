@@ -3549,3 +3549,83 @@ See `RESCORE_RESORT_README.md` for complete documentation.
 - **v1.0**: Initial enhancements (Provider Diversification, Fallback Score Fix, Profile Failover v1)
 - **v2.0**: Profile Failover v2 with intelligent polling, Test Streams Without Stats button, Priority+Diversification info
 - **v2.1**: Re-Score & Re-Sort feature, Dashboard Quick Actions buttons (Test Streams Without Stats + Re-Score & Re-Sort)
+
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -407,11 +407,12 @@ class UpdateTracker:
+             return channels
+     
+-    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None):
++    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None, force_check: bool = False):
+         """Mark multiple channels as updated.
+         
+         Args:
+             channel_ids: List of channel IDs to mark
+             timestamp: When the update occurred (defaults to now)
+             stream_counts: Optional dict mapping channel_id to stream count
++            force_check: If True, also mark channels for force checking (bypasses 2-hour immunity)
+         """
+         if timestamp is None:
+             timestamp = datetime.now().isoformat()
+@@ -441,10 +442,14 @@ class UpdateTracker:
+                     }
+                 marked_count += 1
++                
++                # Mark for force check if requested (bypasses 2-hour immunity)
++                if force_check:
++                    self.mark_channel_for_force_check(channel_id)
+             
+             if marked_count > 0:
+                 self._save_updates()
+         
+-        logger.info(f"Marked {marked_count} channels as updated")
++        logger.info(f"Marked {marked_count} channels as updated{' (with force check)' if force_check else ''}")
+
+diff --git a/backend/automated_stream_manager.py b/backend/automated_stream_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/automated_stream_manager.py
++++ b/backend/automated_stream_manager.py
+@@ -1158,8 +1158,8 @@ class AutomatedStreamManager:
+                         try:
+                             from stream_checker_service import get_stream_checker_service
+                             stream_checker = get_stream_checker_service()
+-                            stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts, force_check=True)
+-                            logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for stream quality checking (bypassing 2-hour immunity)")
++                            stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts, force_check=False)
++                            logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for automatic quality checking (respects 2-hour immunity)")
+                             # Trigger immediate check instead of waiting for scheduled interval
+                             # Skip if caller will handle the check (e.g., check_single_channel)
+                             if not skip_check_trigger:
+
+diff --git a/backend/web_api.py b/backend/web_api.py
+index 1234567..abcdefg 100644
+--- a/backend/web_api.py
++++ b/backend/web_api.py
+@@ -2073,12 +2073,18 @@ def get_stream_stats(stream_id):
+ 
+ @app.route('/api/discover-streams', methods=['POST'])
+ def discover_streams():
+-    """Trigger stream discovery and assignment (manual Quick Action)."""
++    """Trigger stream discovery and assignment (manual Quick Action).
++    
++    This performs ONLY stream matching and assignment. Quality checking
++    is handled automatically by the "Automatic Quality Checking" automation
++    which respects the 2-hour immunity for efficient resource usage.
++    """
+     try:
+         manager = get_automation_manager()
+         # Use force=True to bypass feature flags for manual Quick Actions
+-        assignments = manager.discover_and_assign_streams(force=True)
++        # Use skip_check_trigger=True to let Automatic Quality Checking handle optimization
++        assignments = manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
+         return jsonify({
+             "message": "Stream discovery completed",
+             "assignments": assignments,
+-            "total_assigned": sum(assignments.values())
++            "total_assigned": sum(assignments.values()),
++            "note": "Quality checking will be handled automatically by the system"
+         })
+     except Exception as e:
+         logger.error(f"Error discovering streams: {e}")
