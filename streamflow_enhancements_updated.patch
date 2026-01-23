@@ -1,0 +1,751 @@
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -135,6 +135,16 @@ class StreamCheckConfig:
+             'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
+             'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
+             'min_score': 0  # Minimum score (0-100, 0 = no minimum)
++        },
++        'account_stream_limits': {
++            'enabled': True,  # Enable per-account stream limits for channel assignment
++            'global_limit': 0,  # Global limit per account (0 = unlimited)
++            'account_limits': {}  # Per-account limits: {account_id: limit}
++        },
++        'quality_check_exclusions': {
++            'enabled': False,  # Enable quality check exclusions feature
++            'excluded_accounts': []  # List of M3U account IDs to exclude from quality checking
+         }
+     }
+     
+@@ -1648,6 +1658,35 @@ class StreamCheckerService:
+         except Exception as e:
+             logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
+     
++    def _should_skip_quality_check(self, stream: Dict[str, Any]) -> bool:
++        """Check if a stream should skip quality checking based on M3U account exclusions.
++        
++        Args:
++            stream: Stream dictionary containing m3u_account information
++            
++        Returns:
++            True if the stream should skip quality checking (use M3U priority only)
++        """
++        try:
++            # Check if quality check exclusions feature is enabled
++            quality_exclusions_config = self.config.get('quality_check_exclusions', {})
++            if not quality_exclusions_config.get('enabled', False):
++                return False
++            
++            # Get excluded accounts from stream checker config (not automation config)
++            excluded_accounts = set(quality_exclusions_config.get('excluded_accounts', []))
++            
++            # Check if stream's M3U account is in the excluded list
++            stream_m3u_account = stream.get('m3u_account')
++            if stream_m3u_account in excluded_accounts:
++                return True
++                
++            return False
++        except Exception as e:
++            logger.debug(f"Error checking quality exclusion for stream {stream.get('id')}: {e}")
++            return False
++    
++    def _get_m3u_priority_score(self, stream: Dict[str, Any]) -> float:
++        """Get priority-based score for streams from quality-excluded M3U accounts.
++        
++        Args:
++            stream: Stream dictionary
++            
++        Returns:
++            Priority-based score (higher priority = higher score)
++        """
++        try:
++            stream_m3u_account = stream.get('m3u_account')
++            if not stream_m3u_account:
++                return 50.0  # Default priority for custom streams
++            
++            # Get M3U account info from UDI
++            udi = get_udi_manager()
++            m3u_accounts = udi.get_m3u_accounts()
++            
++            for account in m3u_accounts:
++                if account.get('id') == stream_m3u_account:
++                    # Use M3U account priority (higher priority = higher score)
++                    priority = account.get('priority', 50)
++                    # Convert priority to score (priority 1-100 -> score 1-100)
++                    return float(priority)
++            
++            # Default priority if account not found
++            return 50.0
++        except Exception as e:
++            logger.debug(f"Error getting M3U priority score for stream {stream.get('id')}: {e}")
++            return 50.0
++    
+     def _check_channel_limits(self, channel_id: int, channel_name: str, streams: List[Dict]) -> Optional[Dict]:
+         """Check if a channel can be checked based on viewer and playlist limits.
+         
+@@ -1910,6 +1949,16 @@ class StreamCheckerService:
+             # Filter streams into two categories:
+             # 1. Quality check streams (normal processing with FFmpeg analysis)
+             # 2. Priority-only streams (from quality-excluded accounts, use M3U priority)
++            quality_check_streams = []
++            priority_only_streams = []
++            
++            for stream in streams_to_check:
++                if self._should_skip_quality_check(stream):
++                    # Stream from quality-excluded account - use M3U priority only
++                    priority_only_streams.append(stream)
++                else:
++                    # Normal stream - perform quality check
++                    quality_check_streams.append(stream)
+             
+             if priority_only_streams:
+                 logger.info(f"Found {len(priority_only_streams)} streams from quality-excluded accounts (will use M3U priority)")
+@@ -2454,6 +2503,16 @@ class StreamCheckerService:
+             # Filter streams into two categories:
+             # 1. Quality check streams (normal processing with FFmpeg analysis)
+             # 2. Priority-only streams (from quality-excluded accounts, use M3U priority)
++            quality_check_streams = []
++            priority_only_streams = []
++            
++            for stream in streams_to_check:
++                if self._should_skip_quality_check(stream):
++                    # Stream from quality-excluded account - use M3U priority only
++                    priority_only_streams.append(stream)
++                else:
++                    # Normal stream - perform quality check
++                    quality_check_streams.append(stream)
+             
+             if priority_only_streams:
+                 logger.info(f"Found {len(priority_only_streams)} streams from quality-excluded accounts (will use M3U priority)")
+@@ -3940,6 +3999,16 @@ class StreamCheckerService:
+                             
+                             # Check if this stream should use priority-only scoring
+                             if self._should_skip_quality_check(full_stream):
++                                # Use M3U priority score for quality-excluded streams
++                                score = self._get_m3u_priority_score(full_stream)
++                                score_data['quality_check_excluded'] = True
++                                score_data['status'] = 'Priority-Only'
++                            else:
++                                # Calculate score with current config (normal quality-based scoring)
++                                score = self._calculate_stream_score(score_data, channel_id)
++                                score_data['quality_check_excluded'] = False
++                            
++                            score_data['score'] = score
+                             analyzed_streams.append(score_data)
+                             
+                         except Exception as e:
+@@ -4520,6 +4589,25 @@ class StreamCheckerService:
+             # Convert to analyzed format with existing scores/stats
+             analyzed_streams = []
+             for stream in current_streams:
++                # Get full stream data to check for quality exclusions
++                full_stream = udi.get_stream_by_id(stream['id'])
++                if not full_stream:
++                    continue
++                
+                 stream_stats = stream.get('stream_stats', {})
+                 if stream_stats is None:
+                     stream_stats = {}
+@@ -4540,8 +4628,18 @@ class StreamCheckerService:
+                 }
+                 
+-                # Calculate score based on existing data
+-                score = self._calculate_stream_score(analyzed, channel_id)
++                # Check if this stream should use priority-only scoring
++                if self._should_skip_quality_check(full_stream):
++                    # Use M3U priority score for quality-excluded streams
++                    score = self._get_m3u_priority_score(full_stream)
++                    analyzed['quality_check_excluded'] = True
++                    analyzed['status'] = 'Priority-Only'
++                else:
++                    # Calculate score based on existing data (normal quality-based scoring)
++                    score = self._calculate_stream_score(analyzed, channel_id)
++                    analyzed['quality_check_excluded'] = False
++                
+                 analyzed['score'] = score
+                 analyzed_streams.append(analyzed)
+             
+@@ -4607,6 +4705,31 @@ class StreamCheckerService:
+         
+         return results
+     
++    def remove_streams_from_excluded_accounts(self) -> Dict[str, Any]:
++        """Remove all streams from quality-excluded M3U accounts from all channels.
++        
++        Returns:
++            Dict with operation results and statistics
++        """
++        logger.info("Removing streams from quality-excluded M3U accounts...")
++        
++        quality_exclusions_config = self.config.get('quality_check_exclusions', {})
++        if not quality_exclusions_config.get('enabled', False):
++            return {'success': False, 'error': 'Quality check exclusions feature is disabled'}
++        
++        excluded_accounts = set(quality_exclusions_config.get('excluded_accounts', []))
++        if not excluded_accounts:
++            return {'success': False, 'error': 'No excluded accounts configured'}
++        
++        try:
++            from api_utils import remove_streams_by_m3u_accounts
++            results = remove_streams_by_m3u_accounts(list(excluded_accounts))
++            
++            logger.info(f"Removed {results.get('streams_removed', 0)} streams from {len(excluded_accounts)} excluded accounts")
++            return results
++        except Exception as e:
++            logger.error(f"Error removing streams from excluded accounts: {e}")
++            return {'success': False, 'error': str(e)}
++    
+ def get_stream_checker_service() -> StreamCheckerService:
+     """Get or create the global stream checker service instance."""
+     global _service_instance
+
+diff --git a/backend/automated_stream_manager.py b/backend/automated_stream_manager.py
+index 1234567..abcdefg 100644
+--- a/backend/automated_stream_manager.py
++++ b/backend/automated_stream_manager.py
+@@ -900,6 +900,58 @@ class AutomatedStreamManager:
+                 logger.debug(f"Filtered {len(all_streams) - len(filtered_streams)} streams from disabled M3U accounts")
+                 all_streams = filtered_streams
+             else:
++                # Get quality check exclusions configuration
++                try:
++                    from stream_checker_service import get_stream_checker_service
++                    stream_checker = get_stream_checker_service()
++                    quality_exclusions_config = stream_checker.config.get('quality_check_exclusions', {})
++                    quality_check_excluded_accounts = set(quality_exclusions_config.get('excluded_accounts', []))
++                    quality_exclusions_enabled = quality_exclusions_config.get('enabled', False)
++                except Exception as e:
++                    logger.debug(f"Could not get quality exclusions config: {e}")
++                    quality_check_excluded_accounts = set()
++                    quality_exclusions_enabled = False
++                
++                if enabled_accounts_config:
++                    # Only include accounts that are in the enabled list
++                    enabled_account_ids = set(
++                        acc.get('id') for acc in non_custom_accounts 
++                        if acc.get('id') in enabled_accounts_config and acc.get('id') is not None
++                    )
++                    
++                    # Also include quality check excluded accounts for stream matching
++                    # These accounts should still have their streams matched to channels,
++                    # but they won't undergo quality checking (they use M3U priority instead)
++                    if quality_exclusions_enabled:
++                        quality_excluded_account_ids = set(
++                            acc.get('id') for acc in non_custom_accounts 
++                            if acc.get('id') in quality_check_excluded_accounts and acc.get('id') is not None
++                        )
++                        
++                        # Combine enabled accounts with quality-excluded accounts for stream matching
++                        all_matching_account_ids = enabled_account_ids | quality_excluded_account_ids
++                    else:
++                        all_matching_account_ids = enabled_account_ids
++                else:
++                    # If no specific accounts are enabled in config, use all non-custom active accounts
++                    all_matching_account_ids = set(
++                        acc.get('id') for acc in non_custom_accounts 
++                        if acc.get('id') is not None
++                    )
++                
++                # Filter streams to include:
++                # 1. Streams from enabled accounts (normal processing)
++                # 2. Streams from quality-excluded accounts (matching only, no quality check) - only if feature enabled
++                # 3. Custom streams (is_custom=True) as they don't belong to an M3U account
++                filtered_streams = []
++                for stream in all_streams:
++                    if stream.get('is_custom', False):
++                        # Custom streams are always included
++                        stream['quality_check_excluded'] = False
++                        filtered_streams.append(stream)
++                    elif stream.get('m3u_account') in all_matching_account_ids:
++                        # Mark streams from quality-excluded accounts (only if feature enabled)
++                        stream['quality_check_excluded'] = (
++                            quality_exclusions_enabled and 
++                            stream.get('m3u_account') in quality_check_excluded_accounts
++                        )
++                        filtered_streams.append(stream)
++                
++                streams_filtered_count = len(all_streams) - len(filtered_streams)
++                if streams_filtered_count > 0:
++                    logger.info(f"Filtered out {streams_filtered_count} streams from disabled M3U accounts")
++                
++                # Log quality check exclusions
++                if quality_exclusions_enabled:
++                    quality_excluded_streams = [s for s in filtered_streams if s.get('quality_check_excluded', False)]
++                    if quality_excluded_streams:
++                        logger.info(f"Marked {len(quality_excluded_streams)} streams from quality-excluded accounts (will use M3U priority sorting)")
++                
++                all_streams = filtered_streams
++                
++                if not all_streams:
++                    logger.info("No streams found after filtering by enabled M3U accounts")
++                    return {}
+                 logger.info(f"Using all {len(all_streams)} streams from {len(non_custom_accounts)} M3U accounts")
+             
+             # Get match profiles manager
+
+diff --git a/backend/web_api.py b/backend/web_api.py
+index 1234567..abcdefg 100644
+--- a/backend/web_api.py
++++ b/backend/web_api.py
+@@ -2700,6 +2700,21 @@ def update_stream_checker_config():
+                 else:
+                     logger.warning("croniter not available - cron expression validation skipped")
+         
++        # Validate quality check exclusions if provided
++        if 'quality_check_exclusions' in data:
++            exclusions_config = data['quality_check_exclusions']
++            
++            # Validate enabled flag
++            if 'enabled' in exclusions_config:
++                enabled = exclusions_config['enabled']
++                if not isinstance(enabled, bool):
++                    return jsonify({"error": "quality_check_exclusions.enabled must be a boolean"}), 400
++            
++            # Validate excluded_accounts
++            if 'excluded_accounts' in exclusions_config:
++                excluded_accounts = exclusions_config['excluded_accounts']
++                if not isinstance(excluded_accounts, list):
++                    return jsonify({"error": "quality_check_exclusions.excluded_accounts must be a list"}), 400
++                
++                for account_id in excluded_accounts:
++                    if not isinstance(account_id, int):
++                        return jsonify({"error": f"Account ID {account_id} must be an integer"}), 400
++        
+         service = get_stream_checker_service()
+         service.update_config(data)
+         
+@@ -2976,6 +2991,31 @@ def rescore_and_resort_all_channels():
+         logger.error(f"Error re-scoring channels: {e}")
+         return jsonify({"error": str(e)}), 500
+
++@app.route('/api/stream-checker/remove-excluded-streams', methods=['POST'])
++def remove_excluded_streams():
++    """Remove all streams from quality-excluded M3U accounts from all channels.
++    
++    This removes streams from accounts that are configured for quality check exclusions.
++    Useful for cleaning up channels when accounts are added to the exclusion list.
++    """
++    try:
++        service = get_stream_checker_service()
++        
++        if not service.running:
++            return jsonify({"error": "Stream checker service is not running"}), 400
++        
++        # Remove streams from excluded accounts
++        results = service.remove_streams_from_excluded_accounts()
++        
++        if results['success']:
++            return jsonify(results)
++        else:
++            return jsonify(results), 400
++    
++    except Exception as e:
++        logger.error(f"Error removing excluded streams: {e}")
++        return jsonify({"error": str(e)}), 500
++
+
+ @app.route('/api/stream-checker/apply-account-limits', methods=['POST'])
+ def apply_account_limits_to_channels():
+@@ -3065,6 +3107,13 @@ def test_streams_without_stats():
+                 # Get full stream data
+                 stream_data = udi.get_stream_by_id(stream_id)
+                 if not stream_data:
+                     continue
+                 
++                # Check if this stream should skip quality checking (quality exclusions)
++                service = get_stream_checker_service()
++                if service._should_skip_quality_check(stream_data):
++                    # Skip quality-excluded streams - they don't need quality stats
++                    continue
++                
+                 # Check if stream has stats
+                 stream_stats = stream_data.get('stream_stats')
+                 if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+
+diff --git a/frontend/src/pages/AutomationSettings.jsx b/frontend/src/pages/AutomationSettings.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/AutomationSettings.jsx
++++ b/frontend/src/pages/AutomationSettings.jsx
+@@ -58,6 +58,8 @@ export default function AutomationSettings() {
+   const [actionLoading, setActionLoading] = useState(null)
+   const [m3uAccounts, setM3uAccounts] = useState([])
+   const [loadingM3uAccounts, setLoadingM3uAccounts] = useState(false)
++  const [qualityExclusionsConfig, setQualityExclusionsConfig] = useState({ enabled: false, excluded_accounts: [] })
++  const [loadingQualityExclusions, setLoadingQualityExclusions] = useState(false)
+
+   const { toast } = useToast()
+
+@@ -118,6 +120,25 @@ export default function AutomationSettings() {
+     }
+   }
+
++  const fetchQualityExclusionsConfig = async () => {
++    try {
++      setLoadingQualityExclusions(true)
++      const response = await api.get('/api/stream-checker/config')
++      const config = response.data
++      
++      setQualityExclusionsConfig({
++        enabled: config.quality_check_exclusions?.enabled || false,
++        excluded_accounts: config.quality_check_exclusions?.excluded_accounts || []
++      })
++    } catch (err) {
++      console.error('Error fetching quality exclusions config:', err)
++      toast({
++        title: "Error",
++        description: "Failed to load quality exclusions configuration",
++        variant: "destructive"
++      })
++    } finally {
++      setLoadingQualityExclusions(false)
++    }
++  }
++
+   const fetchM3uAccounts = async () => {
+     try {
+       setLoadingM3uAccounts(true)
+@@ -137,6 +158,7 @@ export default function AutomationSettings() {
+   useEffect(() => {
+     fetchConfig()
+     fetchM3uAccounts()
++    fetchQualityExclusionsConfig()
+   }, [])
+
+   const updateConfigValue = (path, value) => {
+@@ -200,6 +222,89 @@ export default function AutomationSettings() {
+     }
+   }
+
++  const updateQualityExclusionsConfig = async (newConfig) => {
++    try {
++      setActionLoading('update-quality-exclusions')
++      
++      const response = await api.put('/api/stream-checker/config', {
++        quality_check_exclusions: newConfig
++      })
++      
++      setQualityExclusionsConfig(newConfig)
++      
++      toast({
++        title: "Success",
++        description: "Quality check exclusions updated successfully"
++      })
++    } catch (err) {
++      console.error('Error updating quality exclusions config:', err)
++      toast({
++        title: "Error",
++        description: err.response?.data?.error || "Failed to update quality exclusions configuration",
++        variant: "destructive"
++      })
++    } finally {
++      setActionLoading(null)
++    }
++  }
++
++  const toggleQualityExclusions = (enabled) => {
++    updateQualityExclusionsConfig({
++      ...qualityExclusionsConfig,
++      enabled
++    })
++  }
++
++  const toggleAccountExclusion = (accountId, excluded) => {
++    const newExcludedAccounts = excluded
++      ? [...qualityExclusionsConfig.excluded_accounts, accountId]
++      : qualityExclusionsConfig.excluded_accounts.filter(id => id !== accountId)
++    
++    updateQualityExclusionsConfig({
++      ...qualityExclusionsConfig,
++      excluded_accounts: newExcludedAccounts
++    })
++  }
++
++  const removeAllExcludedStreams = async () => {
++    try {
++      setActionLoading('remove-excluded-streams')
++      
++      const response = await api.post('/api/stream-checker/remove-excluded-streams')
++      
++      toast({
++        title: "Success",
++        description: `Removed ${response.data.streams_removed || 0} streams from ${response.data.channels_modified || 0} channels`
++      })
++    } catch (err) {
++      console.error('Error removing excluded streams:', err)
++      toast({
++        title: "Error",
++        description: err.response?.data?.error || "Failed to remove excluded streams",
++        variant: "destructive"
++      })
++    } finally {
++      setActionLoading(null)
++    }
++  }
++
+   if (loading) {
+     return (
+       <div className="container mx-auto p-6">
+@@ -400,6 +505,82 @@ export default function AutomationSettings() {
+           </CardContent>
+         </Card>
+
++        {/* Quality Check Exclusions */}
++        <Card>
++          <CardHeader>
++            <CardTitle>Quality Check Exclusions</CardTitle>
++            <CardDescription>
++              Configure M3U accounts to skip FFmpeg quality analysis while still participating in stream matching.
++              Excluded streams use M3U account priority for sorting instead of quality scores.
++            </CardDescription>
++          </CardHeader>
++          <CardContent className="space-y-4">
++            <div className="flex items-center justify-between">
++              <div className="space-y-0.5">
++                <Label htmlFor="quality-exclusions-enabled">Enable Quality Check Exclusions</Label>
++                <p className="text-sm text-muted-foreground">
++                  Allow M3U accounts to skip quality analysis and use priority-based sorting
++                </p>
++              </div>
++              <Switch
++                id="quality-exclusions-enabled"
++                checked={qualityExclusionsConfig.enabled}
++                onCheckedChange={toggleQualityExclusions}
++                disabled={actionLoading === 'update-quality-exclusions'}
++              />
++            </div>
++
++            {qualityExclusionsConfig.enabled && (
++              <div className="space-y-4 pt-4 border-t">
++                <div className="flex items-center justify-between">
++                  <div>
++                    <Label>Excluded M3U Accounts</Label>
++                    <p className="text-sm text-muted-foreground">
++                      Select accounts that should skip quality checking
++                    </p>
++                  </div>
++                  {qualityExclusionsConfig.excluded_accounts.length > 0 && (
++                    <Button
++                      variant="outline"
++                      size="sm"
++                      onClick={removeAllExcludedStreams}
++                      disabled={actionLoading === 'remove-excluded-streams'}
++                    >
++                      {actionLoading === 'remove-excluded-streams' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
++                      Remove All Excluded Streams
++                    </Button>
++                  )}
++                </div>
++
++                {loadingM3uAccounts || loadingQualityExclusions ? (
++                  <div className="flex items-center justify-center py-4">
++                    <Loader2 className="h-6 w-6 animate-spin" />
++                    <span className="ml-2">Loading M3U accounts...</span>
++                  </div>
++                ) : (
++                  <div className="grid gap-2 max-h-60 overflow-y-auto">
++                    {m3uAccounts.map(account => (
++                      <div key={account.id} className="flex items-center space-x-2 p-2 border rounded">
++                        <Checkbox
++                          id={`exclude-${account.id}`}
++                          checked={qualityExclusionsConfig.excluded_accounts.includes(account.id)}
++                          onCheckedChange={(checked) => toggleAccountExclusion(account.id, checked)}
++                          disabled={actionLoading === 'update-quality-exclusions'}
++                        />
++                        <Label htmlFor={`exclude-${account.id}`} className="flex-1 cursor-pointer">
++                          <div className="flex items-center justify-between">
++                            <span>{account.name}</span>
++                            <Badge variant="outline">Priority: {account.priority}</Badge>
++                          </div>
++                        </Label>
++                      </div>
++                    ))}
++                  </div>
++                )}
++              </div>
++            )}
++          </CardContent>
++        </Card>
++
+         {/* Action Buttons */}
+         <div className="flex gap-4">
+           <Button
+
+diff --git a/frontend/src/services/api.js b/frontend/src/services/api.js
+index 1234567..abcdefg 100644
+--- a/frontend/src/services/api.js
++++ b/frontend/src/services/api.js
+@@ -45,6 +45,10 @@ export const streamCheckerApi = {
+   rescoreResort: () => api.post('/api/stream-checker/rescore-resort'),
+   
+   // Apply account limits to all channels
+-  applyAccountLimits: () => api.post('/api/stream-checker/apply-account-limits')
++  applyAccountLimits: () => api.post('/api/stream-checker/apply-account-limits'),
++  
++  // Remove streams from quality-excluded accounts
++  removeExcludedStreams: () => api.post('/api/stream-checker/remove-excluded-streams')
+ }
+
+ export default api
+
+diff --git a/QUALITY_CHECK_EXCLUSIONS_README.md b/QUALITY_CHECK_EXCLUSIONS_README.md
+new file mode 100644
+index 0000000..abcdefg
+--- /dev/null
++++ b/QUALITY_CHECK_EXCLUSIONS_README.md
+@@ -0,0 +1,150 @@
++# Quality Check Exclusions Feature
++
++## Overview
++
++The Quality Check Exclusions feature allows specific M3U accounts to skip FFmpeg quality analysis while still participating in stream matching and channel assignment. This is useful for:
++
++- **Backup/Fallback Providers**: Accounts that should only be used when primary providers fail
++- **Low-Priority Sources**: Accounts with streams that don't need quality analysis
++- **Performance Optimization**: Reducing FFmpeg analysis load for less important accounts
++- **Stable Providers**: Accounts with consistently good streams that don't need constant testing
++
++## How It Works
++
++### When Feature is ENABLED:
++1. **Stream Matching**: Both enabled and excluded accounts participate in regex matching
++2. **Quality Analysis**: 
++   - Enabled accounts: Full FFmpeg analysis + quality scoring
++   - Excluded accounts: Skip FFmpeg analysis, use M3U priority scoring only
++3. **Stream Assignment**: Both types of streams are assigned to channels
++4. **Sorting**: Mixed sorting by quality scores (enabled) and priority scores (excluded)
++
++### When Feature is DISABLED:
++- **Original Behavior**: Only enabled M3U accounts are processed
++- **Disabled Playlists**: Completely ignored (as in original version)
++- **No Exclusions**: All processed streams undergo quality analysis
++
++## Configuration
++
++### Backend Configuration (`stream_checker_service.py`)
++```python
++'quality_check_exclusions': {
++    'enabled': False,  # Enable/disable the feature
++    'excluded_accounts': []  # List of M3U account IDs to exclude from quality checking
++}
++```
++
++### Frontend Configuration
++Available in **Automation Settings** page:
++- **Feature Toggle**: Enable/disable Quality Check Exclusions
++- **Account Selection**: Choose which M3U accounts to exclude from quality checking
++- **Remove Button**: Remove all streams from excluded accounts
++
++## Stream Processing Flow
++
++### 1. Stream Discovery (`automated_stream_manager.py`)
++```python
++# When feature is enabled, include both enabled and excluded accounts
++if quality_exclusions_enabled:
++    all_matching_account_ids = enabled_account_ids | quality_excluded_account_ids
++else:
++    all_matching_account_ids = enabled_account_ids  # Original behavior
++
++# Mark streams for exclusion
++stream['quality_check_excluded'] = (
++    quality_exclusions_enabled and 
++    stream.get('m3u_account') in quality_check_excluded_accounts
++)
++```
++
++### 2. Quality Analysis (`stream_checker_service.py`)
++```python
++def _should_skip_quality_check(self, stream):
++    # Check if feature is enabled
++    if not quality_exclusions_config.get('enabled', False):
++        return False
++    
++    # Check if stream's account is excluded
++    return stream.get('m3u_account') in excluded_accounts
++
++# Split streams into two categories
++for stream in streams_to_check:
++    if self._should_skip_quality_check(stream):
++        priority_only_streams.append(stream)  # Skip FFmpeg analysis
++    else:
++        quality_check_streams.append(stream)  # Normal analysis
++```
++
++### 3. Scoring System
++```python
++# Quality-excluded streams use M3U priority
++def _get_m3u_priority_score(self, stream):
++    m3u_account = stream.get('m3u_account')
++    # Get account priority from UDI (1-100)
++    return float(account.get('priority', 50))
++
++# Normal streams use quality-based scoring
++def _calculate_stream_score(self, stream_data, channel_id):
++    # Standard quality analysis scoring
++    return calculated_score
++```
++
++## Protected Operations
++
++Quality-excluded streams are protected in these operations:
++
++### 1. Rescore & Resort (`rescore_and_resort_all_channels`)
++- **Protected**: Uses `_should_skip_quality_check()` to identify excluded streams
++- **Behavior**: Excluded streams keep M3U priority scoring, not affected by quality rescoring
++
++### 2. Apply Account Limits (`apply_account_limits_to_existing_channels`)
++- **Protected**: Uses `_should_skip_quality_check()` for correct scoring
++- **Behavior**: Excluded streams use priority scores when applying limits
++
++### 3. Test Streams Without Stats (`test_streams_without_stats`)
++- **Protected**: Skips excluded streams completely
++- **Behavior**: Excluded streams don't need quality stats, so they're not tested
++
++### 4. Global Actions (`_perform_global_action`)
++- **Protected**: Uses automation functions that handle exclusions correctly
++- **Behavior**: Excluded streams participate in matching but skip quality analysis
++
++## API Endpoints
++
++### Configuration
++```http
++PUT /api/stream-checker/config
++{
++  "quality_check_exclusions": {
++    "enabled": true,
++    "excluded_accounts": [1, 3, 5]
++  }
++}
++```
++
++### Remove Excluded Streams
++```http
++POST /api/stream-checker/remove-excluded-streams
++```
++Removes all streams from excluded accounts from all channels.
++
++## Benefits
++
++1. **Performance**: Reduced FFmpeg analysis load
++2. **Flexibility**: Mix quality-based and priority-based streams
++3. **Reliability**: Stable providers don't need constant testing
++4. **Resource Management**: Focus quality analysis on important accounts
++5. **Fallback Strategy**: Keep backup providers available without quality overhead
++
++## Use Cases
++
++### Scenario 1: Premium + Backup Providers
++- **Premium accounts**: Full quality analysis (enabled)
++- **Backup accounts**: Priority-only (excluded)
++- **Result**: Best quality from premium, reliable fallback from backup
++
++### Scenario 2: Performance Optimization
++- **High-volume accounts**: Quality analysis (enabled)
++- **Low-priority accounts**: Priority-only (excluded)
++- **Result**: Faster processing, reduced server load
++
++### Scenario 3: Stable Providers
++- **New/untested accounts**: Quality analysis (enabled)
++- **Proven stable accounts**: Priority-only (excluded)
++- **Result**: Focus testing on uncertain sources
++
