@@ -4164,7 +4164,11 @@ index 1234567..abcdefg 100644
 +                      No M3U accounts found. Add M3U accounts in Dispatcharr to configure disabled playlist exclusions.
 +                    </AlertDescription>
 +                  </Alert>
-+                ) : m3uAccounts.filter(account => !account.is_active).length === 0 ? (
++                ) : m3uAccounts.filter(account => {
++                    // Show accounts that are NOT in the enabled_m3u_accounts list
++                    const enabledAccounts = config?.enabled_m3u_accounts || []
++                    return !enabledAccounts.includes(account.id)
++                  }).length === 0 ? (
 +                  <Alert>
 +                    <AlertCircle className="h-4 w-4" />
 +                    <AlertDescription>
@@ -4174,7 +4178,11 @@ index 1234567..abcdefg 100644
 +                ) : (
 +                  <div className="grid gap-2 max-h-60 overflow-y-auto">
 +                    {m3uAccounts
-+                      .filter(account => !account.is_active) // Only show inactive/disabled accounts
++                      .filter(account => {
++                        // Show accounts that are NOT in the enabled_m3u_accounts list
++                        const enabledAccounts = config?.enabled_m3u_accounts || []
++                        return !enabledAccounts.includes(account.id)
++                      }) // Only show disabled accounts (not in enabled list)
 +                      .map(account => (
 +                      <div key={account.id} className="flex items-center space-x-2 p-2 border rounded">
 +                        <Checkbox
