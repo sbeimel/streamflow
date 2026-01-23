@@ -50,24 +50,7 @@ export default function AutomationSettings() {
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
       setDispatcharrConfig(dispatcharrResponse.data)
-      
-      const accounts = m3uResponse.data.accounts || []
-      
-      // Debug: Log account structure to understand available fields
-      if (accounts.length > 0) {
-        console.log('M3U Account structure:', accounts[0])
-        console.log('All M3U Accounts status:', accounts.map(acc => ({
-          id: acc.id,
-          name: acc.name,
-          is_active: acc.is_active,
-          active: acc.active,
-          disabled: acc.disabled,
-          status: acc.status,
-          enabled: acc.enabled
-        })))
-      }
-      
-      setM3uAccounts(accounts)
+      setM3uAccounts(m3uResponse.data.accounts || [])
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -476,12 +459,9 @@ export default function AutomationSettings() {
                       </AlertDescription>
                     </Alert>
                   ) : m3uAccounts.filter(account => {
-                    // Check various possible fields for disabled/inactive status
-                    return !account.is_active || 
-                           !account.active || 
-                           account.disabled || 
-                           account.status === 'disabled' ||
-                           account.status === 'inactive'
+                    // Show accounts that are NOT in the enabled_m3u_accounts list
+                    const enabledAccounts = config?.enabled_m3u_accounts || []
+                    return !enabledAccounts.includes(account.id)
                   }).length === 0 ? (
                     <Alert>
                       <AlertCircle className="h-4 w-4" />
@@ -520,32 +500,12 @@ export default function AutomationSettings() {
                         </Button>
                       </div>
                       <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {/* Show all accounts for debugging, then filter */}
-                        {m3uAccounts.length > 0 && (
-                          <div className="mb-4 p-2 bg-gray-100 rounded text-xs">
-                            <strong>Debug - All M3U Accounts:</strong>
-                            {m3uAccounts.map(acc => (
-                              <div key={acc.id}>
-                                ID: {acc.id}, Name: {acc.name}, 
-                                is_active: {String(acc.is_active)}, 
-                                active: {String(acc.active)}, 
-                                disabled: {String(acc.disabled)}, 
-                                status: {acc.status}, 
-                                enabled: {String(acc.enabled)}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        
                         {m3uAccounts
                           .filter(account => {
-                            // Check various possible fields for disabled/inactive status
-                            return !account.is_active || 
-                                   !account.active || 
-                                   account.disabled || 
-                                   account.status === 'disabled' ||
-                                   account.status === 'inactive'
-                          }) // Only show inactive/disabled accounts
+                            // Show accounts that are NOT in the enabled_m3u_accounts list
+                            const enabledAccounts = config?.enabled_m3u_accounts || []
+                            return !enabledAccounts.includes(account.id)
+                          }) // Only show disabled accounts (not in enabled list)
                           .map((account) => {
                           const excludedAccounts = streamCheckerConfig?.quality_check_exclusions?.excluded_accounts || []
                           const isExcluded = excludedAccounts.includes(account.id)
