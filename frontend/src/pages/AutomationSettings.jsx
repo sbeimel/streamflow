@@ -50,7 +50,24 @@ export default function AutomationSettings() {
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
       setDispatcharrConfig(dispatcharrResponse.data)
-      setM3uAccounts(m3uResponse.data.accounts || [])
+      
+      const accounts = m3uResponse.data.accounts || []
+      
+      // Debug: Log account structure to understand available fields
+      if (accounts.length > 0) {
+        console.log('M3U Account structure:', accounts[0])
+        console.log('All M3U Accounts status:', accounts.map(acc => ({
+          id: acc.id,
+          name: acc.name,
+          is_active: acc.is_active,
+          active: acc.active,
+          disabled: acc.disabled,
+          status: acc.status,
+          enabled: acc.enabled
+        })))
+      }
+      
+      setM3uAccounts(accounts)
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -458,7 +475,14 @@ export default function AutomationSettings() {
                         No M3U accounts found. Add M3U accounts in Dispatcharr to configure disabled playlist exclusions.
                       </AlertDescription>
                     </Alert>
-                  ) : m3uAccounts.filter(account => !account.is_active).length === 0 ? (
+                  ) : m3uAccounts.filter(account => {
+                    // Check various possible fields for disabled/inactive status
+                    return !account.is_active || 
+                           !account.active || 
+                           account.disabled || 
+                           account.status === 'disabled' ||
+                           account.status === 'inactive'
+                  }).length === 0 ? (
                     <Alert>
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>
@@ -497,7 +521,14 @@ export default function AutomationSettings() {
                       </div>
                       <div className="space-y-2 max-h-64 overflow-y-auto">
                         {m3uAccounts
-                          .filter(account => !account.is_active) // Only show inactive/disabled accounts
+                          .filter(account => {
+                            // Check various possible fields for disabled/inactive status
+                            return !account.is_active || 
+                                   !account.active || 
+                                   account.disabled || 
+                                   account.status === 'disabled' ||
+                                   account.status === 'inactive'
+                          }) // Only show inactive/disabled accounts
                           .map((account) => {
                           const excludedAccounts = streamCheckerConfig?.quality_check_exclusions?.excluded_accounts || []
                           const isExcluded = excludedAccounts.includes(account.id)
