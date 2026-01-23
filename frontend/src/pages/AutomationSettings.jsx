@@ -422,10 +422,10 @@ export default function AutomationSettings() {
           {/* Quality Check Exclusions */}
           <Card>
             <CardHeader>
-              <CardTitle>Quality Check Exclusions</CardTitle>
+              <CardTitle>Enable Disabled Playlists (Priority-Only)</CardTitle>
               <CardDescription>
-                Configure M3U accounts that should skip quality analysis and use M3U priority-based sorting instead. 
-                These streams will still be matched to channels but won't undergo FFmpeg analysis.
+                Enable disabled M3U playlists for stream matching while skipping quality analysis. 
+                These playlists will use M3U priority-based sorting instead of quality scores.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -434,7 +434,7 @@ export default function AutomationSettings() {
                 <div className="flex-1 space-y-1">
                   <div className="flex items-center gap-2">
                     <Label htmlFor="quality_exclusions_enabled" className="text-base font-semibold cursor-pointer">
-                      Enable Quality Check Exclusions
+                      Enable Disabled Playlists
                     </Label>
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -455,14 +455,21 @@ export default function AutomationSettings() {
                     <Alert>
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>
-                        No M3U accounts found. Add M3U accounts in Dispatcharr to configure quality check exclusions.
+                        No M3U accounts found. Add M3U accounts in Dispatcharr to configure disabled playlist exclusions.
+                      </AlertDescription>
+                    </Alert>
+                  ) : m3uAccounts.filter(account => !account.is_active).length === 0 ? (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        No disabled M3U playlists found. All your M3U accounts are currently active and will use quality analysis.
                       </AlertDescription>
                     </Alert>
                   ) : (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <p className="text-sm text-muted-foreground">
-                          Select M3U accounts that should use priority-based sorting instead of quality analysis:
+                          Select disabled M3U playlists that should still be used for stream matching (priority-only):
                         </p>
                         <Button
                           variant="outline"
@@ -489,7 +496,9 @@ export default function AutomationSettings() {
                         </Button>
                       </div>
                       <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {m3uAccounts.map((account) => {
+                        {m3uAccounts
+                          .filter(account => !account.is_active) // Only show inactive/disabled accounts
+                          .map((account) => {
                           const excludedAccounts = streamCheckerConfig?.quality_check_exclusions?.excluded_accounts || []
                           const isExcluded = excludedAccounts.includes(account.id)
                           
@@ -511,7 +520,7 @@ export default function AutomationSettings() {
                                   {account.name || account.username || `Account ${account.id}`}
                                 </Label>
                                 <p className="text-xs text-muted-foreground">
-                                  Priority: {account.priority || 50} • {account.is_active ? 'Active' : 'Inactive'}
+                                  Priority: {account.priority || 50} • Disabled
                                 </p>
                               </div>
                               {isExcluded && (
@@ -530,16 +539,16 @@ export default function AutomationSettings() {
               
               <Alert>
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>How Quality Check Exclusions Work</AlertTitle>
+                <AlertTitle>How Disabled Playlist Exclusions Work</AlertTitle>
                 <AlertDescription>
                   <ul className="list-disc list-inside space-y-1 text-sm mt-2">
                     <li><strong>Feature must be enabled:</strong> Toggle the switch above to activate this feature</li>
-                    <li><strong>Excluded accounts:</strong> Streams are matched to channels but skip FFmpeg quality analysis</li>
-                    <li><strong>Sorting:</strong> Uses M3U account priority instead of quality scores</li>
-                    <li><strong>Performance:</strong> Faster processing, no dead stream detection</li>
+                    <li><strong>Disabled playlists:</strong> Normally ignored playlists can still provide streams</li>
+                    <li><strong>No quality analysis:</strong> Streams skip FFmpeg analysis for faster processing</li>
+                    <li><strong>Priority sorting:</strong> Uses M3U account priority instead of quality scores</li>
+                    <li><strong>Performance:</strong> Reduced server load, faster stream assignment</li>
                     <li><strong>Stability:</strong> Streams won't be removed due to quality issues</li>
                     <li><strong>Provider limits:</strong> Account stream limits still apply normally</li>
-                    <li><strong>Manual removal:</strong> Use "Rescore & Resort" or manual channel editing to remove streams</li>
                   </ul>
                 </AlertDescription>
               </Alert>

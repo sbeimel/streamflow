@@ -1,27 +1,31 @@
-# Quality Check Exclusions Feature
+# Enable Disabled Playlists (Priority-Only) Feature
 
 ## Overview
 
-The Quality Check Exclusions feature allows you to configure specific M3U accounts to skip FFmpeg-based quality analysis while still participating in stream matching and channel assignment. This is useful for trusted providers or backup/fallback sources where you want to use M3U priority-based sorting instead of quality scores.
+The Enable Disabled Playlists feature allows you to configure disabled M3U accounts to participate in stream matching while skipping FFmpeg-based quality analysis. This enables you to use backup/fallback providers that are normally disabled, with M3U priority-based sorting instead of quality scores.
 
 **⚠️ Important: This feature must be explicitly enabled and configured to take effect.**
 
 ## How It Works
 
-### Normal M3U Accounts (Quality Check Enabled)
+### Normal M3U Accounts (Enabled, Quality Check)
 - ✅ **Stream Matching**: Streams are matched to channels via regex patterns
 - ✅ **Quality Analysis**: FFmpeg analyzes bitrate, resolution, FPS, codec
 - ✅ **Quality Scoring**: Streams are scored and sorted by quality
 - ✅ **Dead Stream Detection**: Non-working streams are detected and removed
 - ✅ **Provider Limits**: Account-specific stream limits are applied
 
-### Quality-Excluded M3U Accounts (Priority-Only)
+### Disabled M3U Accounts (Priority-Only, when feature enabled)
 - ✅ **Stream Matching**: Streams are matched to channels via regex patterns  
 - ❌ **Quality Analysis**: No FFmpeg analysis (faster processing)
 - ✅ **Priority Sorting**: Streams are sorted by M3U account priority
 - ❌ **Dead Stream Detection**: Streams are never marked as dead
 - ✅ **Provider Limits**: Account stream limits still apply normally
 - ❌ **Automatic Removal**: Streams are never removed due to quality issues
+
+### When Feature is Disabled
+- **Original Behavior**: Only enabled M3U accounts are processed
+- **Disabled Playlists**: Completely ignored (as in original version)
 
 ## Configuration
 
@@ -41,10 +45,12 @@ Enable the feature and configure excluded accounts in Stream Checker configurati
 ### Frontend Configuration
 
 1. Navigate to **Automation Settings** → **Automation** tab
-2. Scroll down to **Quality Check Exclusions** section
+2. Scroll down to **Enable Disabled Playlists (Priority-Only)** section
 3. **Enable the feature** by toggling the switch
-4. Check the M3U accounts you want to exclude from quality checking
+4. Check the disabled M3U accounts you want to include for stream matching
 5. Save settings
+
+**Note**: Only disabled/inactive M3U accounts are shown in the selection list.
 
 ## Use Cases
 

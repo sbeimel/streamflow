@@ -493,18 +493,18 @@ index 1234567..abcdefg 100644
 +        {/* Quality Check Exclusions */}
 +        <Card>
 +          <CardHeader>
-+            <CardTitle>Quality Check Exclusions</CardTitle>
++            <CardTitle>Enable Disabled Playlists (Priority-Only)</CardTitle>
 +            <CardDescription>
-+              Configure M3U accounts to skip FFmpeg quality analysis while still participating in stream matching.
-+              Excluded streams use M3U account priority for sorting instead of quality scores.
++              Enable disabled M3U playlists for stream matching while skipping quality analysis. 
++              These playlists will use M3U priority-based sorting instead of quality scores.
 +            </CardDescription>
 +          </CardHeader>
 +          <CardContent className="space-y-4">
 +            <div className="flex items-center justify-between">
 +              <div className="space-y-0.5">
-+                <Label htmlFor="quality-exclusions-enabled">Enable Quality Check Exclusions</Label>
++                <Label htmlFor="quality-exclusions-enabled">Enable Disabled Playlists</Label>
 +                <p className="text-sm text-muted-foreground">
-+                  Allow M3U accounts to skip quality analysis and use priority-based sorting
++                  Allow disabled M3U playlists to provide streams using priority-based sorting
 +                </p>
 +              </div>
 +              <Switch
@@ -519,9 +519,9 @@ index 1234567..abcdefg 100644
 +              <div className="space-y-4 pt-4 border-t">
 +                <div className="flex items-center justify-between">
 +                  <div>
-+                    <Label>Excluded M3U Accounts</Label>
++                    <Label>Disabled M3U Playlists</Label>
 +                    <p className="text-sm text-muted-foreground">
-+                      Select accounts that should skip quality checking
++                      Select disabled playlists that should still provide streams
 +                    </p>
 +                  </div>
 +                  {qualityExclusionsConfig.excluded_accounts.length > 0 && (
@@ -542,9 +542,25 @@ index 1234567..abcdefg 100644
 +                    <Loader2 className="h-6 w-6 animate-spin" />
 +                    <span className="ml-2">Loading M3U accounts...</span>
 +                  </div>
++                ) : m3uAccounts.length === 0 ? (
++                  <Alert>
++                    <AlertCircle className="h-4 w-4" />
++                    <AlertDescription>
++                      No M3U accounts found. Add M3U accounts in Dispatcharr to configure disabled playlist exclusions.
++                    </AlertDescription>
++                  </Alert>
++                ) : m3uAccounts.filter(account => !account.is_active).length === 0 ? (
++                  <Alert>
++                    <AlertCircle className="h-4 w-4" />
++                    <AlertDescription>
++                      No disabled M3U playlists found. All your M3U accounts are currently active and will use quality analysis.
++                    </AlertDescription>
++                  </Alert>
 +                ) : (
 +                  <div className="grid gap-2 max-h-60 overflow-y-auto">
-+                    {m3uAccounts.map(account => (
++                    {m3uAccounts
++                      .filter(account => !account.is_active) // Only show inactive/disabled accounts
++                      .map(account => (
 +                      <div key={account.id} className="flex items-center space-x-2 p-2 border rounded">
 +                        <Checkbox
 +                          id={`exclude-${account.id}`}
@@ -555,7 +571,7 @@ index 1234567..abcdefg 100644
 +                        <Label htmlFor={`exclude-${account.id}`} className="flex-1 cursor-pointer">
 +                          <div className="flex items-center justify-between">
 +                            <span>{account.name}</span>
-+                            <Badge variant="outline">Priority: {account.priority}</Badge>
++                            <Badge variant="outline">Priority: {account.priority} • Disabled</Badge>
 +                          </div>
 +                        </Label>
 +                      </div>
@@ -594,9 +610,59 @@ index 0000000..abcdefg
 --- /dev/null
 +++ b/QUALITY_CHECK_EXCLUSIONS_README.md
 @@ -0,0 +1,150 @@
-+# Quality Check Exclusions Feature
++# Enable Disabled Playlists (Priority-Only) Feature
 +
 +## Overview
++
++The Enable Disabled Playlists feature allows disabled M3U accounts to participate in stream matching while skipping FFmpeg quality analysis. This is useful for:
++
++- **Backup/Fallback Providers**: Disabled accounts that should only be used when primary providers fail
++- **Low-Priority Sources**: Accounts with streams that don't need quality analysis
++- **Performance Optimization**: Reducing FFmpeg analysis load for less important accounts
++- **Stable Providers**: Accounts with consistently good streams that don't need constant testing
++
++## How It Works
++
++### When Feature is ENABLED:
++1. **Stream Matching**: Both enabled and disabled (excluded) accounts participate in regex matching
++2. **Quality Analysis**: 
++   - Enabled accounts: Full FFmpeg analysis + quality scoring
++   - Disabled (excluded) accounts: Skip FFmpeg analysis, use M3U priority scoring only
++3. **Stream Assignment**: Both types of streams are assigned to channels
++4. **Sorting**: Mixed sorting by quality scores (enabled) and priority scores (disabled)
++
++### When Feature is DISABLED:
++- **Original Behavior**: Only enabled M3U accounts are processed
++- **Disabled Playlists**: Completely ignored (as in original version)
++- **No Exclusions**: All processed streams undergo quality analysis
++
++## Configuration
++
++### Backend Configuration (`stream_checker_service.py`)
++```python
++'quality_check_exclusions': {
++    'enabled': False,  # Enable/disable the feature
++    'excluded_accounts': []  # List of M3U account IDs to exclude from quality checking
++}
++```
++
++### Frontend Configuration
++Available in **Automation Settings** page:
++- **Feature Toggle**: Enable/disable Disabled Playlist Exclusions
++- **Account Selection**: Choose which disabled M3U accounts to include (only shows disabled accounts)
++- **Remove Button**: Remove all streams from excluded accounts
++
++## UI Improvements
++
++### Smart Account Filtering
++- **Only shows disabled/inactive M3U accounts** in the selection list
++- **Clear messaging** when no disabled accounts are available
++- **Focused use case**: Enabling disabled playlists rather than disabling enabled ones
++
++### Better Descriptions
++- **"Enable Disabled Playlists (Priority-Only)"** - Clear feature purpose
++- **"Select disabled playlists that should still provide streams"** - Focused on disabled accounts
++- **Priority-based sorting explanation** - Clear about M3U priority usage
 +
 +The Quality Check Exclusions feature allows specific M3U accounts to skip FFmpeg quality analysis while still participating in stream matching and channel assignment. This is useful for:
 +
