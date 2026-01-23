@@ -520,6 +520,23 @@ export default function AutomationSettings() {
                         </Button>
                       </div>
                       <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {/* Show all accounts for debugging, then filter */}
+                        {m3uAccounts.length > 0 && (
+                          <div className="mb-4 p-2 bg-gray-100 rounded text-xs">
+                            <strong>Debug - All M3U Accounts:</strong>
+                            {m3uAccounts.map(acc => (
+                              <div key={acc.id}>
+                                ID: {acc.id}, Name: {acc.name}, 
+                                is_active: {String(acc.is_active)}, 
+                                active: {String(acc.active)}, 
+                                disabled: {String(acc.disabled)}, 
+                                status: {acc.status}, 
+                                enabled: {String(acc.enabled)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
                         {m3uAccounts
                           .filter(account => {
                             // Check various possible fields for disabled/inactive status
