@@ -2974,6 +2974,53 @@ def rescore_and_resort_all_channels():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/stream-checker/remove-excluded-streams', methods=['POST'])
+def remove_excluded_streams():
+    """Remove all streams from quality-excluded M3U accounts from all channels.
+    
+    This function:
+    1. Gets all channels and their streams
+    2. Identifies streams from quality-excluded M3U accounts
+    3. Removes these streams from all channels
+    4. Updates channel-stream assignments
+    
+    Useful for cleaning up streams from accounts that are no longer wanted,
+    since quality-excluded streams are normally protected from removal.
+    """
+    try:
+        service = get_stream_checker_service()
+        
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+        
+        # Check if quality exclusions are enabled
+        quality_exclusions_config = service.config.get('quality_check_exclusions', {})
+        if not quality_exclusions_config.get('enabled', False):
+            return jsonify({"error": "Quality check exclusions feature is not enabled"}), 400
+        
+        excluded_accounts = set(quality_exclusions_config.get('excluded_accounts', []))
+        if not excluded_accounts:
+            return jsonify({"error": "No excluded accounts configured"}), 400
+        
+        result = service.remove_streams_from_excluded_accounts(excluded_accounts)
+        
+        if result.get('success'):
+            return jsonify({
+                "message": f"Removed {result.get('removed_count', 0)} streams from {result.get('channels_affected', 0)} channels",
+                "status": "completed",
+                "removed_count": result.get('removed_count', 0),
+                "channels_affected": result.get('channels_affected', 0),
+                "excluded_accounts": list(excluded_accounts),
+                "channels_with_changes": result.get('channels_with_changes', [])
+            })
+        else:
+            return jsonify({"error": result.get('error', 'Unknown error')}), 500
+    
+    except Exception as e:
+        logger.error(f"Error removing excluded streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/stream-checker/apply-account-limits', methods=['POST'])
 def apply_account_limits_to_channels():
     """Apply current account stream limits to all existing channels.
@@ -3061,6 +3108,12 @@ def test_streams_without_stats():
                 # Get full stream data
                 stream_data = udi.get_stream_by_id(stream_id)
                 if not stream_data:
+                    continue
+                
+                # Check if this stream should skip quality checking (quality exclusions)
+                service = get_stream_checker_service()
+                if service._should_skip_quality_check(stream_data):
+                    # Skip quality-excluded streams - they don't need quality stats
                     continue
                 
                 # Check if stream has stats

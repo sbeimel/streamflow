@@ -896,29 +896,72 @@ class AutomatedStreamManager:
                 # Get enabled accounts from config
                 enabled_accounts_config = self.config.get("enabled_m3u_accounts", [])
                 
+                # Get quality check exclusions from stream checker config
+                try:
+                    from stream_checker_service import get_stream_checker_service
+                    stream_checker = get_stream_checker_service()
+                    quality_exclusions_config = stream_checker.config.get('quality_check_exclusions', {})
+                    quality_check_excluded_accounts = set(quality_exclusions_config.get('excluded_accounts', []))
+                    quality_exclusions_enabled = quality_exclusions_config.get('enabled', False)
+                except Exception as e:
+                    logger.debug(f"Could not get quality exclusions config: {e}")
+                    quality_check_excluded_accounts = set()
+                    quality_exclusions_enabled = False
+                
                 if enabled_accounts_config:
                     # Only include accounts that are in the enabled list
                     enabled_account_ids = set(
                         acc.get('id') for acc in non_custom_accounts 
                         if acc.get('id') in enabled_accounts_config and acc.get('id') is not None
                     )
+                    
+                    # Also include quality check excluded accounts for stream matching
+                    # These accounts should still have their streams matched to channels,
+                    # but they won't undergo quality checking (they use M3U priority instead)
+                    if quality_exclusions_enabled:
+                        quality_excluded_account_ids = set(
+                            acc.get('id') for acc in non_custom_accounts 
+                            if acc.get('id') in quality_check_excluded_accounts and acc.get('id') is not None
+                        )
+                        
+                        # Combine enabled accounts with quality-excluded accounts for stream matching
+                        all_matching_account_ids = enabled_account_ids | quality_excluded_account_ids
+                    else:
+                        all_matching_account_ids = enabled_account_ids
                 else:
                     # If no specific accounts are enabled in config, use all non-custom active accounts
-                    enabled_account_ids = set(
+                    all_matching_account_ids = set(
                         acc.get('id') for acc in non_custom_accounts 
                         if acc.get('id') is not None
                     )
                 
-                # Filter streams to only include those from enabled accounts
-                # Also include custom streams (is_custom=True) as they don't belong to an M3U account
-                filtered_streams = [
-                    stream for stream in all_streams
-                    if stream.get('is_custom', False) or stream.get('m3u_account') in enabled_account_ids
-                ]
+                # Filter streams to include:
+                # 1. Streams from enabled accounts (normal processing)
+                # 2. Streams from quality-excluded accounts (matching only, no quality check) - only if feature enabled
+                # 3. Custom streams (is_custom=True) as they don't belong to an M3U account
+                filtered_streams = []
+                for stream in all_streams:
+                    if stream.get('is_custom', False):
+                        # Custom streams are always included
+                        stream['quality_check_excluded'] = False
+                        filtered_streams.append(stream)
+                    elif stream.get('m3u_account') in all_matching_account_ids:
+                        # Mark streams from quality-excluded accounts (only if feature enabled)
+                        stream['quality_check_excluded'] = (
+                            quality_exclusions_enabled and 
+                            stream.get('m3u_account') in quality_check_excluded_accounts
+                        )
+                        filtered_streams.append(stream)
                 
                 streams_filtered_count = len(all_streams) - len(filtered_streams)
                 if streams_filtered_count > 0:
-                    logger.info(f"Filtered out {streams_filtered_count} streams from disabled/inactive M3U accounts")
+                    logger.info(f"Filtered out {streams_filtered_count} streams from disabled M3U accounts")
+                
+                # Log quality check exclusions
+                if quality_exclusions_enabled:
+                    quality_excluded_streams = [s for s in filtered_streams if s.get('quality_check_excluded', False)]
+                    if quality_excluded_streams:
+                        logger.info(f"Marked {len(quality_excluded_streams)} streams from quality-excluded accounts (will use M3U priority sorting)")
                 
                 all_streams = filtered_streams
                 

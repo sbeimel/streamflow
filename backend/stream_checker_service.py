@@ -139,6 +139,10 @@ class StreamCheckConfig:
             'global_limit': 0,  # Global limit per account (0 = unlimited)
             'account_limits': {}  # Per-account limits: {account_id: limit}
         },
+        'quality_check_exclusions': {
+            'enabled': False,  # Enable quality check exclusions feature
+            'excluded_accounts': []  # M3U accounts that should skip quality checks (use M3U priority only)
+        },
         'stream_ordering': {
             'provider_diversification': False,  # Enable provider diversification for better redundancy
             'diversification_mode': 'round_robin'  # Mode: 'round_robin' (alphabetical) or 'priority_weighted' (by M3U priority)
@@ -1645,6 +1649,63 @@ class StreamCheckerService:
         except Exception as e:
             logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
     
+    def _should_skip_quality_check(self, stream: Dict[str, Any]) -> bool:
+        """Check if a stream should skip quality checking based on M3U account exclusions.
+        
+        Args:
+            stream: Stream dictionary containing m3u_account information
+            
+        Returns:
+            True if the stream should skip quality checking (use M3U priority only)
+        """
+        try:
+            # Check if quality check exclusions feature is enabled
+            quality_exclusions_config = self.config.get('quality_check_exclusions', {})
+            if not quality_exclusions_config.get('enabled', False):
+                return False
+            
+            # Get excluded accounts from stream checker config (not automation config)
+            excluded_accounts = set(quality_exclusions_config.get('excluded_accounts', []))
+            
+            # Check if stream's M3U account is in the excluded list
+            stream_m3u_account = stream.get('m3u_account')
+            if stream_m3u_account in excluded_accounts:
+                return True
+                
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking quality exclusion for stream {stream.get('id')}: {e}")
+            return False
+    
+    def _get_m3u_priority_score(self, stream: Dict[str, Any]) -> float:
+        """Get priority-based score for streams from quality-excluded M3U accounts.
+        
+        Args:
+            stream: Stream dictionary
+            
+        Returns:
+            Priority-based score (higher priority = higher score)
+        """
+        try:
+            stream_m3u_account = stream.get('m3u_account')
+            if not stream_m3u_account:
+                return 50.0  # Default priority for custom streams
+            
+            # Get M3U account info from UDI
+            udi = get_udi_manager()
+            m3u_accounts = udi.get_m3u_accounts()
+            
+            for account in m3u_accounts:
+                if account.get('id') == stream_m3u_account:
+                    # Use M3U account priority (higher priority = higher score)
+                    priority = account.get('priority', 50)
+                    return float(priority)
+            
+            return 50.0  # Default if account not found
+        except Exception as e:
+            logger.debug(f"Error getting M3U priority for stream {stream.get('id')}: {e}")
+            return 50.0
+
     def _check_channel_limits(self, channel_id: int, channel_name: str, streams: List[Dict]) -> Optional[Dict]:
         """Check if a channel can be checked based on viewer and playlist limits.
         
@@ -1843,6 +1904,25 @@ class StreamCheckerService:
                     else:
                         logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
             
+            # Filter streams into two categories:
+            # 1. Quality check streams (normal processing with FFmpeg analysis)
+            # 2. Priority-only streams (from quality-excluded accounts, use M3U priority)
+            quality_check_streams = []
+            priority_only_streams = []
+            
+            for stream in streams_to_check:
+                if self._should_skip_quality_check(stream):
+                    # Stream from quality-excluded account - use M3U priority only
+                    priority_only_streams.append(stream)
+                else:
+                    # Normal stream - perform quality check
+                    quality_check_streams.append(stream)
+            
+            if priority_only_streams:
+                logger.info(f"Found {len(priority_only_streams)} streams from quality-excluded accounts (will use M3U priority)")
+            if quality_check_streams:
+                logger.info(f"Found {len(quality_check_streams)} streams for quality analysis")
+            
             # Get configuration for analysis
             analysis_params = self.config.get('stream_analysis', {})
             global_limit = self.config.get('concurrent_streams.global_limit', 10)
@@ -1884,14 +1964,14 @@ class StreamCheckerService:
                     step_detail=f'Completed {completed}/{total}'
                 )
             
-            if streams_to_check:
-                logger.info(f"Starting smart parallel analysis of {total_streams} streams with {global_limit} global workers")
+            if quality_check_streams:
+                logger.info(f"Starting smart parallel analysis of {len(quality_check_streams)} streams with {global_limit} global workers")
                 
                 self.progress.update(
                     channel_id=channel_id,
                     channel_name=channel_name,
                     current=0,
-                    total=total_streams,
+                    total=len(quality_check_streams),
                     status='analyzing',
                     step='Analyzing streams with account limits',
                     step_detail=f'Using smart scheduler with per-account limits'
@@ -1925,7 +2005,7 @@ class StreamCheckerService:
                 
                 # Check streams in parallel with account-aware limits and profile failover
                 results = smart_scheduler.check_streams_with_limits(
-                    streams=streams_to_check,
+                    streams=quality_check_streams,
                     check_function=analyze_stream_with_profile_failover_wrapper,
                     progress_callback=progress_callback,
                     stagger_delay=stagger_delay
@@ -1968,6 +2048,39 @@ class StreamCheckerService:
                     analyzed_streams.append(analyzed)
                 
                 logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
+            
+            # Process priority-only streams (from quality-excluded accounts)
+            if priority_only_streams:
+                logger.info(f"Processing {len(priority_only_streams)} priority-only streams (no quality analysis)")
+                
+                for stream in priority_only_streams:
+                    stream_id = stream.get('id')
+                    stream_name = stream.get('name', 'Unknown')
+                    stream_url = stream.get('url', '')
+                    
+                    # Create analyzed result with M3U priority score (no FFmpeg analysis)
+                    priority_score = self._get_m3u_priority_score(stream)
+                    
+                    analyzed = {
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'stream_url': stream_url,
+                        'status': 'Priority-Only',
+                        'score': priority_score,
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'quality_check_excluded': True,
+                        # No FFmpeg stats for priority-only streams
+                        'bitrate': None,
+                        'resolution': None,
+                        'fps': None,
+                        'codec': None
+                    }
+                    
+                    analyzed_streams.append(analyzed)
+                    logger.debug(f"Priority-only stream {stream_id}: {stream_name} (score: {priority_score})")
+                
+                logger.info(f"Completed processing {len(priority_only_streams)} priority-only streams")
             
             # Process already-checked streams (use cached data)
             for stream in streams_already_checked:
@@ -2335,64 +2448,125 @@ class StreamCheckerService:
                     else:
                         logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
             
+            # Filter streams into two categories:
+            # 1. Quality check streams (normal processing with FFmpeg analysis)
+            # 2. Priority-only streams (from quality-excluded accounts, use M3U priority)
+            quality_check_streams = []
+            priority_only_streams = []
+            
+            for stream in streams_to_check:
+                if self._should_skip_quality_check(stream):
+                    # Stream from quality-excluded account - use M3U priority only
+                    priority_only_streams.append(stream)
+                else:
+                    # Normal stream - perform quality check
+                    quality_check_streams.append(stream)
+            
+            if priority_only_streams:
+                logger.info(f"Found {len(priority_only_streams)} streams from quality-excluded accounts (will use M3U priority)")
+            if quality_check_streams:
+                logger.info(f"Found {len(quality_check_streams)} streams for quality analysis")
+            
             # Import stream analysis functions from stream_check_utils
             from stream_check_utils import analyze_stream
             
-            # Analyze new/unchecked streams
+            # Analyze quality check streams
             analyzed_streams = []
             dead_stream_ids = set()  # Use set for O(1) lookups
             revived_stream_ids = []
-            total_streams = len(streams_to_check)
-            
-            for idx, stream in enumerate(streams_to_check, 1):
-                self.progress.update(
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    current=idx,
-                    total=total_streams,
-                    current_stream=stream.get('name', 'Unknown'),
-                    status='analyzing',
-                    step='Analyzing stream quality',
-                    step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})'
-                )
+            # Analyze quality check streams
+            if quality_check_streams:
+                total_streams = len(quality_check_streams)
+                logger.info(f"Starting sequential analysis of {total_streams} quality check streams")
                 
-                # Analyze stream with profile failover
-                analysis_params = self.config.get('stream_analysis', {})
-                analyzed = self._analyze_stream_with_profile_failover(
-                    stream=stream,
-                    analysis_params=analysis_params,
-                    udi=udi
-                )
-                
-                # Update stream stats on dispatcharr with ffmpeg-extracted data
-                self._update_stream_stats(analyzed)
-                
-                # Check if stream is dead (resolution=0 or bitrate=0)
-                is_dead = self._is_stream_dead(analyzed)
-                stream_url = stream.get('url', '')
-                stream_name = stream.get('name', 'Unknown')
-                was_dead = self.dead_streams_tracker.is_dead(stream_url)
-                
-                if is_dead and not was_dead:
-                    # Mark as dead in tracker
-                    if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
+                for idx, stream in enumerate(quality_check_streams, 1):
+                    self.progress.update(
+                        channel_id=channel_id,
+                        channel_name=channel_name,
+                        current=idx,
+                        total=total_streams,
+                        current_stream=stream.get('name', 'Unknown'),
+                        status='analyzing',
+                        step='Analyzing stream quality',
+                        step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})'
+                    )
+                    
+                    # Analyze stream with profile failover
+                    analysis_params = self.config.get('stream_analysis', {})
+                    analyzed = self._analyze_stream_with_profile_failover(
+                        stream=stream,
+                        analysis_params=analysis_params,
+                        udi=udi
+                    )
+                    
+                    # Update stream stats on dispatcharr with ffmpeg-extracted data
+                    self._update_stream_stats(analyzed)
+                    
+                    # Check if stream is dead (resolution=0 or bitrate=0)
+                    is_dead = self._is_stream_dead(analyzed)
+                    stream_url = stream.get('url', '')
+                    stream_name = stream.get('name', 'Unknown')
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                    
+                    if is_dead and not was_dead:
+                        # Mark as dead in tracker
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name, channel_id):
+                            dead_stream_ids.add(stream['id'])
+                            logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
+                    elif not is_dead and was_dead:
+                        # Stream was revived!
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream['id'])
+                            logger.info(f"Stream {stream['id']} REVIVED: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark stream {stream['id']} as alive")
+                    elif is_dead and was_dead:
+                        # Stream remains dead
                         dead_stream_ids.add(stream['id'])
-                        logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
-                    else:
-                        logger.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
-                elif not is_dead and was_dead:
-                    # Stream was revived!
-                    if self.dead_streams_tracker.mark_as_alive(stream_url):
-                        revived_stream_ids.append(stream['id'])
-                        logger.info(f"Stream {stream['id']} REVIVED: {stream_name}")
-                    else:
-                        logger.error(f"Failed to mark stream {stream['id']} as alive")
-                elif is_dead and was_dead:
-                    # Stream remains dead
-                    dead_stream_ids.add(stream['id'])
+                    
+                    # Calculate score
+                    score = self._calculate_stream_score(analyzed, channel_id)
+                    analyzed['score'] = score
+                    analyzed_streams.append(analyzed)
+                    
+                    logger.info(f"Stream {idx}/{total_streams}: {stream.get('name')} - Score: {score:.2f}")
                 
-                # Calculate score
-                score = self._calculate_stream_score(analyzed, channel_id)
+                logger.info(f"Completed sequential analysis of {total_streams} quality check streams")
+            
+            # Process priority-only streams (from quality-excluded accounts)
+            if priority_only_streams:
+                logger.info(f"Processing {len(priority_only_streams)} priority-only streams (no quality analysis)")
+                
+                for stream in priority_only_streams:
+                    stream_id = stream.get('id')
+                    stream_name = stream.get('name', 'Unknown')
+                    stream_url = stream.get('url', '')
+                    
+                    # Create analyzed result with M3U priority score (no FFmpeg analysis)
+                    priority_score = self._get_m3u_priority_score(stream)
+                    
+                    analyzed = {
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'stream_url': stream_url,
+                        'status': 'Priority-Only',
+                        'score': priority_score,
+                        'channel_id': channel_id,
+                        'channel_name': channel_name,
+                        'quality_check_excluded': True,
+                        # No FFmpeg stats for priority-only streams
+                        'bitrate': None,
+                        'resolution': None,
+                        'fps': None,
+                        'codec': None
+                    }
+                    
+                    analyzed_streams.append(analyzed)
+                    logger.debug(f"Priority-only stream {stream_id}: {stream_name} (score: {priority_score})")
+                
+                logger.info(f"Completed processing {len(priority_only_streams)} priority-only streams")
                 analyzed['score'] = score
                 analyzed_streams.append(analyzed)
                 
@@ -3766,10 +3940,18 @@ class StreamCheckerService:
                                 'status': 'OK' if stream_stats.get('resolution') not in ['0x0', 'N/A', ''] else 'Error'
                             }
                             
-                            # Calculate score with current config
-                            score = self._calculate_stream_score(score_data, channel_id)
-                            score_data['score'] = score
+                            # Check if this stream should use priority-only scoring
+                            if self._should_skip_quality_check(full_stream):
+                                # Use M3U priority score for quality-excluded streams
+                                score = self._get_m3u_priority_score(full_stream)
+                                score_data['quality_check_excluded'] = True
+                                score_data['status'] = 'Priority-Only'
+                            else:
+                                # Calculate score with current config (normal quality-based scoring)
+                                score = self._calculate_stream_score(score_data, channel_id)
+                                score_data['quality_check_excluded'] = False
                             
+                            score_data['score'] = score
                             analyzed_streams.append(score_data)
                             
                         except Exception as e:
@@ -3954,6 +4136,152 @@ class StreamCheckerService:
         
         return limited_streams
     
+    def remove_streams_from_excluded_accounts(self, excluded_accounts: set) -> Dict:
+        """Remove all streams from quality-excluded M3U accounts from all channels.
+        
+        Args:
+            excluded_accounts: Set of M3U account IDs to remove streams from
+            
+        Returns:
+            Dict with removal statistics
+        """
+        import time as time_module
+        
+        if not self.running:
+            logger.warning("Cannot remove excluded streams - service is not running")
+            return {'success': False, 'error': 'Service is not running'}
+        
+        logger.info("=" * 80)
+        logger.info(f"REMOVING STREAMS FROM EXCLUDED ACCOUNTS: {excluded_accounts}")
+        logger.info("=" * 80)
+        
+        start_time = time_module.time()
+        
+        try:
+            udi = get_udi_manager()
+            channels = udi.get_channels()
+            
+            if not channels:
+                logger.warning("No channels found")
+                return {'success': False, 'error': 'No channels found'}
+            
+            stats = {
+                'channels_processed': 0,
+                'channels_affected': 0,
+                'removed_count': 0,
+                'channels_with_changes': []
+            }
+            
+            for channel in channels:
+                try:
+                    channel_id = channel.get('id')
+                    channel_name = channel.get('name', f'Channel {channel_id}')
+                    
+                    if not channel_id:
+                        continue
+                    
+                    logger.info(f"Processing channel: {channel_name} (ID: {channel_id})")
+                    
+                    # Get current streams for this channel
+                    current_streams = udi.get_channel_streams(channel_id)
+                    if not current_streams:
+                        logger.debug(f"Channel {channel_name} has no streams, skipping")
+                        continue
+                    
+                    stats['channels_processed'] += 1
+                    streams_before = len(current_streams)
+                    
+                    # Filter out streams from excluded accounts
+                    streams_to_keep = []
+                    streams_removed = 0
+                    
+                    for stream in current_streams:
+                        try:
+                            stream_id = stream.get('id')
+                            if not stream_id:
+                                streams_to_keep.append(stream)
+                                continue
+                            
+                            # Get full stream data to check M3U account
+                            full_stream = udi.get_stream_by_id(stream_id)
+                            if not full_stream:
+                                streams_to_keep.append(stream)
+                                continue
+                            
+                            m3u_account = full_stream.get('m3u_account')
+                            
+                            # Keep stream if it's not from an excluded account
+                            if m3u_account not in excluded_accounts:
+                                streams_to_keep.append(stream)
+                            else:
+                                streams_removed += 1
+                                logger.info(f"  Removing stream {stream_id} from excluded account {m3u_account}: {stream.get('name', 'Unknown')}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing stream {stream.get('id', 'unknown')} in channel {channel_name}: {e}")
+                            streams_to_keep.append(stream)  # Keep stream on error
+                            continue
+                    
+                    # Update channel if streams were removed
+                    if streams_removed > 0:
+                        try:
+                            # Extract stream IDs for update
+                            stream_ids_to_keep = [s.get('id') for s in streams_to_keep if s.get('id')]
+                            
+                            # Update channel streams in UDI
+                            from api_utils import update_channel_streams
+                            success = update_channel_streams(channel_id, stream_ids_to_keep)
+                            
+                            if success:
+                                stats['channels_affected'] += 1
+                                stats['removed_count'] += streams_removed
+                                stats['channels_with_changes'].append({
+                                    'channel_id': int(channel_id),
+                                    'channel_name': str(channel_name),
+                                    'streams_before': int(streams_before),
+                                    'streams_after': int(len(streams_to_keep)),
+                                    'streams_removed': int(streams_removed)
+                                })
+                                
+                                logger.info(f"✓ Removed {streams_removed} stream(s) from {channel_name}")
+                                
+                                # Refresh channel in UDI after update
+                                time_module.sleep(0.3)
+                                udi.refresh_channel_by_id(channel_id)
+                            else:
+                                logger.error(f"Failed to update channel {channel_name} after removing excluded streams")
+                        except Exception as e:
+                            logger.error(f"Error updating channel {channel_name}: {e}")
+                    else:
+                        logger.debug(f"No excluded streams found in channel {channel_name}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing channel {channel.get('id', 'unknown')}: {e}")
+                    continue
+            
+            duration = time_module.time() - start_time
+            
+            logger.info("=" * 80)
+            logger.info(f"EXCLUDED STREAMS REMOVAL COMPLETED")
+            logger.info(f"Processed: {stats['channels_processed']} channels")
+            logger.info(f"Affected: {stats['channels_affected']} channels")
+            logger.info(f"Removed: {stats['removed_count']} streams")
+            logger.info(f"Duration: {duration:.2f} seconds")
+            logger.info("=" * 80)
+            
+            return {
+                'success': True,
+                'removed_count': stats['removed_count'],
+                'channels_affected': stats['channels_affected'],
+                'channels_processed': stats['channels_processed'],
+                'channels_with_changes': stats['channels_with_changes'],
+                'duration_seconds': duration
+            }
+            
+        except Exception as e:
+            logger.error(f"Error removing excluded streams: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+
     def _apply_provider_diversification(self, analyzed_streams: List[Dict], channel_id: int) -> List[Dict]:
         """Apply provider diversification to stream ordering for better redundancy.
         
@@ -4191,6 +4519,11 @@ class StreamCheckerService:
             # Convert to analyzed format with existing scores/stats
             analyzed_streams = []
             for stream in current_streams:
+                # Get full stream data to check for quality exclusions
+                full_stream = udi.get_stream_by_id(stream['id'])
+                if not full_stream:
+                    continue
+                
                 stream_stats = stream.get('stream_stats', {})
                 if stream_stats is None:
                     stream_stats = {}
@@ -4211,8 +4544,17 @@ class StreamCheckerService:
                     'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
                 }
                 
-                # Calculate score based on existing data
-                score = self._calculate_stream_score(analyzed, channel_id)
+                # Check if this stream should use priority-only scoring
+                if self._should_skip_quality_check(full_stream):
+                    # Use M3U priority score for quality-excluded streams
+                    score = self._get_m3u_priority_score(full_stream)
+                    analyzed['quality_check_excluded'] = True
+                    analyzed['status'] = 'Priority-Only'
+                else:
+                    # Calculate score based on existing data (normal quality-based scoring)
+                    score = self._calculate_stream_score(analyzed, channel_id)
+                    analyzed['quality_check_excluded'] = False
+                
                 analyzed['score'] = score
                 analyzed_streams.append(analyzed)
             

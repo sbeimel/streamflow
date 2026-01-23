@@ -4,13 +4,15 @@ import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
+import { Checkbox } from '@/components/ui/checkbox.jsx'
+import { Badge } from '@/components/ui/badge.jsx'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Loader2, AlertCircle, CheckCircle2, Trash2, Plus } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamCheckerAPI, dispatcharrAPI } from '@/services/api.js'
+import { automationAPI, streamCheckerAPI, dispatcharrAPI, m3uAPI } from '@/services/api.js'
 
 // Default values for automation controls
 const DEFAULT_AUTOMATION_CONTROLS = {
@@ -24,6 +26,7 @@ export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
   const [streamCheckerConfig, setStreamCheckerConfig] = useState(null)
   const [dispatcharrConfig, setDispatcharrConfig] = useState(null)
+  const [m3uAccounts, setM3uAccounts] = useState([])
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -38,14 +41,16 @@ export default function AutomationSettings() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const [automationResponse, streamCheckerResponse, dispatcharrResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, dispatcharrResponse, m3uResponse] = await Promise.all([
         automationAPI.getConfig(),
         streamCheckerAPI.getConfig(),
-        dispatcharrAPI.getConfig()
+        dispatcharrAPI.getConfig(),
+        m3uAPI.getAccounts().catch(() => ({ data: { accounts: [] } }))
       ])
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
       setDispatcharrConfig(dispatcharrResponse.data)
+      setM3uAccounts(m3uResponse.data.accounts || [])
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -411,6 +416,133 @@ export default function AutomationSettings() {
                   onCheckedChange={(checked) => handleStreamCheckerConfigChange('automation_controls.remove_non_matching_streams', checked)}
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Quality Check Exclusions */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quality Check Exclusions</CardTitle>
+              <CardDescription>
+                Configure M3U accounts that should skip quality analysis and use M3U priority-based sorting instead. 
+                These streams will still be matched to channels but won't undergo FFmpeg analysis.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Feature Enable/Disable */}
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="quality_exclusions_enabled" className="text-base font-semibold cursor-pointer">
+                      Enable Quality Check Exclusions
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Allow specific M3U accounts to skip quality analysis and use priority-based sorting instead.
+                  </p>
+                </div>
+                <Switch
+                  id="quality_exclusions_enabled"
+                  checked={streamCheckerConfig?.quality_check_exclusions?.enabled ?? false}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('quality_check_exclusions.enabled', checked)}
+                />
+              </div>
+
+              {/* Account Selection (only show if feature is enabled) */}
+              {streamCheckerConfig?.quality_check_exclusions?.enabled && (
+                <>
+                  {m3uAccounts.length === 0 ? (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        No M3U accounts found. Add M3U accounts in Dispatcharr to configure quality check exclusions.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-muted-foreground">
+                          Select M3U accounts that should use priority-based sorting instead of quality analysis:
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              const response = await streamCheckerAPI.removeExcludedStreams()
+                              toast({
+                                title: "Success",
+                                description: `Removed ${response.data.removed_count} streams from ${response.data.channels_affected} channels`,
+                              })
+                            } catch (err) {
+                              toast({
+                                title: "Error",
+                                description: "Failed to remove excluded streams",
+                                variant: "destructive"
+                              })
+                            }
+                          }}
+                          className="text-xs"
+                        >
+                          <Trash2 className="h-3 w-3 mr-1" />
+                          Remove All Excluded Streams
+                        </Button>
+                      </div>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {m3uAccounts.map((account) => {
+                          const excludedAccounts = streamCheckerConfig?.quality_check_exclusions?.excluded_accounts || []
+                          const isExcluded = excludedAccounts.includes(account.id)
+                          
+                          return (
+                            <div key={account.id} className="flex items-center space-x-3 p-3 border rounded-lg">
+                              <Checkbox
+                                id={`exclude-${account.id}`}
+                                checked={isExcluded}
+                                onCheckedChange={(checked) => {
+                                  const currentExcluded = streamCheckerConfig?.quality_check_exclusions?.excluded_accounts || []
+                                  const newExcluded = checked
+                                    ? [...currentExcluded, account.id]
+                                    : currentExcluded.filter(id => id !== account.id)
+                                  handleStreamCheckerConfigChange('quality_check_exclusions.excluded_accounts', newExcluded)
+                                }}
+                              />
+                              <div className="flex-1">
+                                <Label htmlFor={`exclude-${account.id}`} className="cursor-pointer font-medium">
+                                  {account.name || account.username || `Account ${account.id}`}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Priority: {account.priority || 50} • {account.is_active ? 'Active' : 'Inactive'}
+                                </p>
+                              </div>
+                              {isExcluded && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Priority Only
+                                </Badge>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>How Quality Check Exclusions Work</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside space-y-1 text-sm mt-2">
+                    <li><strong>Feature must be enabled:</strong> Toggle the switch above to activate this feature</li>
+                    <li><strong>Excluded accounts:</strong> Streams are matched to channels but skip FFmpeg quality analysis</li>
+                    <li><strong>Sorting:</strong> Uses M3U account priority instead of quality scores</li>
+                    <li><strong>Performance:</strong> Faster processing, no dead stream detection</li>
+                    <li><strong>Stability:</strong> Streams won't be removed due to quality issues</li>
+                    <li><strong>Provider limits:</strong> Account stream limits still apply normally</li>
+                    <li><strong>Manual removal:</strong> Use "Rescore & Resort" or manual channel editing to remove streams</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
             </CardContent>
           </Card>
 

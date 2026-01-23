@@ -109,6 +109,7 @@ export const streamCheckerAPI = {
   triggerGlobalAction: () => api.post('/stream-checker/global-action'),
   testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
   rescoreAndResort: () => api.post('/stream-checker/rescore-resort'),
+  removeExcludedStreams: () => api.post('/stream-checker/remove-excluded-streams'),
 };
 
 export const changelogAPI = {
