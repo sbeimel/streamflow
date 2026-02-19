@@ -1,22 +1,23 @@
 # 🔐 Basic Authentication für StreamFlow
 
-StreamFlow unterstützt jetzt HTTP Basic Authentication um den Zugriff auf die Web-UI und API zu sichern.
+StreamFlow unterstützt HTTP Basic Authentication um den Zugriff auf die Web-UI und API zu sichern.
 
 ---
 
 ## ✅ Features
 
-- HTTP Basic Authentication für alle API-Endpunkte
+- HTTP Basic Authentication für Frontend UND Backend
 - Konfigurierbar über JSON-Datei oder API
 - Enable/Disable ohne Neustart
 - Benutzername und Passwort anpassbar
 - Browser-Login-Dialog
+- Keine zusätzlichen Container nötig!
 
 ---
 
 ## 🚀 Aktivierung
 
-### Option 1: Über Config-Datei
+### Schritt 1: Config-Datei erstellen
 
 **Datei:** `data/auth_config.json`
 
@@ -30,25 +31,15 @@ StreamFlow unterstützt jetzt HTTP Basic Authentication um den Zugriff auf die W
 }
 ```
 
-**Schritte:**
-1. Erstelle/Bearbeite `data/auth_config.json`
-2. Setze `enabled: true`
-3. Ändere `username` und `password`
-4. Starte Backend neu: `docker-compose restart backend`
+### Schritt 2: Backend neu starten
 
-### Option 2: Über API (wenn Auth noch deaktiviert ist)
-
-```bash
-curl -X PUT http://localhost:5000/api/auth/config \
-  -H "Content-Type: application/json" \
-  -d '{
-    "basic_auth": {
-      "enabled": true,
-      "username": "admin",
-      "password": "dein-sicheres-passwort"
-    }
-  }'
+```cmd
+docker-compose restart backend
 ```
+
+### Schritt 3: Testen
+
+Öffne StreamFlow im Browser → Login-Dialog erscheint!
 
 ---
 
@@ -59,12 +50,12 @@ curl -X PUT http://localhost:5000/api/auth/config \
 ```json
 {
   "basic_auth": {
-    "enabled": false,
-    "username": "admin",
-    "password": "changeme"
+    "enabled": false
   }
 }
 ```
+
+Dann: `docker-compose restart backend`
 
 ### Über API (mit Auth):
 
@@ -253,27 +244,29 @@ Auth-Status testen
 
 ## 🔍 Geschützte Endpunkte
 
-Folgende Endpunkte sind durch Basic Auth geschützt (wenn enabled):
+**Geschützt (wenn Auth enabled):** ✅
+- `/` - Frontend Homepage
+- `/dashboard` - Dashboard  
+- `/stream-checker` - Stream Checker
+- Alle Frontend-Routen
+- `/api/automation/*` - Alle Automation-Endpunkte
+- `/api/channels/*` - Alle Channel-Endpunkte
+- `/api/regex-patterns/*` - Regex-Pattern-Management
+- `/api/profile-config` - Profile-Konfiguration
+- `/api/profiles/*` - Profile-Management
+- `/api/changelog` - Changelog
+- `/api/dead-streams/*` - Dead Streams Management
+- `/api/channel-settings/*` - Channel Settings
+- `/api/group-settings/*` - Group Settings
+- `/api/channel-order` - Channel Order
+- `/api/discover-streams` - Stream Discovery
+- `/api/auth/config` - Auth Config Management
 
-- ✅ `/api/automation/*` - Alle Automation-Endpunkte
-- ✅ `/api/channels/*` - Alle Channel-Endpunkte
-- ✅ `/api/regex-patterns/*` - Regex-Pattern-Management
-- ✅ `/api/profile-config` - Profile-Konfiguration
-- ✅ `/api/profiles/*` - Profile-Management
-- ✅ `/api/changelog` - Changelog
-- ✅ `/api/dead-streams/*` - Dead Streams Management
-- ✅ `/api/channel-settings/*` - Channel Settings
-- ✅ `/api/group-settings/*` - Group Settings
-- ✅ `/api/channel-order` - Channel Order
-- ✅ `/api/discover-streams` - Stream Discovery
-- ✅ `/api/auth/config` - Auth Config Management
-
-### Nicht geschützte Endpunkte:
-
-- ❌ `/api/health` - Health Check (für Monitoring)
-- ❌ `/api/version` - Version Info
-- ❌ `/api/auth/test` - Auth Status Test
-- ❌ `/health` - Health Check (nginx)
+**Nicht geschützt:** ❌
+- `/api/health` - Health Check (für Monitoring)
+- `/api/version` - Version Info
+- `/api/auth/test` - Auth Status Test
+- `/health` - Health Check (nginx)
 
 ---
 

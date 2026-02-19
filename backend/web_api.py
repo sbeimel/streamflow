@@ -421,7 +421,8 @@ def stop_epg_refresh_processor():
     return True
 
 
-@app.route('/', methods=['GET'])
+@app.route('/')
+@requires_auth
 def root():
     """Serve React frontend."""
     try:
@@ -465,7 +466,6 @@ def get_version():
 # ==================== Authentication API ====================
 
 @app.route('/api/auth/config', methods=['GET'])
-@requires_auth
 def get_auth_config():
     """Get authentication configuration (without password)."""
     try:
@@ -483,7 +483,6 @@ def get_auth_config():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/auth/config', methods=['PUT'])
-@requires_auth
 def update_auth_config():
     """Update authentication configuration."""
     try:
@@ -550,7 +549,6 @@ def test_auth():
 # ==================== End Authentication API ====================
 
 @app.route('/api/automation/status', methods=['GET'])
-@requires_auth
 def get_automation_status():
     """Get current automation status."""
     try:
@@ -562,7 +560,6 @@ def get_automation_status():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/start', methods=['POST'])
-@requires_auth
 def start_automation():
     """Start the automation system."""
     try:
@@ -574,7 +571,6 @@ def start_automation():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/stop', methods=['POST'])
-@requires_auth
 def stop_automation():
     """Stop the automation system."""
     try:
@@ -586,7 +582,6 @@ def stop_automation():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/cycle', methods=['POST'])
-@requires_auth
 def run_automation_cycle():
     """Run one automation cycle manually."""
     try:
@@ -598,7 +593,6 @@ def run_automation_cycle():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/config', methods=['GET'])
-@requires_auth
 def get_automation_config():
     """Get automation configuration."""
     try:
@@ -609,7 +603,6 @@ def get_automation_config():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/config', methods=['PUT'])
-@requires_auth
 def update_automation_config():
     """Update automation configuration."""
     try:
@@ -625,7 +618,6 @@ def update_automation_config():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channels', methods=['GET'])
-@requires_auth
 def get_channels():
     """Get all channels from UDI with custom ordering applied."""
     try:
@@ -3962,6 +3954,7 @@ def trigger_epg_refresh():
 
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
+@requires_auth
 def serve_frontend(path):
     """Serve React frontend files or return index.html for client-side routing."""
     file_path = static_folder / path
