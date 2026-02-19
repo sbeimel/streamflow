@@ -1648,10 +1648,18 @@ class AutomatedStreamManager:
                 # Fall back to interval-based calculation
                 if self.last_playlist_update:
                     # Calculate when the next update should occur based on last update + interval
-                    next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+                    interval_minutes = self.config.get("playlist_update_interval_minutes", 5)
+                    # Handle case where interval might be a dict (malformed config)
+                    if isinstance(interval_minutes, dict):
+                        interval_minutes = 5
+                    next_update = self.last_playlist_update + timedelta(minutes=interval_minutes)
                 elif self.automation_start_time:
                     # If automation is running but no last update, calculate from start time
-                    next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+                    interval_minutes = self.config.get("playlist_update_interval_minutes", 5)
+                    # Handle case where interval might be a dict (malformed config)
+                    if isinstance(interval_minutes, dict):
+                        interval_minutes = 5
+                    next_update = self.automation_start_time + timedelta(minutes=interval_minutes)
         
         return {
             "running": self.running,
