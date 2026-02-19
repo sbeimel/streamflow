@@ -20,6 +20,9 @@ from werkzeug.utils import secure_filename
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
+from functools import wraps
+from werkzeug.security import check_password_hash, generate_password_hash
+import base64
 
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
@@ -65,6 +68,9 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
 CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
+# Auth configuration file
+AUTH_CONFIG_FILE = CONFIG_DIR / 'auth_config.json'
+
 # Dead streams pagination constants
 DEAD_STREAMS_DEFAULT_PER_PAGE = 20
 DEAD_STREAMS_MAX_PER_PAGE = 100
@@ -97,6 +103,83 @@ def get_automation_manager():
     if automation_manager is None:
         automation_manager = AutomatedStreamManager()
     return automation_manager
+
+
+def load_auth_config():
+    """Load authentication configuration from JSON file."""
+    try:
+        if AUTH_CONFIG_FILE.exists():
+            with open(AUTH_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        else:
+            # Create default config if it doesn't exist
+            default_config = {
+                "basic_auth": {
+                    "enabled": False,
+                    "username": "admin",
+                    "password": "changeme"
+                }
+            }
+            AUTH_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(AUTH_CONFIG_FILE, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            return default_config
+    except Exception as e:
+        logger.error(f"Failed to load auth config: {e}")
+        return {"basic_auth": {"enabled": False, "username": "admin", "password": "changeme"}}
+
+
+def save_auth_config(config):
+    """Save authentication configuration to JSON file."""
+    try:
+        AUTH_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(AUTH_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save auth config: {e}")
+        return False
+
+
+def check_auth(username, password):
+    """Check if username/password combination is valid."""
+    auth_config = load_auth_config()
+    basic_auth = auth_config.get('basic_auth', {})
+    
+    if not basic_auth.get('enabled', False):
+        return True  # Auth disabled, allow access
+    
+    expected_username = basic_auth.get('username', 'admin')
+    expected_password = basic_auth.get('password', 'changeme')
+    
+    return username == expected_username and password == expected_password
+
+
+def authenticate():
+    """Send 401 response that enables basic auth."""
+    return jsonify({'error': 'Authentication required'}), 401, {
+        'WWW-Authenticate': 'Basic realm="StreamFlow Login Required"'
+    }
+
+
+def requires_auth(f):
+    """Decorator to require HTTP Basic Auth for routes."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_config = load_auth_config()
+        
+        # If auth is disabled, allow access
+        if not auth_config.get('basic_auth', {}).get('enabled', False):
+            return f(*args, **kwargs)
+        
+        # Check for Authorization header
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        
+        return f(*args, **kwargs)
+    return decorated
+
 
 def get_regex_matcher():
     """Get or create regex matcher instance."""
@@ -379,7 +462,95 @@ def get_version():
         logger.error(f"Failed to read version: {e}")
         return jsonify({"version": "dev-unknown"})
 
+# ==================== Authentication API ====================
+
+@app.route('/api/auth/config', methods=['GET'])
+@requires_auth
+def get_auth_config():
+    """Get authentication configuration (without password)."""
+    try:
+        config = load_auth_config()
+        # Don't send password to frontend
+        safe_config = {
+            "basic_auth": {
+                "enabled": config.get('basic_auth', {}).get('enabled', False),
+                "username": config.get('basic_auth', {}).get('username', 'admin')
+            }
+        }
+        return jsonify(safe_config)
+    except Exception as e:
+        logger.error(f"Failed to get auth config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auth/config', methods=['PUT'])
+@requires_auth
+def update_auth_config():
+    """Update authentication configuration."""
+    try:
+        data = request.get_json()
+        
+        if not data or 'basic_auth' not in data:
+            return jsonify({"error": "Invalid request data"}), 400
+        
+        basic_auth = data['basic_auth']
+        
+        # Validate required fields
+        if 'enabled' not in basic_auth:
+            return jsonify({"error": "Missing 'enabled' field"}), 400
+        
+        # Load current config
+        current_config = load_auth_config()
+        
+        # Update fields
+        current_config['basic_auth']['enabled'] = bool(basic_auth['enabled'])
+        
+        if 'username' in basic_auth and basic_auth['username']:
+            current_config['basic_auth']['username'] = basic_auth['username']
+        
+        if 'password' in basic_auth and basic_auth['password']:
+            current_config['basic_auth']['password'] = basic_auth['password']
+        
+        # Save config
+        if save_auth_config(current_config):
+            logger.info(f"Auth config updated: enabled={current_config['basic_auth']['enabled']}, username={current_config['basic_auth']['username']}")
+            return jsonify({"message": "Authentication configuration updated successfully"})
+        else:
+            return jsonify({"error": "Failed to save configuration"}), 500
+            
+    except Exception as e:
+        logger.error(f"Failed to update auth config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auth/test', methods=['GET'])
+def test_auth():
+    """Test authentication status."""
+    auth_config = load_auth_config()
+    is_enabled = auth_config.get('basic_auth', {}).get('enabled', False)
+    
+    if not is_enabled:
+        return jsonify({
+            "authenticated": True,
+            "auth_enabled": False,
+            "message": "Authentication is disabled"
+        })
+    
+    auth = request.authorization
+    if auth and check_auth(auth.username, auth.password):
+        return jsonify({
+            "authenticated": True,
+            "auth_enabled": True,
+            "username": auth.username
+        })
+    else:
+        return jsonify({
+            "authenticated": False,
+            "auth_enabled": True
+        }), 401
+
+# ==================== End Authentication API ====================
+
 @app.route('/api/automation/status', methods=['GET'])
+@requires_auth
 def get_automation_status():
     """Get current automation status."""
     try:
@@ -391,6 +562,7 @@ def get_automation_status():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/start', methods=['POST'])
+@requires_auth
 def start_automation():
     """Start the automation system."""
     try:
@@ -402,6 +574,7 @@ def start_automation():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/stop', methods=['POST'])
+@requires_auth
 def stop_automation():
     """Stop the automation system."""
     try:
@@ -413,6 +586,7 @@ def stop_automation():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/cycle', methods=['POST'])
+@requires_auth
 def run_automation_cycle():
     """Run one automation cycle manually."""
     try:
@@ -424,6 +598,7 @@ def run_automation_cycle():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/config', methods=['GET'])
+@requires_auth
 def get_automation_config():
     """Get automation configuration."""
     try:
@@ -434,6 +609,7 @@ def get_automation_config():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/config', methods=['PUT'])
+@requires_auth
 def update_automation_config():
     """Update automation configuration."""
     try:
@@ -449,6 +625,7 @@ def update_automation_config():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channels', methods=['GET'])
+@requires_auth
 def get_channels():
     """Get all channels from UDI with custom ordering applied."""
     try:

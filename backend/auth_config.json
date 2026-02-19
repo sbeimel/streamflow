@@ -1,0 +1,7 @@
+{
+  "basic_auth": {
+    "enabled": false,
+    "username": "admin",
+    "password": "changeme"
+  }
+}
