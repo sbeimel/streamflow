@@ -1162,16 +1162,26 @@ class AutomatedStreamManager:
                 
                 # Determine optimal worker count (use CPU cores, max 8)
                 num_workers = min(multiprocessing.cpu_count(), 8)
-                chunk_size = max(1000, total_streams // num_workers)
+                
+                # Calculate optimal chunk size
+                # Goal: Balance between parallelism and overhead
+                # - Min chunk size: 1000 streams (avoid too much overhead)
+                # - Max chunk size: total_streams / num_workers (ensure all workers are used)
+                # - Prefer more chunks for better load balancing
+                ideal_chunks = num_workers * 2  # 2 chunks per worker for better load balancing
+                chunk_size = max(1000, total_streams // ideal_chunks)
                 
                 # Split streams into chunks
                 chunks = [all_streams[i:i+chunk_size] 
                           for i in range(0, total_streams, chunk_size)]
                 
-                logger.info(f"🚀 Using parallel regex matching: {num_workers} workers, {len(chunks)} chunks")
+                # Adjust worker count if we have fewer chunks than workers
+                actual_workers = min(num_workers, len(chunks))
+                
+                logger.info(f"🚀 Using parallel regex matching: {actual_workers} workers, {len(chunks)} chunks (chunk size: ~{chunk_size:,} streams)")
                 
                 # Process chunks in parallel
-                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                     # Submit all chunks
                     futures = {
                         executor.submit(
