@@ -1180,6 +1180,10 @@ class AutomatedStreamManager:
                 
                 logger.info(f"🚀 Using parallel regex matching: {actual_workers} workers, {len(chunks)} chunks (chunk size: ~{chunk_size:,} streams)")
                 
+                # Track completed chunks for progress
+                completed_chunks = 0
+                total_chunks = len(chunks)
+                
                 # Process chunks in parallel
                 with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                     # Submit all chunks
@@ -1208,14 +1212,15 @@ class AutomatedStreamManager:
                                 assignment_details[channel_id].extend(details)
                             
                             # Update progress
+                            completed_chunks += 1
                             processed_count += len(chunks[chunk_idx])
-                            if processed_count - last_progress_log >= progress_interval:
-                                progress_pct = (processed_count / total_streams) * 100
-                                elapsed = time.time() - start_time
-                                rate = processed_count / elapsed if elapsed > 0 else 0
-                                eta = (total_streams - processed_count) / rate if rate > 0 else 0
-                                logger.info(f"📊 Progress: {progress_pct:.1f}% ({processed_count:,}/{total_streams:,}) | Rate: {rate:.0f} streams/sec | ETA: {eta:.0f}s")
-                                last_progress_log = processed_count
+                            
+                            # Log progress after each chunk
+                            progress_pct = (processed_count / total_streams) * 100
+                            elapsed = time.time() - start_time
+                            rate = processed_count / elapsed if elapsed > 0 else 0
+                            eta = (total_streams - processed_count) / rate if rate > 0 else 0
+                            logger.info(f"📊 Chunk {completed_chunks}/{total_chunks} complete | Progress: {progress_pct:.1f}% ({processed_count:,}/{total_streams:,}) | Rate: {rate:.0f} streams/sec | ETA: {eta:.0f}s")
                         
                         except Exception as e:
                             logger.error(f"Error processing chunk {chunk_idx}: {e}")
