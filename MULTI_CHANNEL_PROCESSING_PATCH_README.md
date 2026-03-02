@@ -195,6 +195,55 @@ const autoValue = Math.min(Math.max(1, Math.floor(globalLimit / 4)), 20);
 
 ---
 
+## 🔍 Logging
+
+### Was du in den Logs siehst:
+
+#### Beim Start (Sequential Mode):
+```
+============================================================
+📋 SEQUENTIAL MODE (One channel at a time)
+============================================================
+```
+
+#### Beim Start (Multi-Channel Mode):
+```
+============================================================
+🚀 MULTI-CHANNEL MODE ENABLED
+   Max Concurrent Channels: 5
+   Global Stream Limit: 20
+============================================================
+🔧 Multi-channel worker initialized: max 5 channels simultaneously
+```
+
+#### Während der Verarbeitung:
+```
+🚀 Starting channel 123 (active: 1/5)
+🚀 Starting channel 456 (active: 2/5)
+🚀 Starting channel 789 (active: 3/5)
+✅ Channel 123 completed (active: 2/5)
+🚀 Starting channel 101 (active: 3/5)
+✅ Channel 456 completed (active: 2/5)
+✅ Channel 789 completed (active: 1/5)
+```
+
+#### Beim Shutdown:
+```
+⏳ Waiting for 3 active channels to complete...
+✅ Channel 101 completed during shutdown
+✅ Channel 202 completed during shutdown
+✅ Channel 303 completed during shutdown
+🛑 Stream checker worker stopped (multi-channel mode)
+```
+
+### Log-Level
+
+- **INFO:** Mode-Wechsel, Channel Start/Complete, Statistiken
+- **DEBUG:** Detaillierte Queue-Operationen
+- **ERROR:** Fehler bei Channel-Verarbeitung
+
+---
+
 ## 📊 Performance Comparison
 
 ### Real-World Example
