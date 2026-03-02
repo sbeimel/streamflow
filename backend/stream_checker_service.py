@@ -968,12 +968,19 @@ class StreamCheckerService:
         
         # Check if multi-channel processing is enabled
         multi_channel_enabled = self.config.get('concurrent_streams.multi_channel_enabled', False)
+        max_concurrent_channels = self.config.get('concurrent_streams.max_concurrent_channels', 5)
         
         if multi_channel_enabled:
-            logger.info("Stream checker worker started (MULTI-CHANNEL MODE)")
+            logger.info("=" * 60)
+            logger.info("🚀 MULTI-CHANNEL MODE ENABLED")
+            logger.info(f"   Max Concurrent Channels: {max_concurrent_channels}")
+            logger.info(f"   Global Stream Limit: {self.config.get('concurrent_streams.global_limit', 10)}")
+            logger.info("=" * 60)
             self._worker_loop_multi_channel()
         else:
-            logger.info("Stream checker worker started (SEQUENTIAL MODE)")
+            logger.info("=" * 60)
+            logger.info("📋 SEQUENTIAL MODE (One channel at a time)")
+            logger.info("=" * 60)
             self._worker_loop_sequential()
         
         log_function_return(logger, "_worker_loop")
@@ -1016,7 +1023,7 @@ class StreamCheckerService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
         max_concurrent_channels = self.config.get('concurrent_streams.max_concurrent_channels', 5)
-        logger.info(f"Multi-channel mode: max {max_concurrent_channels} channels simultaneously")
+        logger.info(f"🔧 Multi-channel worker initialized: max {max_concurrent_channels} channels simultaneously")
         
         active_futures = {}  # {future: channel_id}
         
@@ -1029,9 +1036,9 @@ class StreamCheckerService:
                         channel_id = active_futures[future]
                         try:
                             future.result()  # Get result to catch any exceptions
-                            logger.debug(f"Channel {channel_id} completed successfully")
+                            logger.info(f"✅ Channel {channel_id} completed (active: {len(active_futures) - 1}/{max_concurrent_channels})")
                         except Exception as e:
-                            logger.error(f"Channel {channel_id} failed: {e}", exc_info=True)
+                            logger.error(f"❌ Channel {channel_id} failed: {e}", exc_info=True)
                         del active_futures[future]
                     
                     # Start new channels if we have available slots
@@ -1044,7 +1051,7 @@ class StreamCheckerService:
                         if self.batch_start_time is None:
                             self._start_batch_changelog()
                         
-                        logger.info(f"Starting channel {channel_id} (active: {len(active_futures) + 1}/{max_concurrent_channels})")
+                        logger.info(f"🚀 Starting channel {channel_id} (active: {len(active_futures) + 1}/{max_concurrent_channels})")
                         future = executor.submit(self._check_channel, channel_id)
                         active_futures[future] = channel_id
                     
@@ -1061,20 +1068,20 @@ class StreamCheckerService:
             
             # Wait for all active channels to complete before stopping
             if active_futures:
-                logger.info(f"Waiting for {len(active_futures)} active channels to complete...")
+                logger.info(f"⏳ Waiting for {len(active_futures)} active channels to complete...")
                 for future in as_completed(active_futures.keys(), timeout=300):
                     channel_id = active_futures[future]
                     try:
                         future.result()
-                        logger.debug(f"Channel {channel_id} completed during shutdown")
+                        logger.info(f"✅ Channel {channel_id} completed during shutdown")
                     except Exception as e:
-                        logger.error(f"Channel {channel_id} failed during shutdown: {e}")
+                        logger.error(f"❌ Channel {channel_id} failed during shutdown: {e}")
         
         # Finalize any remaining batch before stopping
         if self.batch_start_time is not None:
             self._finalize_batch_changelog()
         
-        logger.info("Stream checker worker stopped (multi-channel mode)")
+        logger.info("🛑 Stream checker worker stopped (multi-channel mode)")
     
     def _scheduler_loop(self):
         """Scheduler loop for M3U update-triggered and scheduled checks."""
