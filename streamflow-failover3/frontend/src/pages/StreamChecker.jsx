@@ -617,10 +617,9 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-7">
+                <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
-                  <TabsTrigger value="multi-channel">Multi-Channel</TabsTrigger>
                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
                   <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
                   <TabsTrigger value="stream-ordering">Stream Ordering</TabsTrigger>
@@ -776,72 +775,6 @@ export default function StreamChecker() {
                       Delay between starting each concurrent check to prevent overload
                     </p>
                   </div>
-                </TabsContent>
-
-                {/* Multi-Channel Parallel Processing Tab */}
-                <TabsContent value="multi-channel" className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="multi_channel_enabled">Enable Multi-Channel Processing</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Process multiple channels simultaneously instead of one at a time
-                      </p>
-                    </div>
-                    <Switch
-                      id="multi_channel_enabled"
-                      checked={editedConfig?.concurrent_streams?.multi_channel_enabled === true}
-                      onCheckedChange={(checked) => updateConfigValue('concurrent_streams.multi_channel_enabled', checked)}
-                      disabled={!configEditing}
-                    />
-                  </div>
-
-                  {editedConfig?.concurrent_streams?.multi_channel_enabled && (
-                    <div className="space-y-4 pt-4 border-t">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="max_concurrent_channels">Max Concurrent Channels</Label>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const globalLimit = editedConfig?.concurrent_streams?.global_limit || 10;
-                              const autoValue = globalLimit === 0 ? 10 : Math.min(Math.max(1, Math.floor(globalLimit / 4)), 20);
-                              updateConfigValue('concurrent_streams.max_concurrent_channels', autoValue);
-                            }}
-                            disabled={!configEditing}
-                          >
-                            Auto
-                          </Button>
-                        </div>
-                        <Input
-                          id="max_concurrent_channels"
-                          type="number"
-                          value={editedConfig?.concurrent_streams?.max_concurrent_channels || 5}
-                          onChange={(e) => updateConfigValue('concurrent_streams.max_concurrent_channels', parseInt(e.target.value) || 5)}
-                          disabled={!configEditing}
-                          min={1}
-                          max={20}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Maximum number of channels to check simultaneously (1-20). Click "Auto" to calculate based on Global Limit.
-                        </p>
-                      </div>
-
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertTitle>How It Works</AlertTitle>
-                        <AlertDescription>
-                          <ul className="list-disc list-inside space-y-1 text-xs mt-2">
-                            <li><strong>Disabled:</strong> Checks one channel at a time (current behavior)</li>
-                            <li><strong>Enabled:</strong> Checks multiple channels simultaneously</li>
-                            <li><strong>Dynamic:</strong> Starts new channels as soon as others finish</li>
-                            <li><strong>Respects Limits:</strong> Global stream limit is shared across all channels</li>
-                            <li><strong>Better Performance:</strong> Small channels don't block large ones</li>
-                          </ul>
-                        </AlertDescription>
-                      </Alert>
-                    </div>
-                  )}
                 </TabsContent>
 
                 {/* Stream Scoring Weights Tab */}
