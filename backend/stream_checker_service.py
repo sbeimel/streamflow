@@ -49,6 +49,9 @@ from channel_settings_manager import get_channel_settings_manager
 # Import profile config
 from profile_config import get_profile_config
 
+# Import priority channel queue
+from priority_channel_queue import get_priority_queue
+
 # Import centralized stream stats utilities
 from stream_stats_utils import (
     parse_bitrate_value,
@@ -728,10 +731,30 @@ class StreamCheckQueue:
         }
     
     def add_channel(self, channel_id: int, priority: int = 0):
-        """Add a channel to the checking queue."""
+        """Add a channel to the checking queue.
+        
+        Args:
+            channel_id: The channel ID to add
+            priority: Base priority (lower = higher priority). If 0, uses channel-specific priority from settings.
+        
+        Returns:
+            bool: True if channel was added, False if already queued/in-progress/completed
+        """
         with self.lock:
             # Check if channel is already queued, in progress, or completed
             if channel_id not in self.queued and channel_id not in self.in_progress and channel_id not in self.completed:
+                # Get channel-specific priority from priority queue if base priority is 0
+                # This allows manual queue operations to override with explicit priority
+                if priority == 0:
+                    try:
+                        from priority_channel_queue import get_priority_queue
+                        pq = get_priority_queue()
+                        priority = pq.get_priority(channel_id)
+                        logger.debug(f"Using channel-specific priority {priority} for channel {channel_id}")
+                    except Exception as e:
+                        logger.debug(f"Could not get channel priority, using default: {e}")
+                        priority = 50  # Default priority
+                
                 try:
                     self.queue.put((priority, channel_id), block=False)
                     self.queued.add(channel_id)
@@ -931,6 +954,15 @@ class StreamCheckerService:
         
         self.dead_streams_tracker = DeadStreamsTracker()
         logger.debug("Dead streams tracker initialized")
+        
+        # Initialize priority queue and load channel priorities from settings
+        self.priority_queue = get_priority_queue()
+        try:
+            channel_settings = get_channel_settings_manager()
+            self.priority_queue.load_priorities_from_settings(channel_settings)
+            logger.info("Priority queue initialized with channel priorities")
+        except Exception as e:
+            logger.warning(f"Failed to load channel priorities: {e}")
         
         # Initialize changelog manager
         self.changelog = None

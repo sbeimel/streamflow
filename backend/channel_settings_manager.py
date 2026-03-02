@@ -86,22 +86,23 @@ class ChannelSettingsManager:
             logger.error(f"Error saving channel settings: {e}", exc_info=True)
             return False
     
-    def get_channel_settings(self, channel_id: int) -> Dict[str, str]:
+    def get_channel_settings(self, channel_id: int) -> Dict[str, Any]:
         """Get settings for a specific channel.
         
         Args:
             channel_id: The channel ID
             
         Returns:
-            Dictionary with channel settings (matching_mode, checking_mode, quality_preference)
-            Defaults to 'enabled' for modes and 'default' for quality_preference if not set
+            Dictionary with channel settings (matching_mode, checking_mode, quality_preference, priority)
+            Defaults to 'enabled' for modes, 'default' for quality_preference, and 50 for priority if not set
         """
         with self._lock:
             settings = self._settings.get(channel_id, {})
             return {
                 'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
                 'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
-                'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
+                'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT),
+                'priority': settings.get('priority', 50)
             }
     
     def get_channel_effective_settings(self, channel_id: int, channel_group_id: Optional[int] = None) -> Dict[str, Any]:
@@ -178,7 +179,8 @@ class ChannelSettingsManager:
             }
     
     def set_channel_settings(self, channel_id: int, matching_mode: Optional[str] = None,
-                            checking_mode: Optional[str] = None, quality_preference: Optional[str] = None) -> bool:
+                            checking_mode: Optional[str] = None, quality_preference: Optional[str] = None,
+                            priority: Optional[int] = None) -> bool:
         """Set settings for a specific channel.
         
         Args:
@@ -186,6 +188,7 @@ class ChannelSettingsManager:
             matching_mode: Matching mode ('enabled' or 'disabled'), None to keep current
             checking_mode: Checking mode ('enabled' or 'disabled'), None to keep current
             quality_preference: Quality preference ('default', 'prefer_4k', 'avoid_4k', 'max_1080p', 'max_720p'), None to keep current
+            priority: Check priority (0-100, 0=highest, 100=lowest), None to keep current
             
         Returns:
             True if successful, False otherwise
@@ -209,23 +212,50 @@ class ChannelSettingsManager:
                 self._settings[channel_id]['checking_mode'] = checking_mode
             
             if quality_preference is not None:
-                valid_preferences = [self.QUALITY_DEFAULT, self.QUALITY_PREFER_4K, self.QUALITY_AVOID_4K, 
-                                   self.QUALITY_MAX_1080P, self.QUALITY_MAX_720P]
+                valid_preferences = [
+                    self.QUALITY_DEFAULT,
+                    self.QUALITY_PREFER_4K,
+                    self.QUALITY_AVOID_4K,
+                    self.QUALITY_MAX_1080P,
+                    self.QUALITY_MAX_720P
+                ]
                 if quality_preference not in valid_preferences:
                     logger.error(f"Invalid quality_preference: {quality_preference}")
                     return False
                 self._settings[channel_id]['quality_preference'] = quality_preference
             
+            if priority is not None:
+                # Validate and clamp priority to 0-100 range
+                priority = max(0, min(100, int(priority)))
+                self._settings[channel_id]['priority'] = priority
+                
+                # Sync with priority queue
+                try:
+                    from priority_channel_queue import get_priority_queue
+                    pq = get_priority_queue()
+                    pq.set_priority(channel_id, priority)
+                    logger.debug(f"Synced priority {priority} to priority queue for channel {channel_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to sync priority to priority queue: {e}")
+            
             # Save to file
             success = self._save_settings()
+            
             if success:
-                logger.info(f"Updated settings for channel {channel_id}: "
-                          f"matching={self._settings[channel_id].get('matching_mode', 'enabled')}, "
-                          f"checking={self._settings[channel_id].get('checking_mode', 'enabled')}, "
-                          f"quality_preference={self._settings[channel_id].get('quality_preference', 'default')}")
+                settings_str = []
+                if matching_mode is not None:
+                    settings_str.append(f"matching_mode={matching_mode}")
+                if checking_mode is not None:
+                    settings_str.append(f"checking_mode={checking_mode}")
+                if quality_preference is not None:
+                    settings_str.append(f"quality_preference={quality_preference}")
+                if priority is not None:
+                    settings_str.append(f"priority={priority}")
+                logger.info(f"Updated settings for channel {channel_id}: {', '.join(settings_str)}")
+            
             return success
     
-    def get_all_settings(self) -> Dict[int, Dict[str, str]]:
+    def get_all_settings(self) -> Dict[int, Dict[str, Any]]:
         """Get all channel settings.
         
         Returns:
@@ -236,7 +266,8 @@ class ChannelSettingsManager:
                 channel_id: {
                     'matching_mode': settings.get('matching_mode', self.MODE_ENABLED),
                     'checking_mode': settings.get('checking_mode', self.MODE_ENABLED),
-                    'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT)
+                    'quality_preference': settings.get('quality_preference', self.QUALITY_DEFAULT),
+                    'priority': settings.get('priority', 50)
                 }
                 for channel_id, settings in self._settings.items()
             }

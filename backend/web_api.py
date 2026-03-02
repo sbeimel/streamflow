@@ -1990,6 +1990,7 @@ def update_channel_settings_endpoint(channel_id):
         matching_mode = data.get('matching_mode')
         checking_mode = data.get('checking_mode')
         quality_preference = data.get('quality_preference')
+        priority = data.get('priority')
         
         # Validate modes if provided
         valid_modes = ['enabled', 'disabled']
@@ -2003,12 +2004,22 @@ def update_channel_settings_endpoint(channel_id):
         if quality_preference and quality_preference not in valid_preferences:
             return jsonify({"error": f"Invalid quality_preference. Must be one of: {valid_preferences}"}), 400
         
+        # Validate priority if provided
+        if priority is not None:
+            try:
+                priority = int(priority)
+                if priority < 0 or priority > 100:
+                    return jsonify({"error": "Invalid priority. Must be between 0 and 100"}), 400
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid priority. Must be an integer"}), 400
+        
         settings_manager = get_channel_settings_manager()
         success = settings_manager.set_channel_settings(
             channel_id,
             matching_mode=matching_mode,
             checking_mode=checking_mode,
-            quality_preference=quality_preference
+            quality_preference=quality_preference,
+            priority=priority
         )
         
         if success:
