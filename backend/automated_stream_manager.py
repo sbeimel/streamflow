@@ -879,7 +879,62 @@ class AutomatedStreamManager:
                 })
             return False
     
-    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
+    def _match_chunk(self, streams_chunk, channel_streams, dead_streams_tracker, dead_stream_removal_enabled):
+        """
+        Match a chunk of streams to channels (runs in parallel).
+        
+        This method is designed to be called by ThreadPoolExecutor for parallel processing.
+        Each worker processes its own chunk independently to avoid race conditions.
+        
+        Args:
+            streams_chunk: List of streams to process
+            channel_streams: Dict mapping channel_id to set of existing stream IDs
+            dead_streams_tracker: DeadStreamsTracker instance (or None)
+            dead_stream_removal_enabled: Whether dead stream removal is enabled
+            
+        Returns:
+            Tuple of (chunk_assignments, chunk_details)
+            - chunk_assignments: Dict mapping channel_id to list of new stream IDs
+            - chunk_details: Dict mapping channel_id to list of stream detail dicts
+        """
+        chunk_assignments = defaultdict(list)
+        chunk_details = defaultdict(list)
+        
+        for stream in streams_chunk:
+            # Validate stream format
+            if not isinstance(stream, dict):
+                continue
+            
+            stream_name = stream.get('name', '')
+            stream_id = stream.get('id')
+            
+            if not stream_name or not stream_id:
+                continue
+            
+            # Skip dead streams if removal is enabled
+            stream_url = stream.get('url', '')
+            if dead_streams_tracker and dead_streams_tracker.is_dead(stream_url):
+                if dead_stream_removal_enabled:
+                    continue
+            
+            # Get stream's M3U account for filtering
+            stream_m3u_account = stream.get('m3u_account')
+            
+            # Find matching channels
+            matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
+            
+            for channel_id in matching_channels:
+                # Check if stream is already in this channel
+                if channel_id in channel_streams and stream_id not in channel_streams[channel_id]:
+                    chunk_assignments[channel_id].append(stream_id)
+                    chunk_details[channel_id].append({
+                        "stream_id": stream_id,
+                        "stream_name": stream_name
+                    })
+        
+        return chunk_assignments, chunk_details
+    
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, enable_parallel_regex: bool = True) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
@@ -887,6 +942,7 @@ class AutomatedStreamManager:
                    Used for manual/quick action triggers from the UI.
             skip_check_trigger: If True, don't trigger immediate stream quality check.
                    Used when the caller will handle the check itself (e.g., check_single_channel).
+            enable_parallel_regex: If True, use parallel regex matching for better performance (default: True).
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
@@ -1099,58 +1155,120 @@ class AutomatedStreamManager:
             
             start_time = time.time()
             
-            for stream in all_streams:
-                # Validate that stream is a dictionary before accessing attributes
-                if not isinstance(stream, dict):
-                    logger.warning(f"Invalid stream format encountered: {type(stream).__name__} - {stream}")
-                    continue
+            # Parallel Regex Matching Optimization
+            if enable_parallel_regex and total_streams > 1000:
+                import multiprocessing
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                
+                # Determine optimal worker count (use CPU cores, max 8)
+                num_workers = min(multiprocessing.cpu_count(), 8)
+                chunk_size = max(1000, total_streams // num_workers)
+                
+                # Split streams into chunks
+                chunks = [all_streams[i:i+chunk_size] 
+                          for i in range(0, total_streams, chunk_size)]
+                
+                logger.info(f"🚀 Using parallel regex matching: {num_workers} workers, {len(chunks)} chunks")
+                
+                # Process chunks in parallel
+                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    # Submit all chunks
+                    futures = {
+                        executor.submit(
+                            self._match_chunk,
+                            chunk,
+                            channel_streams,
+                            self.dead_streams_tracker,
+                            self._is_dead_stream_removal_enabled()
+                        ): idx
+                        for idx, chunk in enumerate(chunks)
+                    }
                     
-                stream_name = stream.get('name', '')
-                stream_id = stream.get('id')
+                    # Collect results as they complete
+                    for future in as_completed(futures):
+                        chunk_idx = futures[future]
+                        try:
+                            chunk_assignments, chunk_details = future.result()
+                            
+                            # Merge results
+                            for channel_id, stream_ids in chunk_assignments.items():
+                                assignments[channel_id].extend(stream_ids)
+                            
+                            for channel_id, details in chunk_details.items():
+                                assignment_details[channel_id].extend(details)
+                            
+                            # Update progress
+                            processed_count += len(chunks[chunk_idx])
+                            if processed_count - last_progress_log >= progress_interval:
+                                progress_pct = (processed_count / total_streams) * 100
+                                elapsed = time.time() - start_time
+                                rate = processed_count / elapsed if elapsed > 0 else 0
+                                eta = (total_streams - processed_count) / rate if rate > 0 else 0
+                                logger.info(f"📊 Progress: {progress_pct:.1f}% ({processed_count:,}/{total_streams:,}) | Rate: {rate:.0f} streams/sec | ETA: {eta:.0f}s")
+                                last_progress_log = processed_count
+                        
+                        except Exception as e:
+                            logger.error(f"Error processing chunk {chunk_idx}: {e}")
                 
-                if not stream_name or not stream_id:
-                    continue
-                
-                # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
-                # Dead streams should not be added to channels during subsequent matches
-                stream_url = stream.get('url', '')
-                if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                    # Check if dead stream removal is enabled
-                    dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
-                    if dead_stream_removal_enabled:
-                        logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
-                        continue
-                    else:
-                        logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
-                
-                # Get stream's m3u_account for M3U account filtering
-                stream_m3u_account = stream.get('m3u_account')
-                
-                # Find matching channels (with M3U account filtering if applicable)
-                matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
-                
-                for channel_id in matching_channels:
-                    # Check if stream is already in this channel
-                    if channel_id in channel_streams and stream_id not in channel_streams[channel_id]:
-                        assignments[channel_id].append(stream_id)
-                        assignment_details[channel_id].append({
-                            "stream_id": stream_id,
-                            "stream_name": stream_name
-                        })
-                
-                # Progress logging
-                processed_count += 1
-                if processed_count - last_progress_log >= progress_interval:
-                    progress_pct = (processed_count / total_streams) * 100
-                    elapsed = time.time() - start_time
-                    rate = processed_count / elapsed if elapsed > 0 else 0
-                    eta = (total_streams - processed_count) / rate if rate > 0 else 0
-                    logger.info(f"📊 Progress: {progress_pct:.1f}% ({processed_count:,}/{total_streams:,}) | Rate: {rate:.0f} streams/sec | ETA: {eta:.0f}s")
-                    last_progress_log = processed_count
+                # Final progress log
+                elapsed = time.time() - start_time
+                rate = total_streams / elapsed if elapsed > 0 else 0
+                logger.info(f"✅ Parallel stream discovery completed in {elapsed:.1f}s | Rate: {rate:.0f} streams/sec")
             
-            # Final progress log
-            elapsed = time.time() - start_time
-            logger.info(f"✅ Stream discovery completed in {elapsed:.1f}s | Processed {total_streams:,} streams")
+            else:
+                # Sequential processing (original logic)
+                for stream in all_streams:
+                    # Validate that stream is a dictionary before accessing attributes
+                    if not isinstance(stream, dict):
+                        logger.warning(f"Invalid stream format encountered: {type(stream).__name__} - {stream}")
+                        continue
+                        
+                    stream_name = stream.get('name', '')
+                    stream_id = stream.get('id')
+                    
+                    if not stream_name or not stream_id:
+                        continue
+                    
+                    # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
+                    # Dead streams should not be added to channels during subsequent matches
+                    stream_url = stream.get('url', '')
+                    if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                        # Check if dead stream removal is enabled
+                        dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+                        if dead_stream_removal_enabled:
+                            logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
+                            continue
+                        else:
+                            logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
+                    
+                    # Get stream's m3u_account for M3U account filtering
+                    stream_m3u_account = stream.get('m3u_account')
+                    
+                    # Find matching channels (with M3U account filtering if applicable)
+                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name, stream_m3u_account)
+                    
+                    for channel_id in matching_channels:
+                        # Check if stream is already in this channel
+                        if channel_id in channel_streams and stream_id not in channel_streams[channel_id]:
+                            assignments[channel_id].append(stream_id)
+                            assignment_details[channel_id].append({
+                                "stream_id": stream_id,
+                                "stream_name": stream_name
+                            })
+                    
+                    # Progress logging
+                    processed_count += 1
+                    if processed_count - last_progress_log >= progress_interval:
+                        progress_pct = (processed_count / total_streams) * 100
+                        elapsed = time.time() - start_time
+                        rate = processed_count / elapsed if elapsed > 0 else 0
+                        eta = (total_streams - processed_count) / rate if rate > 0 else 0
+                        logger.info(f"📊 Progress: {progress_pct:.1f}% ({processed_count:,}/{total_streams:,}) | Rate: {rate:.0f} streams/sec | ETA: {eta:.0f}s")
+                        last_progress_log = processed_count
+                
+                # Final progress log
+                elapsed = time.time() - start_time
+                logger.info(f"✅ Stream discovery completed in {elapsed:.1f}s | Processed {total_streams:,} streams")
             
             # Get stream checker service for account limits configuration
             stream_checker_service = None

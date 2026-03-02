@@ -154,6 +154,11 @@ class StreamCheckConfig:
             'try_full_profiles': True,  # Try full profiles in Phase 2 with intelligent polling
             'phase2_max_wait': 600,  # Maximum wait time in Phase 2 (seconds, default: 10 minutes)
             'phase2_poll_interval': 10  # Check for free profiles every X seconds (default: 10s)
+        },
+        'stream_check_immunity': {
+            'enabled': True,  # Enable stream check immunity (skip recently checked streams)
+            'duration_hours': 2,  # Duration in hours (default: 2 hours, 0 = disabled, max: 720 = 30 days)
+            'description': 'Prevents re-checking streams that were recently analyzed. Set to 0 to always check all streams.'
         }
     }
     
@@ -587,16 +592,58 @@ class ChannelUpdateTracker:
     def get_checked_stream_ids(self, channel_id: int) -> List[int]:
         """Get the list of stream IDs that have been checked for a channel.
         
+        Respects the stream_check_immunity configuration:
+        - If immunity is disabled (duration_hours = 0), returns empty list (all streams will be checked)
+        - If immunity is enabled, checks if the last check is within the immunity period
+        - If last check is older than immunity period, returns empty list (immunity expired)
+        
         Args:
             channel_id: The channel ID to query
             
         Returns:
-            List of stream IDs that have been checked (empty list if none or channel not tracked)
+            List of stream IDs that have been checked (empty list if none, immunity expired, or disabled)
         """
         with self.lock:
+            # Get immunity configuration
+            from stream_checker_service import get_stream_checker_service
+            try:
+                service = get_stream_checker_service()
+                immunity_config = service.config.get('stream_check_immunity', {})
+                immunity_enabled = immunity_config.get('enabled', True)
+                immunity_hours = immunity_config.get('duration_hours', 2)
+            except:
+                # Fallback to defaults if service not available
+                immunity_enabled = True
+                immunity_hours = 2
+            
+            # If immunity is disabled, always return empty list (check all streams)
+            if not immunity_enabled or immunity_hours == 0:
+                return []
+            
             channel_key = str(channel_id)
             if channel_key in self.updates.get('channels', {}):
-                return self.updates['channels'][channel_key].get('checked_stream_ids', [])
+                channel_info = self.updates['channels'][channel_key]
+                
+                # Check if immunity has expired
+                last_check = channel_info.get('last_check')
+                if last_check:
+                    from datetime import datetime
+                    try:
+                        last_check_time = datetime.fromisoformat(last_check)
+                        now = datetime.now()
+                        elapsed_hours = (now - last_check_time).total_seconds() / 3600
+                        
+                        # If immunity period has passed, return empty list
+                        if elapsed_hours >= immunity_hours:
+                            logger.debug(f"Channel {channel_id}: Immunity expired ({elapsed_hours:.1f}h >= {immunity_hours}h)")
+                            return []
+                        else:
+                            logger.debug(f"Channel {channel_id}: Immunity active ({elapsed_hours:.1f}h < {immunity_hours}h)")
+                    except:
+                        # If parsing fails, return empty list (check all streams)
+                        return []
+                
+                return channel_info.get('checked_stream_ids', [])
             return []
     
     def mark_channel_for_force_check(self, channel_id: int):

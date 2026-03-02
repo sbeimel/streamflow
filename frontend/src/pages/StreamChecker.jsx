@@ -617,10 +617,11 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-7">
+                <TabsList className="grid w-full grid-cols-8">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
                   <TabsTrigger value="multi-channel">Multi-Channel</TabsTrigger>
+                  <TabsTrigger value="immunity">Stream Immunity</TabsTrigger>
                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
                   <TabsTrigger value="account-limits">Account Limits</TabsTrigger>
                   <TabsTrigger value="stream-ordering">Stream Ordering</TabsTrigger>
@@ -842,6 +843,89 @@ export default function StreamChecker() {
                       </Alert>
                     </div>
                   )}
+                </TabsContent>
+
+                {/* Stream Check Immunity Tab */}
+                <TabsContent value="immunity" className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="immunity_enabled">Enable Stream Check Immunity</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Skip recently checked streams to avoid redundant quality checks
+                        </p>
+                      </div>
+                      <Switch
+                        id="immunity_enabled"
+                        checked={editedConfig?.stream_check_immunity?.enabled !== false}
+                        onCheckedChange={(checked) => updateConfigValue('stream_check_immunity.enabled', checked)}
+                        disabled={!configEditing}
+                      />
+                    </div>
+
+                    {editedConfig?.stream_check_immunity?.enabled !== false && (
+                      <>
+                        <div className="space-y-4 pt-4 border-t">
+                          <div className="space-y-2">
+                            <Label htmlFor="immunity_duration">Immunity Duration (hours)</Label>
+                            <Input
+                              id="immunity_duration"
+                              type="number"
+                              min="0"
+                              max="720"
+                              step="1"
+                              value={editedConfig?.stream_check_immunity?.duration_hours ?? 2}
+                              onChange={(e) => updateConfigValue('stream_check_immunity.duration_hours', parseInt(e.target.value) || 0)}
+                              disabled={!configEditing}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              How long to skip re-checking streams after they've been analyzed (0 = always check all streams, max: 720 hours / 30 days)
+                            </p>
+                          </div>
+                        </div>
+
+                        <Alert>
+                          <Info className="h-4 w-4" />
+                          <AlertTitle>How Stream Check Immunity Works</AlertTitle>
+                          <AlertDescription>
+                            <div className="space-y-2 mt-2">
+                              <p><strong>When Enabled (duration &gt; 0):</strong></p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li>Streams checked within the immunity period are skipped during automation</li>
+                                <li>Saves time by avoiding redundant quality checks</li>
+                                <li>Useful for frequent automation runs (hourly, daily)</li>
+                                <li>Example: 2 hours = streams checked in last 2 hours are skipped</li>
+                              </ul>
+                              
+                              <p className="mt-3"><strong>When Disabled (duration = 0):</strong></p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li>All streams are checked every time automation runs</li>
+                                <li>Recommended for infrequent automation (weekly, monthly)</li>
+                                <li>Ensures all streams are always up-to-date</li>
+                              </ul>
+                              
+                              <p className="mt-3"><strong>Bypassed By:</strong></p>
+                              <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li>Force Check button (always checks all streams)</li>
+                                <li>Test Streams Without Stats (only checks streams without stats)</li>
+                                <li>Manual channel checks from Channel Configuration</li>
+                              </ul>
+                            </div>
+                          </AlertDescription>
+                        </Alert>
+
+                        <div className="rounded-lg bg-muted p-4 space-y-2">
+                          <h4 className="font-medium text-sm">Recommended Settings</h4>
+                          <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                            <li><strong>Hourly automation:</strong> 2-4 hours (default: 2 hours)</li>
+                            <li><strong>Daily automation:</strong> 24-48 hours</li>
+                            <li><strong>Weekly automation:</strong> 168 hours (7 days) or 0 (disabled)</li>
+                            <li><strong>Monthly automation:</strong> 0 (disabled - always check all streams)</li>
+                          </ul>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </TabsContent>
 
                 {/* Stream Scoring Weights Tab */}
