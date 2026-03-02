@@ -563,10 +563,6 @@ export default function AutomationSettings() {
             </CardContent>
           </Card>
 
-<<<<<<< Updated upstream
-          {/* Save Button */}
-          <div className="flex justify-end">
-=======
           {/* Provider Diversification */}
           <Card>
             <CardHeader>
@@ -1029,7 +1025,6 @@ export default function AutomationSettings() {
           </Card>
 
           <div className="flex justify-end pt-4">
->>>>>>> Stashed changes
             <Button onClick={handleSave} disabled={saving} size="lg">
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Settings
