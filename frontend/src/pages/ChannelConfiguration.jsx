@@ -279,7 +279,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
         {expanded && (
           <div className="border-t p-4 bg-muted/50 space-y-4">
             {/* Channel Settings */}
-            <div className="grid grid-cols-3 gap-4 pb-4 border-b">
+            <div className="grid grid-cols-4 gap-4 pb-4 border-b">
               <div className="space-y-2">
                 <Label htmlFor={`matching-mode-${channel.id}`} className="text-sm font-medium">
                   Stream Matching
@@ -348,6 +348,26 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                 <p className="text-xs text-muted-foreground">
                   {getQualityPreferenceDescription(qualityPreference)}
                   {isQualityPrefInherited && ' (inherited from group)'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`priority-${channel.id}`} className="text-sm font-medium">
+                  Check Priority
+                </Label>
+                <Input
+                  id={`priority-${channel.id}`}
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={channelSettings?.priority ?? 50}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value) || 50
+                    onUpdateSettings(channel.id, { priority: Math.max(0, Math.min(100, value)) })
+                  }}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  0 = highest priority, 100 = lowest (default: 50)
                 </p>
               </div>
             </div>
