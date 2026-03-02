@@ -563,8 +563,473 @@ export default function AutomationSettings() {
             </CardContent>
           </Card>
 
+<<<<<<< Updated upstream
           {/* Save Button */}
           <div className="flex justify-end">
+=======
+          {/* Provider Diversification */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Provider Diversification</CardTitle>
+              <CardDescription>
+                Distribute streams across different providers for better redundancy and automatic failover
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="provider_diversification_enabled" className="text-base font-semibold cursor-pointer">
+                    Enable Provider Diversification
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Rotate streams between different M3U providers instead of using all streams from the highest-scored provider
+                  </p>
+                </div>
+                <Switch
+                  id="provider_diversification_enabled"
+                  checked={streamCheckerConfig?.stream_ordering?.provider_diversification ?? false}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('stream_ordering.provider_diversification', checked)}
+                />
+              </div>
+
+              {streamCheckerConfig?.stream_ordering?.provider_diversification && (
+                <div className="space-y-2">
+                  <Label htmlFor="diversification_mode">Diversification Mode</Label>
+                  <Select
+                    value={streamCheckerConfig?.stream_ordering?.diversification_mode || 'round_robin'}
+                    onValueChange={(value) => handleStreamCheckerConfigChange('stream_ordering.diversification_mode', value)}
+                  >
+                    <SelectTrigger id="diversification_mode">
+                      <SelectValue placeholder="Select mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="round_robin">Round Robin (A → B → C)</SelectItem>
+                      <SelectItem value="priority_weighted">Priority Weighted (Premium → Basic)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">
+                    Round Robin: Alphabetical provider rotation • Priority Weighted: M3U priority-based rotation
+                  </p>
+                </div>
+              )}
+
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Benefits</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside space-y-1 text-sm mt-2">
+                    <li><strong>Better redundancy:</strong> If one provider fails, others automatically take over</li>
+                    <li><strong>Load balancing:</strong> Distributes load across multiple providers</li>
+                    <li><strong>Automatic failover:</strong> Seamless switching when providers go down</li>
+                    <li><strong>Respects priorities:</strong> Priority Weighted mode honors M3U account priorities</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+
+          {/* Account Stream Limits */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Account Stream Limits</CardTitle>
+              <CardDescription>
+                Limit the number of streams per M3U account per channel to prevent overloading single providers
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="account_limits_enabled" className="text-base font-semibold cursor-pointer">
+                    Enable Account Stream Limits
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Set maximum number of streams each M3U account can provide per channel
+                  </p>
+                </div>
+                <Switch
+                  id="account_limits_enabled"
+                  checked={streamCheckerConfig?.account_stream_limits?.enabled ?? false}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('account_stream_limits.enabled', checked)}
+                />
+              </div>
+
+              {streamCheckerConfig?.account_stream_limits?.enabled && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="global_limit">Global Limit (Default for all accounts)</Label>
+                    <Input
+                      id="global_limit"
+                      type="number"
+                      min="0"
+                      placeholder="5"
+                      value={streamCheckerConfig?.account_stream_limits?.global_limit ?? 5}
+                      onChange={(e) => handleStreamCheckerConfigChange('account_stream_limits.global_limit', parseInt(e.target.value) || 0)}
+                      className="max-w-[120px]"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      0 = unlimited • Positive number = max streams per channel per account
+                    </p>
+                  </div>
+
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Per-Account Limits:</strong> To set specific limits for individual accounts, edit the config file directly:
+                      <code className="block mt-2 p-2 bg-muted rounded text-xs">
+                        "account_limits": {"{"}
+                        "1": 3, "2": 10, "3": 0
+                        {"}"}
+                      </code>
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Use Cases</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside space-y-1 text-sm mt-2">
+                    <li><strong>Bandwidth management:</strong> Prevent single accounts from using too much bandwidth</li>
+                    <li><strong>Cost control:</strong> Limit expensive premium accounts</li>
+                    <li><strong>Load balancing:</strong> Force distribution across multiple providers</li>
+                    <li><strong>Provider weighting:</strong> Give premium accounts higher limits</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+
+          {/* Profile Failover v2.0 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Profile Failover v2.0 (Intelligent Polling)</CardTitle>
+              <CardDescription>
+                Smart profile switching with active polling instead of blind waiting
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="profile_failover_enabled" className="text-base font-semibold cursor-pointer">
+                    Enable Profile Failover
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically try alternative profiles when the preferred profile is busy
+                  </p>
+                </div>
+                <Switch
+                  id="profile_failover_enabled"
+                  checked={streamCheckerConfig?.profile_failover?.enabled ?? true}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('profile_failover.enabled', checked)}
+                />
+              </div>
+
+              {streamCheckerConfig?.profile_failover?.enabled && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="phase2_max_wait">Phase 2 Max Wait (seconds)</Label>
+                    <Input
+                      id="phase2_max_wait"
+                      type="number"
+                      min="60"
+                      max="3600"
+                      placeholder="600"
+                      value={streamCheckerConfig?.profile_failover?.phase2_max_wait ?? 600}
+                      onChange={(e) => handleStreamCheckerConfigChange('profile_failover.phase2_max_wait', parseInt(e.target.value) || 600)}
+                      className="max-w-[120px]"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Maximum time to wait for a profile to become available (default: 600s)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="phase2_poll_interval">Phase 2 Poll Interval (seconds)</Label>
+                    <Input
+                      id="phase2_poll_interval"
+                      type="number"
+                      min="5"
+                      max="60"
+                      placeholder="10"
+                      value={streamCheckerConfig?.profile_failover?.phase2_poll_interval ?? 10}
+                      onChange={(e) => handleStreamCheckerConfigChange('profile_failover.phase2_poll_interval', parseInt(e.target.value) || 10)}
+                      className="max-w-[120px]"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      How often to check if profile is available (default: 10s)
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>How It Works</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside space-y-1 text-sm mt-2">
+                    <li><strong>Phase 1:</strong> Try preferred profile immediately</li>
+                    <li><strong>Phase 2:</strong> If busy, poll every 10s instead of waiting blindly</li>
+                    <li><strong>Smart polling:</strong> Test profile as soon as it becomes available</li>
+                    <li><strong>Fair distribution:</strong> Multiple streams share polling fairly</li>
+                    <li><strong>Auto-terminate:</strong> Stops after max wait time</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+
+          {/* Multi-Channel Parallel Processing */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Multi-Channel Parallel Processing</CardTitle>
+              <CardDescription>
+                Check multiple channels simultaneously for better performance
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
+                <div className="flex-1 space-y-1">
+                  <Label htmlFor="multi_channel_enabled" className="text-base font-semibold cursor-pointer">
+                    Enable Multi-Channel Processing
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Process multiple channels simultaneously instead of one at a time
+                  </p>
+                </div>
+                <Switch
+                  id="multi_channel_enabled"
+                  checked={streamCheckerConfig?.concurrent_streams?.multi_channel_enabled ?? false}
+                  onCheckedChange={(checked) => 
+                    handleStreamCheckerConfigChange('concurrent_streams.multi_channel_enabled', checked)
+                  }
+                />
+              </div>
+
+              {streamCheckerConfig?.concurrent_streams?.multi_channel_enabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="max_concurrent_channels">Max Concurrent Channels</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="max_concurrent_channels"
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={streamCheckerConfig?.concurrent_streams?.max_concurrent_channels ?? 5}
+                      onChange={(e) => 
+                        handleStreamCheckerConfigChange(
+                          'concurrent_streams.max_concurrent_channels', 
+                          parseInt(e.target.value) || 5
+                        )
+                      }
+                      className="max-w-[120px]"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const globalLimit = streamCheckerConfig?.concurrent_streams?.global_limit ?? 10;
+                        const autoValue = globalLimit === 0 ? 10 : Math.min(Math.max(1, Math.floor(globalLimit / 4)), 20);
+                        handleStreamCheckerConfigChange('concurrent_streams.max_concurrent_channels', autoValue);
+                      }}
+                    >
+                      Auto
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Maximum number of channels to check simultaneously (1-20). Click "Auto" to calculate based on Global Limit.
+                  </p>
+                </div>
+              )}
+
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>How It Works</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc list-inside space-y-1 text-sm mt-2">
+                    <li><strong>Disabled:</strong> Checks one channel at a time (current behavior)</li>
+                    <li><strong>Enabled:</strong> Checks multiple channels simultaneously</li>
+                    <li><strong>Dynamic:</strong> Starts new channels as soon as others finish</li>
+                    <li><strong>Respects Limits:</strong> Global stream limit is shared across all channels</li>
+                    <li><strong>Better Performance:</strong> Small channels don't block large ones</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+
+          {/* M3U Account Priority Management */}
+          <Card>
+            <CardHeader>
+              <CardTitle>M3U Account Priority</CardTitle>
+              <CardDescription>
+                Set priority values for M3U accounts. Higher values = higher priority. Drag to reorder or set custom values.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* DEBUG INFO */}
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Debug Info</AlertTitle>
+                <AlertDescription>
+                  M3U Accounts loaded: {m3uAccounts.length} accounts found
+                  {m3uAccounts.length > 0 && (
+                    <div className="mt-2">
+                      Accounts: {m3uAccounts.map(a => a.name || a.username || a.id).join(', ')}
+                    </div>
+                  )}
+                </AlertDescription>
+              </Alert>
+              
+              {m3uAccounts.length === 0 ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    No M3U accounts found. Add M3U accounts in Dispatcharr first.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Reorder accounts or set custom priority values (0-100). Higher priority accounts are preferred for stream selection.
+                  </p>
+                  
+                  <div className="space-y-2">
+                    {m3uAccounts
+                      .sort((a, b) => (b.priority || 50) - (a.priority || 50))
+                      .map((account, index) => (
+                        <div key={account.id} className="flex items-center gap-2 p-3 border rounded-lg bg-background">
+                          <div className="flex flex-col gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              disabled={index === 0}
+                              onClick={async () => {
+                                try {
+                                  const currentPriority = account.priority || 50
+                                  const abovePriority = m3uAccounts
+                                    .sort((a, b) => (b.priority || 50) - (a.priority || 50))
+                                    [index - 1]?.priority || 50
+                                  const newPriority = abovePriority + 1
+                                  
+                                  await m3uAPI.updateAccountPriority(account.id, { priority: newPriority })
+                                  await loadConfig()
+                                  
+                                  toast({
+                                    title: "Success",
+                                    description: `Updated priority for ${account.name || account.username || `Account ${account.id}`}`,
+                                  })
+                                } catch (err) {
+                                  toast({
+                                    title: "Error",
+                                    description: "Failed to update priority",
+                                    variant: "destructive"
+                                  })
+                                }
+                              }}
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              disabled={index === m3uAccounts.length - 1}
+                              onClick={async () => {
+                                try {
+                                  const currentPriority = account.priority || 50
+                                  const belowPriority = m3uAccounts
+                                    .sort((a, b) => (b.priority || 50) - (a.priority || 50))
+                                    [index + 1]?.priority || 50
+                                  const newPriority = belowPriority - 1
+                                  
+                                  await m3uAPI.updateAccountPriority(account.id, { priority: newPriority })
+                                  await loadConfig()
+                                  
+                                  toast({
+                                    title: "Success",
+                                    description: `Updated priority for ${account.name || account.username || `Account ${account.id}`}`,
+                                  })
+                                } catch (err) {
+                                  toast({
+                                    title: "Error",
+                                    description: "Failed to update priority",
+                                    variant: "destructive"
+                                  })
+                                }
+                              }}
+                            >
+                              <ArrowDown className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          
+                          <div className="flex-1">
+                            <Label className="font-medium">
+                              {account.name || account.username || `Account ${account.id}`}
+                            </Label>
+                            <p className="text-xs text-muted-foreground">
+                              ID: {account.id} • {account.enabled ? 'Enabled' : 'Disabled'}
+                            </p>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <Label htmlFor={`priority-${account.id}`} className="text-sm whitespace-nowrap">
+                              Priority:
+                            </Label>
+                            <Input
+                              id={`priority-${account.id}`}
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={account.priority || 50}
+                              onChange={async (e) => {
+                                const newPriority = parseInt(e.target.value) || 50
+                                try {
+                                  await m3uAPI.updateAccountPriority(account.id, { priority: newPriority })
+                                  await loadConfig()
+                                  
+                                  toast({
+                                    title: "Success",
+                                    description: `Set priority to ${newPriority}`,
+                                  })
+                                } catch (err) {
+                                  toast({
+                                    title: "Error",
+                                    description: "Failed to update priority",
+                                    variant: "destructive"
+                                  })
+                                }
+                              }}
+                              className="w-20"
+                            />
+                          </div>
+                          
+                          <Badge variant={account.priority >= 75 ? "default" : account.priority >= 50 ? "secondary" : "outline"}>
+                            {account.priority >= 75 ? "High" : account.priority >= 50 ? "Medium" : "Low"}
+                          </Badge>
+                        </div>
+                      ))}
+                  </div>
+                  
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Priority Ranges</AlertTitle>
+                    <AlertDescription>
+                      <ul className="list-disc list-inside space-y-1 text-sm mt-2">
+                        <li><strong>75-100:</strong> High priority (Premium providers)</li>
+                        <li><strong>50-74:</strong> Medium priority (Standard providers)</li>
+                        <li><strong>0-49:</strong> Low priority (Backup/Test providers)</li>
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end pt-4">
+>>>>>>> Stashed changes
             <Button onClick={handleSave} disabled={saving} size="lg">
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Settings

@@ -1,0 +1,108 @@
+diff --git a/backend/stream_checker_service.py b/backend/stream_checker_service.py
+index 1234567..abcdefg 100644
+--- a/backend/stream_checker_service.py
++++ b/backend/stream_checker_service.py
+@@ -130,7 +130,9 @@ class StreamCheckerService:
+             'max_channels_per_run': 50  # limit channels per check cycle
+         },
+         'concurrent_streams': {
+             'global_limit': 10,  # Maximum concurrent stream checks globally (0 = unlimited)
+             'enabled': True,  # Enable concurrent checking via Celery
+-            'stagger_delay': 1.0  # Delay in seconds between dispatching tasks to prevent simultaneous starts
++            'stagger_delay': 1.0,  # Delay in seconds between dispatching tasks to prevent simultaneous starts
++            'multi_channel_enabled': False,  # Enable multi-channel parallel processing
++            'max_concurrent_channels': 5  # Maximum channels to check simultaneously (when multi_channel_enabled=True)
+         },
+         'dead_stream_handling': {
+             'enabled': True,  # Enable dead stream removal
+
+diff --git a/frontend/src/pages/AutomationSettings.jsx b/frontend/src/pages/AutomationSettings.jsx
+index 1234567..abcdefg 100644
+--- a/frontend/src/pages/AutomationSettings.jsx
++++ b/frontend/src/pages/AutomationSettings.jsx
+@@ -583,6 +583,68 @@ export default function AutomationSettings() {
+             </CardContent>
+           </Card>
+ 
++          {/* Multi-Channel Parallel Processing */}
++          <Card>
++            <CardHeader>
++              <CardTitle>Multi-Channel Parallel Processing</CardTitle>
++              <CardDescription>
++                Check multiple channels simultaneously for better performance
++              </CardDescription>
++            </CardHeader>
++            <CardContent className="space-y-4">
++              <div className="flex items-start justify-between space-x-4 rounded-lg border p-4">
++                <div className="flex-1 space-y-1">
++                  <Label htmlFor="multi_channel_enabled" className="text-base font-semibold cursor-pointer">
++                    Enable Multi-Channel Processing
++                  </Label>
++                  <p className="text-sm text-muted-foreground">
++                    Process multiple channels simultaneously instead of one at a time
++                  </p>
++                </div>
++                <Switch
++                  id="multi_channel_enabled"
++                  checked={streamCheckerConfig?.concurrent_streams?.multi_channel_enabled ?? false}
++                  onCheckedChange={(checked) => 
++                    handleStreamCheckerConfigChange('concurrent_streams.multi_channel_enabled', checked)
++                  }
++                />
++              </div>
++
++              {streamCheckerConfig?.concurrent_streams?.multi_channel_enabled && (
++                <div className="space-y-2">
++                  <Label htmlFor="max_concurrent_channels">Max Concurrent Channels</Label>
++                  <div className="flex items-center gap-2">
++                    <Input
++                      id="max_concurrent_channels"
++                      type="number"
++                      min="1"
++                      max="20"
++                      value={streamCheckerConfig?.concurrent_streams?.max_concurrent_channels ?? 5}
++                      onChange={(e) => 
++                        handleStreamCheckerConfigChange(
++                          'concurrent_streams.max_concurrent_channels', 
++                          parseInt(e.target.value) || 5
++                        )
++                      }
++                      className="max-w-[120px]"
++                    />
++                    <Button
++                      variant="outline"
++                      size="sm"
++                      onClick={() => {
++                        const globalLimit = streamCheckerConfig?.concurrent_streams?.global_limit ?? 10;
++                        const autoValue = globalLimit === 0 ? 10 : Math.min(Math.max(1, Math.floor(globalLimit / 4)), 20);
++                        handleStreamCheckerConfigChange('concurrent_streams.max_concurrent_channels', autoValue);
++                      }}
++                    >
++                      Auto
++                    </Button>
++                  </div>
++                  <p className="text-sm text-muted-foreground">
++                    Maximum number of channels to check simultaneously (1-20). Click "Auto" to calculate based on Global Limit.
++                  </p>
++                </div>
++              )}
++
++              <Alert>
++                <AlertCircle className="h-4 w-4" />
++                <AlertTitle>How It Works</AlertTitle>
++                <AlertDescription>
++                  <ul className="list-disc list-inside space-y-1 text-sm mt-2">
++                    <li><strong>Disabled:</strong> Checks one channel at a time (current behavior)</li>
++                    <li><strong>Enabled:</strong> Checks multiple channels simultaneously</li>
++                    <li><strong>Dynamic:</strong> Starts new channels as soon as others finish</li>
++                    <li><strong>Respects Limits:</strong> Global stream limit is shared across all channels</li>
++                    <li><strong>Better Performance:</strong> Small channels don't block large ones</li>
++                  </ul>
++                </AlertDescription>
++              </Alert>
++            </CardContent>
++          </Card>
++
+           {/* M3U Account Priority Management */}
+           <Card>
+             <CardHeader>

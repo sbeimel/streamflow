@@ -6,6 +6,7 @@ REM This script applies all StreamFlow enhancements including:
 REM - HTTP Proxy Support for M3U Accounts
 REM - Channel Quality Preferences
 REM - Account Stream Limits for Channel Assignment
+REM - Multi-Channel Parallel Processing
 
 echo 🚀 StreamFlow Enhancements Application Script
 echo ==============================================
@@ -106,6 +107,7 @@ echo 📋 Applied Features:
 echo    ✅ HTTP Proxy Support for M3U Accounts
 echo    ✅ Channel Quality Preferences ^(4K control per channel^)
 echo    ✅ Account Stream Limits for Channel Assignment
+echo    ✅ Multi-Channel Parallel Processing
 echo.
 echo 🔄 Next Steps:
 echo    1. Restart your StreamFlow backend service
@@ -119,6 +121,7 @@ echo 📚 Documentation:
 echo    - HTTP Proxy: streamflow-dev\STREAMFLOW_HTTP_PROXY_PATCH_README.md
 echo    - Quality Preferences: streamflow-dev\CHANNEL_QUALITY_PREFERENCES_README.md
 echo    - Account Limits: streamflow-dev\ACCOUNT_STREAM_LIMITS_README.md
+echo    - Multi-Channel Processing: MULTI_CHANNEL_PARALLEL_IMPLEMENTATION.md
 echo.
 echo 💾 Backup Location: %BACKUP_DIR%
 echo.
