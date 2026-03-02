@@ -416,7 +416,17 @@ export default function Dashboard() {
                 <dt className="text-muted-foreground">Update Interval:</dt>
                 <dd>
                   <Badge variant="secondary">
-                    {status?.config?.playlist_update_interval_minutes ? `${status.config.playlist_update_interval_minutes}m` : 'N/A'}
+                    {(() => {
+                      const interval = status?.config?.playlist_update_interval_minutes
+                      // Handle case where interval might be an object (malformed config)
+                      if (typeof interval === 'number') {
+                        return `${interval}m`
+                      } else if (typeof interval === 'object' && interval !== null) {
+                        // Try to extract value from object
+                        return interval.value ? `${interval.value}m` : 'N/A'
+                      }
+                      return 'N/A'
+                    })()}
                   </Badge>
                 </dd>
               </div>
