@@ -3060,15 +3060,13 @@ class StreamCheckerService:
         if udi and stream.get('m3u_account'):
             available_profiles = udi.get_all_available_profiles_for_stream(stream)
         
-        # If no profiles available, use standard analysis (no profile failover)
-        if not available_profiles:
+        # If no profiles or custom stream, use standard analysis
+        if not available_profiles and not stream.get('m3u_account'):
             stream_url = stream.get('url', '')
             if udi:
                 stream_url = udi.apply_profile_url_transformation(stream)
             
             proxy = get_stream_proxy(stream_id)
-            
-            logger.debug(f"Stream {stream_id} ({stream_name}): No profiles available, using standard analysis")
             
             return analyze_stream(
                 stream_url=stream_url,
