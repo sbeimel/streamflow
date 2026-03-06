@@ -87,6 +87,75 @@ static_folder = Path(__file__).parent / 'static'
 app = Flask(__name__, static_folder=None)
 CORS(app)  # Enable CORS for React frontend
 
+# Auto-start services when app is loaded (works with both Flask dev server and Gunicorn)
+def _auto_start_services():
+    """Auto-start services when the application loads."""
+    try:
+        # Check if wizard has been completed
+        if not check_wizard_complete():
+            logger.info("Wizard not complete - services will not auto-start")
+            return
+        
+        # Auto-start stream checker service
+        try:
+            service = get_stream_checker_service()
+            automation_controls = service.config.get('automation_controls', {})
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', True) or
+                automation_controls.get('auto_stream_matching', True) or
+                automation_controls.get('auto_quality_checking', True) or
+                automation_controls.get('scheduled_global_action', False)
+            )
+            
+            if not any_automation_enabled:
+                logger.info("Stream checker service is disabled (all automation controls disabled)")
+            elif service.config.get('enabled', True):
+                service.start()
+                logger.info("Stream checker service auto-started")
+            else:
+                logger.info("Stream checker service is disabled in configuration")
+        except Exception as e:
+            logger.error(f"Failed to auto-start stream checker service: {e}")
+        
+        # Auto-start automation service
+        try:
+            manager = get_automation_manager()
+            automation_controls = manager.config.get('automation_controls', {})
+            any_automation_enabled = (
+                automation_controls.get('auto_m3u_updates', True) or
+                automation_controls.get('auto_stream_matching', True) or
+                automation_controls.get('auto_quality_checking', True)
+            )
+            
+            if not any_automation_enabled:
+                logger.info("Automation service is disabled (all automation controls disabled)")
+            else:
+                manager.start_automation()
+                logger.info("Automation service auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start automation service: {e}")
+        
+        # Auto-start scheduled event processor
+        try:
+            start_scheduled_event_processor()
+            logger.info("Scheduled event processor auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start scheduled event processor: {e}")
+        
+        # Auto-start EPG refresh processor
+        try:
+            start_epg_refresh_processor()
+            logger.info("EPG refresh processor auto-started")
+        except Exception as e:
+            logger.error(f"Failed to auto-start EPG refresh processor: {e}")
+    
+    except Exception as e:
+        logger.error(f"Failed to auto-start services: {e}")
+
+# Call auto-start when module is loaded (works with Gunicorn)
+_auto_start_services()
+
+
 # Global instances
 automation_manager = None
 regex_matcher = None
