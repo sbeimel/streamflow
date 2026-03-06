@@ -954,6 +954,12 @@ class AutomatedStreamManager:
             
             logger.info("Starting stream discovery and assignment...")
             
+            # IMPORTANT: Refresh UDI cache to get latest channel-stream assignments
+            # This prevents duplicate stream assignments when discover is called multiple times
+            udi = get_udi_manager()
+            logger.debug("Refreshing UDI cache to get latest channel-stream assignments...")
+            udi.refresh_channels()
+            
             # Get all available streams (don't log, we already logged during refresh)
             all_streams = get_streams(log_result=False)
             if not all_streams:
@@ -1061,8 +1067,7 @@ class AutomatedStreamManager:
             else:
                 logger.warning("Could not fetch M3U accounts, using all streams")
             
-            # Get all channels from UDI
-            udi = get_udi_manager()
+            # Get all channels from UDI (already initialized and refreshed above)
             all_channels = udi.get_channels()
             if not all_channels:
                 logger.warning("No channels found")

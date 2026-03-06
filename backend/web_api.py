@@ -3684,8 +3684,7 @@ def test_all_m3u_streams(account_id):
                         retry_delay=config.get('retry_delay', 10),
                         user_agent=config.get('user_agent', 'VLC/3.0.14'),
                         stream_startup_buffer=config.get('stream_startup_buffer', 10),
-                        proxy=config.get('http_proxy'),
-                        use_cache=True
+                        proxy=config.get('http_proxy')
                     )
                     
                     tested_count += 1
