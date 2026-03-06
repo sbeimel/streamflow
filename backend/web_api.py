@@ -3756,7 +3756,13 @@ def discover_and_test_m3u(account_id):
         logger.info(f"Running stream discovery for M3U account {account_id}")
         assignment_count = automation.discover_and_assign_streams(m3u_account_id=account_id)
         
-        # Get UDI manager to find assigned streams (even if no NEW streams were assigned)
+        if not assignment_count:
+            return jsonify({
+                "message": "Stream discovery completed but no new streams were assigned",
+                "status": "completed"
+            })
+        
+        # Get UDI manager to find assigned streams
         udi = get_udi_manager()
         
         # Get all channels
@@ -3796,21 +3802,12 @@ def discover_and_test_m3u(account_id):
                 channels_affected.add(channel_id)
         
         if not streams_to_test:
-            # Check if discovery assigned any new streams
-            if assignment_count:
-                return jsonify({
-                    "message": f"Stream discovery assigned {sum(assignment_count.values())} new stream(s), but no streams from M3U account {account_id} are currently in channels",
-                    "streams_found": 0,
-                    "channels_affected": 0,
-                    "status": "completed"
-                })
-            else:
-                return jsonify({
-                    "message": f"No streams from M3U account {account_id} found in any channels",
-                    "streams_found": 0,
-                    "channels_affected": 0,
-                    "status": "completed"
-                })
+            return jsonify({
+                "message": f"Stream discovery completed, but no streams from M3U account {account_id} were assigned to channels",
+                "streams_found": 0,
+                "channels_affected": 0,
+                "status": "completed"
+            })
         
         # Mark channels for checking with M3U filter (bypasses immunity and filters by M3U account)
         # This ensures only streams from the specified M3U account are tested
@@ -3824,17 +3821,10 @@ def discover_and_test_m3u(account_id):
         # Trigger immediate check
         service.trigger_check_updated_channels()
         
-        # Build response message
-        if assignment_count:
-            message = f"Discovery assigned {sum(assignment_count.values())} new stream(s). Queued {len(streams_to_test)} stream(s) from M3U account {account_id} for testing"
-        else:
-            message = f"No new streams assigned. Queued {len(streams_to_test)} existing stream(s) from M3U account {account_id} for testing"
-        
         return jsonify({
-            "message": message,
+            "message": f"Discovery completed. Queued {len(streams_to_test)} stream(s) from M3U account {account_id} for testing",
             "streams_found": len(streams_to_test),
             "channels_affected": len(channels_affected),
-            "new_streams_assigned": sum(assignment_count.values()) if assignment_count else 0,
             "status": "queued",
             "description": f"Testing streams from {len(channels_affected)} channel(s)"
         })
