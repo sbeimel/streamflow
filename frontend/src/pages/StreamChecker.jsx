@@ -709,14 +709,14 @@ export default function StreamChecker() {
                       <Input
                         id="retries"
                         type="number"
-                        value={editedConfig?.stream_analysis?.retries ?? 1}
-                        onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value) || 0)}
+                        value={editedConfig?.stream_analysis?.retries || 1}
+                        onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value))}
                         disabled={!configEditing}
                         min={0}
                         max={5}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Number of retry attempts for failed streams (0 = no retries, recommended with Profile Failover)
+                        Number of retry attempts for failed streams
                       </p>
                     </div>
 
