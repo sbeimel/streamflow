@@ -1360,7 +1360,6 @@ class StreamCheckerService:
             if original_limits_enabled:
                 logger.info("Temporarily disabling account limits to test ALL streams...")
                 account_limits_config['enabled'] = False
-                self.config['account_stream_limits'] = account_limits_config
             
             # Step 1: Refresh UDI cache to ensure we have current data from Dispatcharr
             logger.info("Step 1/7: Refreshing UDI cache...")
@@ -1439,7 +1438,6 @@ class StreamCheckerService:
             if original_limits_enabled:
                 logger.info("Step 7/7: Re-enabling account limits (will be applied as channels complete)...")
                 account_limits_config['enabled'] = True
-                self.config['account_stream_limits'] = account_limits_config
                 logger.info("✓ Account limits re-enabled - will be applied based on NEW quality scores")
             else:
                 logger.info("Step 7/7: Account limits remain disabled (were not enabled before)")
@@ -1456,8 +1454,10 @@ class StreamCheckerService:
             logger.error(f"Error performing global action: {e}", exc_info=True)
             # Restore original limits setting on error
             if 'original_limits_enabled' in locals() and original_limits_enabled:
-                account_limits_config['enabled'] = True
-                self.config['account_stream_limits'] = account_limits_config
+                try:
+                    account_limits_config['enabled'] = True
+                except:
+                    pass
         finally:
             # Always clear the flag, even if there was an error
             self.global_action_in_progress = False

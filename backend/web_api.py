@@ -3347,7 +3347,6 @@ def test_streams_without_stats():
         if original_limits_enabled:
             logger.info("Step 1/4: Temporarily disabling account limits to test ALL streams...")
             account_limits_config['enabled'] = False
-            service.config['account_stream_limits'] = account_limits_config
         else:
             logger.info("Step 1/4: Account limits already disabled")
         
@@ -3471,7 +3470,6 @@ def test_streams_without_stats():
             # Re-enable limits even if no streams to test
             if original_limits_enabled:
                 account_limits_config['enabled'] = True
-                service.config['account_stream_limits'] = account_limits_config
             
             return jsonify({
                 "message": "No streams without stats or incomplete stats found",
@@ -3496,7 +3494,6 @@ def test_streams_without_stats():
         if original_limits_enabled:
             logger.info("Re-enabling account limits (will be applied as channels complete)...")
             account_limits_config['enabled'] = True
-            service.config['account_stream_limits'] = account_limits_config
             logger.info("✓ Account limits re-enabled - will be applied based on NEW quality scores")
         
         logger.info("=" * 80)
@@ -3521,7 +3518,6 @@ def test_streams_without_stats():
         try:
             if 'original_limits_enabled' in locals() and original_limits_enabled:
                 account_limits_config['enabled'] = True
-                service.config['account_stream_limits'] = account_limits_config
         except:
             pass
         return jsonify({"error": str(e)}), 500
