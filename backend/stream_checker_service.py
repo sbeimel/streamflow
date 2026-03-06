@@ -2140,6 +2140,8 @@ class StreamCheckerService:
             
             # Get configuration for analysis
             analysis_params = self.config.get('stream_analysis', {})
+            logger.info(f"Stream analysis config: ffmpeg_duration={analysis_params.get('ffmpeg_duration', 'NOT SET')}, timeout={analysis_params.get('timeout', 'NOT SET')}")
+            
             global_limit = self.config.get('concurrent_streams.global_limit', 10)
             stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
             
