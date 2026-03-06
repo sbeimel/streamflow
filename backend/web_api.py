@@ -3618,6 +3618,206 @@ def test_m3u_account_streams(account_id):
         logger.error(f"Error testing M3U account streams: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/stream-checker/test-all-m3u-streams/<int:account_id>', methods=['POST'])
+def test_all_m3u_streams(account_id):
+    """Test ALL streams from a specific M3U account (regardless of channel assignment).
+    
+    This endpoint:
+    - Tests all streams from the M3U account directly
+    - Does NOT require streams to be assigned to channels
+    - Bypasses stream check immunity
+    - Useful for testing a new provider before assignment
+    
+    Args:
+        account_id: The M3U account ID to test
+    """
+    try:
+        from udi.manager import get_udi_manager
+        from stream_check_utils import check_stream_quality
+        
+        udi = get_udi_manager()
+        
+        # Get all streams from this M3U account
+        all_streams = udi.get_streams()
+        account_streams = [s for s in all_streams if s.get('m3u_account') == account_id]
+        
+        if not account_streams:
+            return jsonify({
+                "message": f"No streams found for M3U account {account_id}",
+                "streams_found": 0,
+                "streams_tested": 0
+            })
+        
+        # Start stream checker service if not running
+        service = get_stream_checker_service()
+        if not service.running:
+            service.start()
+            logger.info(f"Started stream checker service for M3U account {account_id} testing")
+        
+        # Test each stream directly (without immunity)
+        tested_count = 0
+        results = []
+        
+        for stream in account_streams[:50]:  # Limit to first 50 streams for safety
+            stream_id = stream.get('id')
+            stream_url = stream.get('url')
+            stream_name = stream.get('name', 'Unknown')
+            
+            if not stream_url:
+                continue
+            
+            try:
+                # Check stream quality directly
+                result = check_stream_quality(
+                    stream_url=stream_url,
+                    stream_name=stream_name,
+                    config=service.config.get('stream_analysis', {}),
+                    user_agent=service.config.get('stream_analysis', {}).get('user_agent', 'VLC/3.0.14')
+                )
+                
+                # Update stream stats in UDI
+                if result.get('success'):
+                    udi.update_stream_stats(stream_id, result)
+                    tested_count += 1
+                    results.append({
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'status': 'success',
+                        'resolution': result.get('resolution'),
+                        'bitrate': result.get('bitrate')
+                    })
+                else:
+                    results.append({
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'status': 'failed',
+                        'error': result.get('error')
+                    })
+            except Exception as e:
+                logger.error(f"Error testing stream {stream_id}: {e}")
+                results.append({
+                    'stream_id': stream_id,
+                    'stream_name': stream_name,
+                    'status': 'error',
+                    'error': str(e)
+                })
+        
+        return jsonify({
+            "message": f"Tested {tested_count} stream(s) from M3U account {account_id}",
+            "streams_found": len(account_streams),
+            "streams_tested": tested_count,
+            "results": results[:10],  # Return first 10 results
+            "status": "completed"
+        })
+    
+    except Exception as e:
+        logger.error(f"Error testing all M3U streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/stream-checker/discover-and-test-m3u/<int:account_id>', methods=['POST'])
+def discover_and_test_m3u(account_id):
+    """Discover streams for channels, then test only assigned streams from M3U account.
+    
+    This endpoint:
+    1. Runs stream discovery to assign streams to channels
+    2. Tests only streams from this M3U account that got assigned
+    3. Bypasses stream check immunity
+    4. Useful for testing a provider after automatic assignment
+    
+    Args:
+        account_id: The M3U account ID to discover and test
+    """
+    try:
+        from automated_stream_manager import get_automated_stream_manager
+        
+        # Get automation manager
+        automation = get_automated_stream_manager()
+        
+        # Run stream discovery (this assigns streams to channels)
+        logger.info(f"Running stream discovery for M3U account {account_id}")
+        success, error = automation.discover_and_assign_streams()
+        
+        if not success:
+            return jsonify({
+                "error": f"Stream discovery failed: {error}",
+                "status": "failed"
+            }), 500
+        
+        # Now test the assigned streams from this M3U account
+        service = get_stream_checker_service()
+        
+        # Start stream checker if not running
+        if not service.running:
+            service.start()
+            logger.info(f"Started stream checker service for M3U account {account_id} testing")
+        
+        # Get UDI manager to find assigned streams
+        from udi.manager import get_udi_manager
+        udi = get_udi_manager()
+        
+        # Get all channels
+        channels = udi.get_channels()
+        streams_to_test = []
+        channels_affected = set()
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+            
+            # Get streams for this channel
+            streams = udi.get_channel_streams(channel_id)
+            if not streams:
+                continue
+            
+            # Find streams from the specified M3U account
+            for stream in streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                # Get full stream data
+                stream_data = udi.get_stream_by_id(stream_id)
+                if not stream_data:
+                    continue
+                
+                # Check if stream belongs to the specified M3U account
+                if stream_data.get('m3u_account') != account_id:
+                    continue
+                
+                streams_to_test.append({
+                    'stream_id': stream_id,
+                    'channel_id': channel_id
+                })
+                channels_affected.add(channel_id)
+        
+        if not streams_to_test:
+            return jsonify({
+                "message": f"Stream discovery completed, but no streams from M3U account {account_id} were assigned to channels",
+                "streams_found": 0,
+                "channels_affected": 0,
+                "status": "completed"
+            })
+        
+        # Queue channels for checking with force_check flag (bypasses immunity)
+        for channel_id in channels_affected:
+            service.queue_channel(channel_id, priority=20, force_check=True)
+        
+        return jsonify({
+            "message": f"Discovery completed. Queued {len(streams_to_test)} stream(s) from M3U account {account_id} for testing",
+            "streams_found": len(streams_to_test),
+            "channels_affected": len(channels_affected),
+            "status": "queued",
+            "description": f"Testing streams from {len(channels_affected)} channel(s)"
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in discover and test M3U: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ============================================================================
 # Scheduling API Endpoints
 # ============================================================================

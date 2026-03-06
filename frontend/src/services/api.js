@@ -111,6 +111,8 @@ export const streamCheckerAPI = {
   testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
   testStreamsWithIncompleteStats: () => api.post('/stream-checker/test-streams-with-incomplete-stats'),
   testM3uAccountStreams: (accountId) => api.post(`/stream-checker/test-m3u-account-streams/${accountId}`),
+  testAllM3uStreams: (accountId) => api.post(`/stream-checker/test-all-m3u-streams/${accountId}`),
+  discoverAndTestM3u: (accountId) => api.post(`/stream-checker/discover-and-test-m3u/${accountId}`),
   rescoreAndResort: () => api.post('/stream-checker/rescore-resort'),
   removeExcludedStreams: () => api.post('/stream-checker/remove-excluded-streams'),
 };
