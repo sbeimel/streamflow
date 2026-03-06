@@ -661,7 +661,7 @@ export default function Dashboard() {
                         size="sm"
                         onClick={() => handleTestAllM3uStreams(playlist.id, playlist.name)}
                         disabled={checkingM3uStats === `all-${playlist.id}`}
-                        title="Test ALL streams directly from this provider (no channel assignment, bypasses immunity)"
+                        title="Test ALL streams from this M3U account (no channel assignment required, bypasses immunity)"
                       >
                         {checkingM3uStats === `all-${playlist.id}` ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -674,7 +674,7 @@ export default function Dashboard() {
                         size="sm"
                         onClick={() => handleDiscoverAndTestM3u(playlist.id, playlist.name)}
                         disabled={checkingM3uStats === `discover-${playlist.id}`}
-                        title="Discover + assign streams to channels, then test assigned streams (bypasses immunity)"
+                        title="Discover streams for channels, then test assigned streams from this M3U account (bypasses immunity)"
                       >
                         {checkingM3uStats === `discover-${playlist.id}` ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
