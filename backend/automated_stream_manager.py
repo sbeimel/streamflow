@@ -934,7 +934,7 @@ class AutomatedStreamManager:
         
         return chunk_assignments, chunk_details
     
-    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, enable_parallel_regex: bool = True) -> Dict[str, int]:
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, enable_parallel_regex: bool = True, m3u_account_id: int = None) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
@@ -943,6 +943,7 @@ class AutomatedStreamManager:
             skip_check_trigger: If True, don't trigger immediate stream quality check.
                    Used when the caller will handle the check itself (e.g., check_single_channel).
             enable_parallel_regex: If True, use parallel regex matching for better performance (default: True).
+            m3u_account_id: If provided, only discover and assign streams from this M3U account (default: None = all accounts).
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
@@ -970,6 +971,16 @@ class AutomatedStreamManager:
             if not isinstance(all_streams, list):
                 logger.error(f"Invalid streams response format: expected list, got {type(all_streams).__name__}")
                 return {}
+            
+            # Filter by specific M3U account if requested (for M3U-specific Discover & Test)
+            if m3u_account_id is not None:
+                original_count = len(all_streams)
+                all_streams = [s for s in all_streams if s.get('m3u_account') == m3u_account_id]
+                logger.info(f"🔍 M3U Account Filter: {original_count} total streams → {len(all_streams)} from M3U account {m3u_account_id}")
+                
+                if not all_streams:
+                    logger.warning(f"No streams found for M3U account {m3u_account_id}")
+                    return {}
             
             # Filter streams by enabled M3U accounts
             # Use cached M3U accounts if available (from refresh_playlists), otherwise fetch
