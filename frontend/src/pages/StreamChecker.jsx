@@ -392,6 +392,12 @@ export default function StreamChecker() {
   const inProgress = status?.queue?.in_progress || 0
   const completed = status?.queue?.completed || 0
   const failed = status?.queue?.failed || 0
+  
+  // Calculate overall progress for multi-channel processing
+  const batchTotal = completed + inProgress + queueSize
+  const overallProgress = batchTotal > 0 
+    ? (completed / batchTotal) * 100
+    : 0
 
   return (
     <div className="space-y-6">
@@ -510,17 +516,24 @@ export default function StreamChecker() {
           <CardHeader>
             <CardTitle>Current Progress</CardTitle>
             <CardDescription>
-              {progress.channel_name || 'Processing...'}
+              {status?.parallel?.enabled && inProgress > 1 
+                ? `Processing ${inProgress} channels in parallel` 
+                : progress.channel_name || 'Processing...'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">{progress.step || 'Checking'}</span>
-                <span className="font-medium">{progress.percentage || 0}%</span>
+                <span className="text-muted-foreground">
+                  {completed} of {batchTotal} channels completed
+                  {inProgress > 0 && ` (${inProgress} in progress, ${queueSize} in queue)`}
+                </span>
+                <span className="font-medium">{Math.round(overallProgress)}%</span>
               </div>
-              <Progress value={progress.percentage || 0} className="h-2" />
-              <p className="text-xs text-muted-foreground">{progress.step_detail}</p>
+              <Progress value={overallProgress} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Overall batch progress
+              </p>
             </div>
 
             {progress.current_stream_name && (
