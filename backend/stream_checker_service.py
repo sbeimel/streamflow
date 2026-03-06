@@ -1337,8 +1337,10 @@ class StreamCheckerService:
         2. Clears ALL dead streams from tracker to give them a second chance
         3. Reloads enabled M3U accounts
         4. Matches new streams with regex patterns (including previously dead ones)
-        5. Checks every channel from every stream (bypassing 2-hour immunity)
-        6. Disables empty channels if configured
+        5. Temporarily disables account limits to allow ALL streams to be tested
+        6. Checks every channel from every stream (bypassing 2-hour immunity)
+        7. Re-applies account limits based on NEW quality scores
+        8. Disables empty channels if configured
         
         During this operation, regular automated updates, matching, and checking are paused.
         """
@@ -1350,8 +1352,18 @@ class StreamCheckerService:
             logger.info("Regular automation paused during global action")
             logger.info("=" * 80)
             
+            # Save current account limits setting
+            account_limits_config = self.config.get('account_stream_limits', {})
+            original_limits_enabled = account_limits_config.get('enabled', True)
+            
+            # Temporarily disable account limits for global check
+            if original_limits_enabled:
+                logger.info("Temporarily disabling account limits to test ALL streams...")
+                account_limits_config['enabled'] = False
+                self.config['account_stream_limits'] = account_limits_config
+            
             # Step 1: Refresh UDI cache to ensure we have current data from Dispatcharr
-            logger.info("Step 1/6: Refreshing UDI cache...")
+            logger.info("Step 1/7: Refreshing UDI cache...")
             try:
                 from udi import get_udi_manager
                 udi = get_udi_manager()
@@ -1364,7 +1376,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to refresh UDI cache: {e}")
             
             # Step 2: Clear ALL dead streams from tracker to give them a second chance
-            logger.info("Step 2/6: Clearing dead stream tracker to give all streams a second chance...")
+            logger.info("Step 2/7: Clearing dead stream tracker to give all streams a second chance...")
             try:
                 dead_count = len(self.dead_streams_tracker.get_dead_streams())
                 if dead_count > 0:
@@ -1378,7 +1390,7 @@ class StreamCheckerService:
             automation_manager = None
             
             # Step 3: Update M3U playlists
-            logger.info("Step 3/6: Updating M3U playlists...")
+            logger.info("Step 3/7: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
@@ -1391,7 +1403,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
             # Step 4: Validate and remove non-matching streams
-            logger.info("Step 4/6: Validating existing streams against regex patterns...")
+            logger.info("Step 4/7: Validating existing streams against regex patterns...")
             try:
                 if automation_manager is not None:
                     # Respect automation_controls.remove_non_matching_streams setting
@@ -1405,13 +1417,13 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to validate streams: {e}")
             
-            # Step 5: Match and assign streams (including previously dead ones since tracker was cleared)
-            logger.info("Step 5/6: Matching and assigning streams...")
+            # Step 5: Match and assign ALL streams (limits are disabled)
+            logger.info("Step 5/7: Matching and assigning ALL streams (limits disabled)...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
                     if assignments:
-                        logger.info(f"✓ Assigned streams to {len(assignments)} channels")
+                        logger.info(f"✓ Assigned ALL matching streams to {len(assignments)} channels")
                     else:
                         logger.info("✓ No new stream assignments")
                 else:
@@ -1420,18 +1432,32 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to match streams: {e}")
             
             # Step 6: Check all channels (force check to bypass immunity)
-            logger.info("Step 6/6: Queueing all channels for checking...")
+            logger.info("Step 6/7: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
+            
+            # Step 7: Re-enable account limits (will be applied as channels complete)
+            if original_limits_enabled:
+                logger.info("Step 7/7: Re-enabling account limits (will be applied as channels complete)...")
+                account_limits_config['enabled'] = True
+                self.config['account_stream_limits'] = account_limits_config
+                logger.info("✓ Account limits re-enabled - will be applied based on NEW quality scores")
+            else:
+                logger.info("Step 7/7: Account limits remain disabled (were not enabled before)")
             
             # Note: Empty channel disabling will be triggered after batch finalization
             
             logger.info("=" * 80)
             logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
+            logger.info("All streams will be tested, then limits applied based on quality scores")
             logger.info("Regular automation will resume")
             logger.info("=" * 80)
             
         except Exception as e:
             logger.error(f"Error performing global action: {e}", exc_info=True)
+            # Restore original limits setting on error
+            if 'original_limits_enabled' in locals() and original_limits_enabled:
+                account_limits_config['enabled'] = True
+                self.config['account_stream_limits'] = account_limits_config
         finally:
             # Always clear the flag, even if there was an error
             self.global_action_in_progress = False

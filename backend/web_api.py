@@ -3315,14 +3315,20 @@ def apply_account_limits_to_channels():
 
 @app.route('/api/stream-checker/test-streams-without-stats', methods=['POST'])
 def test_streams_without_stats():
-    """Test all streams that have no quality stats (never been checked).
+    """Test all streams that have no stats or incomplete quality stats.
     
-    This is useful for:
-    - Testing newly added streams
-    - Retesting streams that failed during initial check
-    - Ensuring all streams have quality data
+    This performs a mini global check focused on streams that need testing:
+    1. Temporarily disables account limits
+    2. Discovers and assigns ALL matching streams
+    3. Tests streams with missing or incomplete stats
+    4. Re-enables account limits (applied with new scores)
     
-    Only tests streams where stream_stats is null or empty.
+    Tests streams where:
+    - stream_stats is null/empty (never been checked)
+    - stream_stats exists but is incomplete (missing resolution, codecs, or bitrate)
+    
+    This is faster than Global Check because it only tests streams that need it,
+    but ensures ALL streams get a chance to be tested by temporarily disabling limits.
     """
     try:
         service = get_stream_checker_service()
@@ -3330,14 +3336,51 @@ def test_streams_without_stats():
         if not service.running:
             return jsonify({"error": "Stream checker service is not running"}), 400
         
-        # Get UDI manager to find streams without stats
+        logger.info("=" * 80)
+        logger.info("TEST STREAMS WITHOUT/INCOMPLETE STATS")
+        logger.info("=" * 80)
+        
+        # Step 1: Save and disable account limits temporarily
+        account_limits_config = service.config.get('account_stream_limits', {})
+        original_limits_enabled = account_limits_config.get('enabled', True)
+        
+        if original_limits_enabled:
+            logger.info("Step 1/4: Temporarily disabling account limits to test ALL streams...")
+            account_limits_config['enabled'] = False
+            service.config['account_stream_limits'] = account_limits_config
+        else:
+            logger.info("Step 1/4: Account limits already disabled")
+        
+        # Step 2: Discover and assign ALL matching streams (limits disabled)
+        logger.info("Step 2/4: Discovering and assigning ALL matching streams...")
+        try:
+            from automated_stream_manager import AutomatedStreamManager
+            automation_manager = AutomatedStreamManager()
+            assignments = automation_manager.discover_and_assign_streams(force=True)
+            if assignments:
+                logger.info(f"✓ Assigned ALL matching streams to {len(assignments)} channels")
+            else:
+                logger.info("✓ No new stream assignments")
+        except Exception as e:
+            logger.error(f"✗ Failed to discover streams: {e}")
+            # Continue anyway - test what we have
+        
+        # Step 3: Find streams without stats or with incomplete stats
+        logger.info("Step 3/4: Finding streams without stats or with incomplete stats...")
+        
         from udi.manager import get_udi_manager
         udi = get_udi_manager()
         
-        # Get all channels
+        # Refresh channels to get updated assignments
+        udi.refresh_channels()
+        
         channels = udi.get_channels()
         streams_to_test = []
-        channel_count = 0
+        
+        total_streams_checked = 0
+        streams_without_stats = 0
+        streams_with_incomplete_stats = 0
+        quality_excluded_count = 0
         
         for channel in channels:
             channel_id = channel.get('id')
@@ -3349,199 +3392,148 @@ def test_streams_without_stats():
             if not streams:
                 continue
             
-            # Find streams without stats
-            channel_has_streams_to_test = False
+            # Find streams without stats or with incomplete stats
             for stream in streams:
+                total_streams_checked += 1
                 stream_id = stream.get('id')
                 if not stream_id:
                     continue
                 
-                # Get full stream data
-                stream_data = udi.get_stream_by_id(stream_id)
-                if not stream_data:
-                    continue
-                
                 # Check if this stream should skip quality checking (quality exclusions)
-                service = get_stream_checker_service()
-                if service._should_skip_quality_check(stream_data):
-                    # Skip quality-excluded streams - they don't need quality stats
+                if service._should_skip_quality_check(stream):
+                    quality_excluded_count += 1
                     continue
                 
                 # Check if stream has stats
-                stream_stats = stream_data.get('stream_stats')
+                stream_stats = stream.get('stream_stats')
+                
+                # Case 1: No stats at all
                 if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+                    streams_without_stats += 1
                     streams_to_test.append({
                         'stream_id': stream_id,
                         'stream_name': stream.get('name', 'Unknown'),
                         'channel_id': channel_id,
-                        'channel_name': channel.get('name', f'Channel {channel_id}')
+                        'channel_name': channel.get('name', f'Channel {channel_id}'),
+                        'reason': 'no_stats'
                     })
-                    channel_has_streams_to_test = True
-            
-            if channel_has_streams_to_test:
-                channel_count += 1
-        
-        if not streams_to_test:
-            return jsonify({
-                "message": "No streams without stats found",
-                "streams_found": 0,
-                "channels_affected": 0
-            })
-        
-        # Queue channels for checking with force_check flag
-        channels_to_check = list(set(s['channel_id'] for s in streams_to_test))
-        
-        for channel_id in channels_to_check:
-            service.queue_channel(channel_id, priority=20, force_check=True)
-        
-        return jsonify({
-            "message": f"Queued {len(streams_to_test)} stream(s) without stats for testing",
-            "streams_found": len(streams_to_test),
-            "channels_affected": len(channels_to_check),
-            "status": "queued",
-            "description": f"Testing streams from {len(channels_to_check)} channel(s)"
-        })
-    
-    except Exception as e:
-        logger.error(f"Error testing streams without stats: {e}")
-        return jsonify({"error": str(e)}), 500
-@app.route('/api/stream-checker/test-incomplete-stats', methods=['POST'])
-def test_incomplete_stats():
-    """Test all streams that have incomplete quality stats.
-
-    This is useful for:
-    - Testing streams that only have partial data (e.g., only bitrate but no codec/resolution)
-    - Retesting streams where FFmpeg analysis was interrupted
-    - Ensuring all streams have complete quality data
-
-    Tests streams where stream_stats exists but is missing key fields like:
-    - resolution (missing or N/A or 0x0)
-    - video_codec (missing or N/A)
-    - audio_codec (missing or N/A)
-    - ffmpeg_output_bitrate (missing or 0)
-    """
-    try:
-        service = get_stream_checker_service()
-
-        if not service.running:
-            return jsonify({"error": "Stream checker service is not running"}), 400
-
-        # Get UDI manager to find streams with incomplete stats
-        from udi.manager import get_udi_manager
-        udi = get_udi_manager()
-
-        # Get all channels
-        channels = udi.get_channels()
-        streams_to_test = []
-        channel_count = 0
-
-        for channel in channels:
-            channel_id = channel.get('id')
-            if not channel_id:
-                continue
-
-            # Get streams for this channel
-            streams = udi.get_channel_streams(channel_id)
-            if not streams:
-                continue
-
-            # Find streams with incomplete stats
-            channel_has_streams_to_test = False
-            for stream in streams:
-                stream_id = stream.get('id')
-                if not stream_id:
                     continue
-
-                # Get full stream data
-                stream_data = udi.get_stream_by_id(stream_id)
-                if not stream_data:
-                    continue
-
-                # Check if this stream should skip quality checking (quality exclusions)
-                if service._should_skip_quality_check(stream_data):
-                    # Skip quality-excluded streams - they don't need quality stats
-                    continue
-
-                # Check if stream has stats
-                stream_stats = stream_data.get('stream_stats')
-
-                # Skip if no stats at all (handled by test-streams-without-stats)
-                if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
-                    continue
-
-                # Parse stream_stats if it's a JSON string
+                
+                # Case 2: Has stats but incomplete
                 import json
                 if isinstance(stream_stats, str):
                     try:
                         stream_stats = json.loads(stream_stats)
                     except json.JSONDecodeError:
                         stream_stats = {}
-
+                
                 # Check if stats are incomplete
                 is_incomplete = False
-
-                # Check resolution
+                missing_fields = []
+                
                 resolution = stream_stats.get('resolution')
                 if not resolution or resolution in ['N/A', '0x0', '', 'Unknown']:
                     is_incomplete = True
-
-                # Check video codec
+                    missing_fields.append('resolution')
+                
                 video_codec = stream_stats.get('video_codec')
                 if not video_codec or video_codec in ['N/A', '', 'Unknown']:
                     is_incomplete = True
-
-                # Check audio codec
+                    missing_fields.append('video_codec')
+                
                 audio_codec = stream_stats.get('audio_codec')
                 if not audio_codec or audio_codec in ['N/A', '', 'Unknown']:
                     is_incomplete = True
-
-                # Check bitrate
+                    missing_fields.append('audio_codec')
+                
                 bitrate = stream_stats.get('ffmpeg_output_bitrate')
                 if not bitrate or bitrate == 0 or bitrate == '0':
                     is_incomplete = True
-
+                    missing_fields.append('bitrate')
+                
                 if is_incomplete:
+                    streams_with_incomplete_stats += 1
+                    logger.debug(f"Found incomplete stats for stream {stream_id} ({stream.get('name')}): missing {', '.join(missing_fields)}")
                     streams_to_test.append({
                         'stream_id': stream_id,
                         'stream_name': stream.get('name', 'Unknown'),
                         'channel_id': channel_id,
                         'channel_name': channel.get('name', f'Channel {channel_id}'),
-                        'missing_fields': {
-                            'resolution': not resolution or resolution in ['N/A', '0x0', '', 'Unknown'],
-                            'video_codec': not video_codec or video_codec in ['N/A', '', 'Unknown'],
-                            'audio_codec': not audio_codec or audio_codec in ['N/A', '', 'Unknown'],
-                            'bitrate': not bitrate or bitrate == 0 or bitrate == '0'
-                        }
+                        'reason': 'incomplete_stats',
+                        'missing_fields': missing_fields
                     })
-                    channel_has_streams_to_test = True
-
-            if channel_has_streams_to_test:
-                channel_count += 1
-
+        
+        logger.info(f"Scan complete: {total_streams_checked} streams checked, "
+                   f"{streams_without_stats} without stats, {streams_with_incomplete_stats} with incomplete stats, "
+                   f"{quality_excluded_count} quality-excluded, {len(streams_to_test)} need testing")
+        
         if not streams_to_test:
+            # Re-enable limits even if no streams to test
+            if original_limits_enabled:
+                account_limits_config['enabled'] = True
+                service.config['account_stream_limits'] = account_limits_config
+            
             return jsonify({
-                "message": "No streams with incomplete stats found",
+                "message": "No streams without stats or incomplete stats found",
                 "streams_found": 0,
-                "channels_affected": 0
+                "channels_affected": 0,
+                "debug_info": {
+                    "total_streams_checked": total_streams_checked,
+                    "streams_without_stats": streams_without_stats,
+                    "streams_with_incomplete_stats": streams_with_incomplete_stats,
+                    "quality_excluded": quality_excluded_count
+                }
             })
-
-        # Queue channels for checking with force_check flag
-        channels_to_check = list(set(s['channel_id'] for s in streams_to_test))
-
-        for channel_id in channels_to_check:
+        
+        # Step 4: Queue channels for checking with force_check flag
+        logger.info(f"Step 4/4: Queueing {len(streams_to_test)} stream(s) for testing...")
+        channels_affected = list(set(s['channel_id'] for s in streams_to_test))
+        
+        for channel_id in channels_affected:
             service.queue_channel(channel_id, priority=20, force_check=True)
-
+        
+        # Re-enable account limits (will be applied as channels complete)
+        if original_limits_enabled:
+            logger.info("Re-enabling account limits (will be applied as channels complete)...")
+            account_limits_config['enabled'] = True
+            service.config['account_stream_limits'] = account_limits_config
+            logger.info("✓ Account limits re-enabled - will be applied based on NEW quality scores")
+        
+        logger.info("=" * 80)
+        logger.info(f"QUEUED {len(streams_to_test)} STREAMS FOR TESTING")
+        logger.info("=" * 80)
+        
         return jsonify({
-            "message": f"Queued {len(streams_to_test)} stream(s) with incomplete stats for testing",
+            "message": f"Queued {len(streams_to_test)} stream(s) for testing",
             "streams_found": len(streams_to_test),
-            "channels_affected": len(channels_to_check),
+            "channels_affected": len(channels_affected),
             "status": "queued",
-            "description": f"Testing streams from {len(channels_to_check)} channel(s)"
+            "description": f"Testing streams from {len(channels_affected)} channel(s)",
+            "breakdown": {
+                "without_stats": streams_without_stats,
+                "incomplete_stats": streams_with_incomplete_stats
+            }
         })
-
+    
     except Exception as e:
-        logger.error(f"Error testing streams with incomplete stats: {e}")
+        logger.error(f"Error testing streams without/incomplete stats: {e}")
+        # Restore limits on error
+        try:
+            if 'original_limits_enabled' in locals() and original_limits_enabled:
+                account_limits_config['enabled'] = True
+                service.config['account_stream_limits'] = account_limits_config
+        except:
+            pass
         return jsonify({"error": str(e)}), 500
+@app.route('/api/stream-checker/test-incomplete-stats', methods=['POST'])
+def test_incomplete_stats():
+    """Test all streams that have incomplete quality stats.
+    
+    DEPRECATED: This endpoint now redirects to test-streams-without-stats
+    which handles both missing and incomplete stats.
+    """
+    logger.info("test-incomplete-stats called - redirecting to test-streams-without-stats")
+    return test_streams_without_stats()
 
 
 # ============================================================================

@@ -934,7 +934,7 @@ class AutomatedStreamManager:
         
         return chunk_assignments, chunk_details
     
-    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, enable_parallel_regex: bool = True) -> Dict[str, int]:
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False, enable_parallel_regex: bool = True, ignore_account_limits: bool = False) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
@@ -943,6 +943,8 @@ class AutomatedStreamManager:
             skip_check_trigger: If True, don't trigger immediate stream quality check.
                    Used when the caller will handle the check itself (e.g., check_single_channel).
             enable_parallel_regex: If True, use parallel regex matching for better performance (default: True).
+            ignore_account_limits: If True, bypass account stream limits and assign ALL matching streams.
+                   Used during global check to ensure all streams get tested before limits are applied.
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
