@@ -3809,9 +3809,17 @@ def discover_and_test_m3u(account_id):
                 "status": "completed"
             })
         
-        # Queue channels for checking with force_check flag (bypasses immunity)
-        for channel_id in channels_affected:
-            service.queue_channel(channel_id, priority=20, force_check=True)
+        # Mark channels for checking with M3U filter (bypasses immunity and filters by M3U account)
+        # This ensures only streams from the specified M3U account are tested
+        channel_ids_list = list(channels_affected)
+        service.update_tracker.mark_channels_updated(
+            channel_ids_list, 
+            force_check=True,  # Bypass 2-hour immunity
+            m3u_account_filter=account_id  # Only test streams from this M3U account
+        )
+        
+        # Trigger immediate check
+        service.trigger_check_updated_channels()
         
         return jsonify({
             "message": f"Discovery completed. Queued {len(streams_to_test)} stream(s) from M3U account {account_id} for testing",
