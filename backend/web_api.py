@@ -3740,6 +3740,10 @@ def discover_and_test_m3u(account_id):
     Args:
         account_id: The M3U account ID to discover and test
     """
+    logger.info(f"=" * 80)
+    logger.info(f"🔍 DISCOVER & TEST M3U ENDPOINT CALLED - Account ID: {account_id}")
+    logger.info(f"=" * 80)
+    
     try:
         from udi.manager import get_udi_manager
         
@@ -3761,6 +3765,8 @@ def discover_and_test_m3u(account_id):
         
         # Get all channels
         channels = udi.get_channels()
+        logger.info(f"Scanning {len(channels)} channels for streams from M3U account {account_id}")
+        
         streams_to_test = []
         channels_affected = set()
         
@@ -3794,6 +3800,8 @@ def discover_and_test_m3u(account_id):
                     'channel_id': channel_id
                 })
                 channels_affected.add(channel_id)
+        
+        logger.info(f"Found {len(streams_to_test)} streams from M3U {account_id} across {len(channels_affected)} channels")
         
         if not streams_to_test:
             # Check if discovery assigned any new streams
