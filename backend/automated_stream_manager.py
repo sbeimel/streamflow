@@ -961,15 +961,12 @@ class AutomatedStreamManager:
             logger.debug("Refreshing UDI cache to get latest channel-stream assignments...")
             udi.refresh_channels()
             
+            # Also refresh streams to ensure we have the latest stream data
+            logger.debug("Refreshing streams cache...")
+            udi.refresh_streams()
+            
             # Get all available streams (don't log, we already logged during refresh)
             all_streams = get_streams(log_result=False)
-            
-            # Only refresh streams if cache is empty (performance optimization)
-            if not all_streams:
-                logger.debug("Streams cache is empty, refreshing streams...")
-                udi.refresh_streams()
-                all_streams = get_streams(log_result=False)
-            
             if not all_streams:
                 logger.warning("No streams found")
                 return {}
