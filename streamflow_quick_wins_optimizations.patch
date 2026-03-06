@@ -71,11 +71,26 @@
 #    - Caches successful results after analysis
 #    - Logs: "💾 Using cached metadata for {stream_name}"
 #
+# 3. Resolution Parsing Fix (ROBUSTNESS IMPROVEMENT):
+#    - OLD: res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
+#    - NEW: res_match = re.search(r'(\d{2,5})\s*[x*×]\s*(\d{2,5})', line)
+#    - Now supports: 1920x1080, 1920 x 1080, 1920*1080, 1920×1080
+#    - Fixes issue where resolution was not detected (0x0)
+#
+# 4. Improved Early Exit Logging:
+#    - Shows collected data: codec, resolution, fps, bitrate
+#    - Debug logging for missing data when Early Exit doesn't trigger
+#    - Helps diagnose why streams take long to analyze
+#
 # SPECIFIC CHANGES:
 # - Line ~200: Added enable_early_exit parameter to get_stream_info_and_bitrate()
 # - Line ~300: Replaced subprocess.run() with subprocess.Popen() for real-time parsing
 # - Line ~320: Added required_data tracking dict
 # - Line ~350: Added Early Exit check logic
+# - Line ~426: FIXED resolution regex (Early Exit mode)
+# - Line ~477: Improved Early Exit logging with collected data
+# - Line ~493: Added debug logging for missing data
+# - Line ~542: FIXED resolution regex (Non-Early-Exit mode)
 # - Line ~800: Added use_cache parameter to analyze_stream()
 # - Line ~820: Added cache check before FFmpeg analysis
 # - Line ~900: Added cache.set() after successful analysis

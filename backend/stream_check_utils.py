@@ -423,11 +423,13 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                                 result_data['video_codec'] = _sanitize_codec_name(video_codec)
                                 required_data['video_codec'] = True
                             
-                            res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
+                            # Flexible resolution parsing: supports 1920x1080, 1920 x 1080, 1920*1080, 1920×1080
+                            res_match = re.search(r'(\d{2,5})\s*[x*×]\s*(\d{2,5})', line)
                             if res_match:
                                 width, height = res_match.groups()
                                 result_data['resolution'] = f"{width}x{height}"
                                 required_data['resolution'] = True
+                                logger.debug(f"  → Detected resolution: {result_data['resolution']}")
                             
                             fps_match = re.search(r'(\d+\.?\d*)\s*fps', line)
                             if fps_match:
@@ -470,7 +472,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     # Early Exit Check
                     elapsed = time.time() - start
                     if elapsed >= min_runtime and all(required_data.values()):
-                        logger.info(f"⚡ Early exit after {elapsed:.1f}s (all data collected)")
+                        logger.info(f"⚡ Early exit after {elapsed:.1f}s (all data collected: codec={result_data['video_codec']}, res={result_data['resolution']}, fps={result_data['fps']}, bitrate={result_data.get('bitrate_kbps', 'pending')})")
                         process.terminate()
                         early_exit_triggered = True
                         result_data['early_exit'] = True
@@ -485,6 +487,12 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                 
                 elapsed = time.time() - start
                 result_data['elapsed_time'] = elapsed
+                
+                # Log if Early Exit didn't trigger (for debugging)
+                if not early_exit_triggered and elapsed >= min_runtime:
+                    missing_data = [key for key, value in required_data.items() if not value]
+                    if missing_data:
+                        logger.debug(f"  ⏱ No early exit: missing data after {elapsed:.1f}s: {', '.join(missing_data)}")
                 
                 # Join all output for final parsing
                 output = ''.join(output_lines)
@@ -539,7 +547,8 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                                 result_data['video_codec'] = video_codec
                                 logger.debug(f"  → Final video codec: {result_data['video_codec']}")
                         
-                        res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
+                        # Flexible resolution parsing: supports 1920x1080, 1920 x 1080, 1920*1080, 1920×1080
+                        res_match = re.search(r'(\d{2,5})\s*[x*×]\s*(\d{2,5})', line)
                         if res_match:
                             width, height = res_match.groups()
                             result_data['resolution'] = f"{width}x{height}"

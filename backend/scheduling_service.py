@@ -159,7 +159,21 @@ class SchedulingService:
         Returns:
             Auth token or None
         """
-        return os.getenv("DISPATCHARR_TOKEN")
+        # First try Bearer token (if configured)
+        token = os.getenv("DISPATCHARR_TOKEN")
+        if token:
+            return token
+        
+        # Fallback to Basic Auth (username/password)
+        # This is the standard auth method for Dispatcharr
+        username = os.getenv("DISPATCHARR_USER")
+        password = os.getenv("DISPATCHARR_PASS")
+        
+        if username and password:
+            # Return Basic Auth credentials (will be handled in fetch_epg_grid)
+            return f"Basic:{username}:{password}"
+        
+        return None
     
     def fetch_epg_grid(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Fetch EPG grid data from Dispatcharr API with caching.
@@ -192,13 +206,27 @@ class SchedulingService:
             
             try:
                 url = f"{base_url}/api/epg/grid/"
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json"
-                }
+                
+                # Handle different auth methods
+                headers = {"Accept": "application/json"}
+                auth = None
+                
+                if token:
+                    if token.startswith("Basic:"):
+                        # Basic Auth (username:password)
+                        parts = token.split(":", 2)
+                        if len(parts) == 3:
+                            username = parts[1]
+                            password = parts[2]
+                            auth = (username, password)
+                            logger.debug("Using Basic Auth for EPG grid request")
+                    else:
+                        # Bearer Token
+                        headers["Authorization"] = f"Bearer {token}"
+                        logger.debug("Using Bearer Token for EPG grid request")
                 
                 logger.info(f"Fetching EPG grid data from {url}")
-                response = requests.get(url, headers=headers, timeout=30)
+                response = requests.get(url, headers=headers, auth=auth, timeout=30)
                 response.raise_for_status()
                 
                 data = response.json()
