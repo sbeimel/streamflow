@@ -384,10 +384,8 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             )
             
             # Track required data for Early Exit
-            # All fields must be collected before Early Exit can trigger
             required_data = {
                 'video_codec': False,
-                'audio_codec': False,  # Added: ensure audio codec is also collected
                 'resolution': False,
                 'fps': False,
                 'bitrate': False
@@ -446,7 +444,6 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                             audio_codec = _extract_codec_from_line(line, 'Audio')
                             if audio_codec and audio_codec != 'N/A':
                                 result_data['audio_codec'] = _sanitize_codec_name(audio_codec)
-                                required_data['audio_codec'] = True  # Track audio codec for Early Exit
                         except (ValueError, AttributeError):
                             pass
                     
@@ -475,7 +472,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     # Early Exit Check
                     elapsed = time.time() - start
                     if elapsed >= min_runtime and all(required_data.values()):
-                        logger.info(f"⚡ Early exit after {elapsed:.1f}s (all data collected: video={result_data['video_codec']}, audio={result_data.get('audio_codec', 'N/A')}, res={result_data['resolution']}, fps={result_data['fps']}, bitrate={result_data.get('bitrate_kbps', 'pending')})")
+                        logger.info(f"⚡ Early exit after {elapsed:.1f}s (all data collected: codec={result_data['video_codec']}, res={result_data['resolution']}, fps={result_data['fps']}, bitrate={result_data.get('bitrate_kbps', 'pending')})")
                         process.terminate()
                         early_exit_triggered = True
                         result_data['early_exit'] = True

@@ -4,4 +4,3 @@ pandas
 flask
 flask-cors
 croniter
-gunicorn==21.2.0

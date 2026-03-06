@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # StreamFlow Entrypoint
-# Starts Flask API with Gunicorn (production) or Flask dev server (debug)
+# Starts Flask API directly
 
 set -e
 
@@ -12,11 +12,6 @@ API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-5000}"
 DEBUG_MODE="${DEBUG_MODE:-false}"
 CONFIG_DIR="${CONFIG_DIR:-/app/data}"
-
-# Gunicorn configuration (only used when DEBUG_MODE=false)
-GUNICORN_WORKERS="${GUNICORN_WORKERS:-4}"
-GUNICORN_THREADS="${GUNICORN_THREADS:-2}"
-GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-120}"
 
 # Export environment variables for the Flask application
 export API_HOST API_PORT DEBUG_MODE CONFIG_DIR
@@ -56,41 +51,13 @@ echo "[INFO] Starting StreamFlow Container"
 echo "[INFO] ============================================"
 echo "[INFO] Flask API: ${API_HOST}:${API_PORT}"
 echo "[INFO] Debug mode: ${DEBUG_MODE}"
+echo "[INFO] ============================================"
+echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
+echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
+echo "[INFO] ============================================"
 
-# Choose server based on DEBUG_MODE
-if [ "$DEBUG_MODE" = "true" ]; then
-    echo "[INFO] Server: Flask Development Server (single-threaded)"
-    echo "[INFO] ============================================"
-    echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
-    echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
-    echo "[INFO] ============================================"
-    echo "[INFO] Starting Flask Development Server..."
-    
-    # Use exec to ensure Flask becomes PID 1 and receives signals properly
-    exec python3 web_api.py --host "${API_HOST}" --port "${API_PORT}"
-else
-    echo "[INFO] Server: Gunicorn (production, multi-worker)"
-    echo "[INFO] Workers: ${GUNICORN_WORKERS}"
-    echo "[INFO] Threads per worker: ${GUNICORN_THREADS}"
-    echo "[INFO] Timeout: ${GUNICORN_TIMEOUT}s"
-    echo "[INFO] Total capacity: $((GUNICORN_WORKERS * GUNICORN_THREADS)) concurrent requests"
-    echo "[INFO] ============================================"
-    echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
-    echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
-    echo "[INFO] ============================================"
-    echo "[INFO] Starting Gunicorn..."
-    
-    # Use exec to ensure Gunicorn becomes PID 1 and receives signals properly
-    exec gunicorn \
-        --bind "${API_HOST}:${API_PORT}" \
-        --workers "${GUNICORN_WORKERS}" \
-        --threads "${GUNICORN_THREADS}" \
-        --timeout "${GUNICORN_TIMEOUT}" \
-        --access-logfile - \
-        --error-logfile - \
-        --log-level info \
-        --worker-class gthread \
-        --graceful-timeout 30 \
-        --keep-alive 5 \
-        "web_api:app"
-fi
+# Start Flask API directly
+echo "[INFO] Starting Flask API..."
+
+# Use exec to ensure Flask becomes PID 1 and receives signals properly
+exec python3 web_api.py --host "${API_HOST}" --port "${API_PORT}"
