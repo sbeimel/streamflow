@@ -357,7 +357,6 @@ class ChannelUpdateTracker:
         self.tracker_file = Path(tracker_file)
         self.updates = self._load_updates()
         self.lock = threading.Lock()
-        self.channel_m3u_filters = {}  # Track M3U account filters per channel
         # Ensure the file is created on initialization
         self._save_updates()
     
@@ -419,7 +418,7 @@ class ChannelUpdateTracker:
                 }
             self._save_updates()
     
-    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None, force_check: bool = False, m3u_account_filter: int = None):
+    def mark_channels_updated(self, channel_ids: List[int], timestamp: str = None, stream_counts: Dict[int, int] = None, force_check: bool = False):
         """Mark multiple channels as updated.
         
         Args:
@@ -427,7 +426,6 @@ class ChannelUpdateTracker:
             timestamp: When the update occurred (defaults to now)
             stream_counts: Optional dict mapping channel_id to stream count
             force_check: If True, also mark channels for force checking (bypasses 2-hour immunity)
-            m3u_account_filter: If provided, only check streams from this M3U account
         """
         if timestamp is None:
             timestamp = datetime.now().isoformat()
@@ -444,11 +442,6 @@ class ChannelUpdateTracker:
             for channel_id in channel_ids:
                 channel_key = str(channel_id)
                 stream_count = stream_counts.get(channel_id)
-                
-                # Store M3U filter if provided
-                if m3u_account_filter is not None:
-                    self.channel_m3u_filters[channel_id] = m3u_account_filter
-                    logger.debug(f"Channel {channel_id} marked for checking only M3U account {m3u_account_filter}")
                 
                 # Always mark channel if stream count changed (new streams added)
                 # Preserve checked_stream_ids if they exist
@@ -717,22 +710,6 @@ class ChannelUpdateTracker:
     def get_last_global_check(self) -> Optional[str]:
         """Get timestamp of last global check."""
         return self.updates.get('last_global_check')
-    
-    def get_m3u_filter_for_channel(self, channel_id: int) -> Optional[int]:
-        """Get M3U account filter for a channel if one was set.
-        
-        Returns:
-            M3U account ID to filter by, or None for no filter
-        """
-        with self.lock:
-            return self.channel_m3u_filters.get(channel_id)
-    
-    def clear_m3u_filter(self, channel_id: int):
-        """Clear M3U filter for a channel after checking is complete."""
-        with self.lock:
-            if channel_id in self.channel_m3u_filters:
-                del self.channel_m3u_filters[channel_id]
-                logger.debug(f"Cleared M3U filter for channel {channel_id}")
 
 
 class StreamCheckQueue:
@@ -2042,36 +2019,9 @@ class StreamCheckerService:
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
             
-
-            # Check if M3U filter is set for this channel (from Discover & Test for specific M3U)
-            m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-            
-            if m3u_filter is not None:
-                original_count = len(streams)
-                streams = [s for s in streams if s.get('m3u_account') == m3u_filter]
-                filtered_count = len(streams)
-                
-                logger.info(f"🔍 M3U Filter applied: {original_count} total streams → {filtered_count} from M3U account {m3u_filter}")
-                
-                if filtered_count == 0:
-                    logger.warning(f"No streams from M3U account {m3u_filter} found in channel {channel_name}")
-                    # Clear filter and mark as completed
-                    self.update_tracker.clear_m3u_filter(channel_id)
-                    self.check_queue.mark_completed(channel_id)
-                    self.update_tracker.mark_channel_checked(channel_id)
-                    return {
-                        'dead_streams_count': 0,
-                        'revived_streams_count': 0
-                    }
-            
             # Check if channel has active viewers or if its playlist has reached max concurrent streams
             limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
             if limit_check_result is not None:
-                # Clear M3U filter before returning
-                m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-                if m3u_filter is not None:
-                    self.update_tracker.clear_m3u_filter(channel_id)
-                    logger.debug(f"Cleared M3U filter for channel {channel_id} (limit check)")
                 self.check_queue.mark_completed(channel_id)
                 self.update_tracker.mark_channel_checked(channel_id)
                 return limit_check_result
@@ -2500,12 +2450,6 @@ class StreamCheckerService:
                 checked_stream_ids=final_stream_ids
             )
             
-            # Clear M3U filter after check is complete
-            m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-            if m3u_filter is not None:
-                self.update_tracker.clear_m3u_filter(channel_id)
-                logger.debug(f"Cleared M3U filter for channel {channel_id}")
-            
             # Return statistics for callers that need them
             return {
                 'dead_streams_count': len(dead_stream_ids),
@@ -2515,15 +2459,6 @@ class StreamCheckerService:
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
-            
-            # Clear M3U filter on error
-            try:
-                m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-                if m3u_filter is not None:
-                    self.update_tracker.clear_m3u_filter(channel_id)
-                    logger.debug(f"Cleared M3U filter for channel {channel_id} (error)")
-            except Exception as filter_error:
-                logger.debug(f"Could not clear M3U filter: {filter_error}")
             
             # Only add to batch changelog if not explicitly skipped
             if self.changelog and not skip_batch_changelog:
@@ -2558,28 +2493,6 @@ class StreamCheckerService:
             self.checking = False
             self.progress.clear()
             log_function_return(logger, "_check_channel_concurrent")
-
-    # Check if M3U filter is set for this channel (from Discover & Test for specific M3U)
-    m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-
-    if m3u_filter is not None:
-        original_count = len(streams)
-        streams = [s for s in streams if s.get('m3u_account') == m3u_filter]
-        filtered_count = len(streams)
-
-        logger.info(f"🔍 M3U Filter applied: {original_count} total streams → {filtered_count} from M3U account {m3u_filter}")
-
-        if filtered_count == 0:
-            logger.warning(f"No streams from M3U account {m3u_filter} found in channel {channel_name}")
-            # Clear filter and mark as completed
-            self.update_tracker.clear_m3u_filter(channel_id)
-            self.check_queue.mark_completed(channel_id)
-            self.update_tracker.mark_channel_checked(channel_id)
-            return {
-                'dead_streams_count': 0,
-                'revived_streams_count': 0
-            }
-
 
     
     def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False):
@@ -2648,36 +2561,9 @@ class StreamCheckerService:
             
             logger.info(f"Found {len(streams)} streams for channel {channel_name}")
             
-
-            # Check if M3U filter is set for this channel (from Discover & Test for specific M3U)
-            m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-            
-            if m3u_filter is not None:
-                original_count = len(streams)
-                streams = [s for s in streams if s.get('m3u_account') == m3u_filter]
-                filtered_count = len(streams)
-                
-                logger.info(f"🔍 M3U Filter applied: {original_count} total streams → {filtered_count} from M3U account {m3u_filter}")
-                
-                if filtered_count == 0:
-                    logger.warning(f"No streams from M3U account {m3u_filter} found in channel {channel_name}")
-                    # Clear filter and mark as completed
-                    self.update_tracker.clear_m3u_filter(channel_id)
-                    self.check_queue.mark_completed(channel_id)
-                    self.update_tracker.mark_channel_checked(channel_id)
-                    return {
-                        'dead_streams_count': 0,
-                        'revived_streams_count': 0
-                    }
-            
             # Check if channel has active viewers or if its playlist has reached max concurrent streams
             limit_check_result = self._check_channel_limits(channel_id, channel_name, streams)
             if limit_check_result is not None:
-                # Clear M3U filter before returning
-                m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-                if m3u_filter is not None:
-                    self.update_tracker.clear_m3u_filter(channel_id)
-                    logger.debug(f"Cleared M3U filter for channel {channel_id} (limit check)")
                 self.check_queue.mark_completed(channel_id)
                 self.update_tracker.mark_channel_checked(channel_id)
                 return limit_check_result
@@ -3098,12 +2984,6 @@ class StreamCheckerService:
                 stream_count=len(streams),
                 checked_stream_ids=final_stream_ids
             )
-            
-            # Clear M3U filter after check is complete
-            m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-            if m3u_filter is not None:
-                self.update_tracker.clear_m3u_filter(channel_id)
-                logger.debug(f"Cleared M3U filter for channel {channel_id}")
             
             # Return statistics for callers that need them
             return {
