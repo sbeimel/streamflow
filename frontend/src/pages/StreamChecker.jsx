@@ -54,6 +54,11 @@ export default function StreamChecker() {
   const [m3uAccounts, setM3uAccounts] = useState([])
   const { toast } = useToast()
 
+  // Load M3U accounts once on mount (not in polling)
+  useEffect(() => {
+    loadM3uAccountsOnce()
+  }, [])
+
   useEffect(() => {
     loadData()
     // Poll for updates - use shorter interval when checking is active
@@ -64,13 +69,22 @@ export default function StreamChecker() {
     return () => clearInterval(interval)
   }, [status?.checking, status?.global_action_in_progress, status?.queue?.queue_size])
 
+  const loadM3uAccountsOnce = async () => {
+    try {
+      const response = await m3uAPI.getAccounts()
+      const accounts = response.data.accounts || []
+      setM3uAccounts(accounts)
+    } catch (err) {
+      console.error('Failed to load M3U accounts:', err)
+    }
+  }
+
   const loadData = async () => {
     try {
-      const [statusResponse, progressResponse, configResponse, m3uAccountsResponse] = await Promise.all([
+      const [statusResponse, progressResponse, configResponse] = await Promise.all([
         streamCheckerAPI.getStatus(),
         streamCheckerAPI.getProgress(),
-        streamCheckerAPI.getConfig(),
-        m3uAPI.getAccounts().catch(() => ({ data: { accounts: [] } })) // Load M3U accounts
+        streamCheckerAPI.getConfig()
       ])
       setStatus(statusResponse.data)
       setProgress(progressResponse.data)
@@ -78,10 +92,6 @@ export default function StreamChecker() {
       if (!editedConfig && configResponse.data) {
         setEditedConfig(configResponse.data)
       }
-      
-      // Set M3U accounts - use same logic as Dashboard
-      const accounts = m3uAccountsResponse.data.accounts || []
-      setM3uAccounts(accounts)
     } catch (err) {
       console.error('Failed to load stream checker data:', err)
     } finally {
@@ -89,24 +99,7 @@ export default function StreamChecker() {
     }
   }
 
-  const loadM3uAccounts = async () => {
-    try {
-      setM3uAccountsLoading(true)
-      const response = await m3uAPI.getAccounts()
-      // Filter only active accounts
-      const activeAccounts = response.data.filter(account => account.active)
-      setM3uAccounts(activeAccounts)
-    } catch (err) {
-      console.error('Failed to load M3U accounts:', err)
-      toast({
-        title: "Warning",
-        description: "Failed to load M3U accounts for account limits",
-        variant: "destructive"
-      })
-    } finally {
-      setM3uAccountsLoading(false)
-    }
-  }
+
 
   const handleTriggerGlobalAction = async () => {
     try {
