@@ -265,7 +265,7 @@ export default function Dashboard() {
       const response = await streamCheckerAPI.testAllM3uStreams(accountId)
       toast({
         title: "Success",
-        description: response.data.message || `Tested ${response.data.streams_tested} stream(s) from ${accountName}`
+        description: response.data.message || `Testing ${response.data.streams_tested} stream(s) from ${accountName}`
       })
       await loadStatus()
     } catch (err) {
@@ -285,13 +285,13 @@ export default function Dashboard() {
       const response = await streamCheckerAPI.discoverAndTestM3u(accountId)
       toast({
         title: "Success",
-        description: response.data.message || `Discovery completed for ${accountName}`
+        description: response.data.message || `Testing all streams from ${accountName}`
       })
       await loadStatus()
     } catch (err) {
       toast({
         title: "Error",
-        description: err.response?.data?.error || `Failed to discover and test ${accountName}`,
+        description: err.response?.data?.error || `Failed to test ${accountName}`,
         variant: "destructive"
       })
     } finally {
