@@ -3821,14 +3821,8 @@ def discover_and_test_m3u(account_id):
             m3u_account_filter=account_id  # Only test streams from this M3U account
         )
         
-        # Queue channels directly with high priority (don't wait for scheduler)
-        # Remove from completed set first to allow re-queueing
-        for channel_id in channel_ids_list:
-            service.check_queue.remove_from_completed(channel_id)
-        
-        # Add to queue with high priority
-        added = service.check_queue.add_channels(channel_ids_list, priority=20)
-        logger.info(f"Queued {added} channel(s) for M3U {account_id} testing (high priority)")
+        # Trigger immediate check
+        service.trigger_check_updated_channels()
         
         # Build response message
         if assignment_count:
