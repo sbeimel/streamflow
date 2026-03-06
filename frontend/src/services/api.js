@@ -37,6 +37,7 @@ export const automationAPI = {
   getStatus: () => api.get('/automation/status'),
   start: () => api.post('/automation/start'),
   stop: () => api.post('/automation/stop'),
+  stopAll: () => api.post('/stop-all'),
   runCycle: () => api.post('/automation/cycle'),
   getConfig: () => api.get('/automation/config'),
   updateConfig: (config) => api.put('/automation/config', config),
@@ -108,6 +109,8 @@ export const streamCheckerAPI = {
   queueAllChannels: () => api.post('/stream-checker/queue-all'),
   triggerGlobalAction: () => api.post('/stream-checker/global-action'),
   testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
+  testStreamsWithIncompleteStats: () => api.post('/stream-checker/test-streams-with-incomplete-stats'),
+  testM3uAccountStreams: (accountId) => api.post(`/stream-checker/test-m3u-account-streams/${accountId}`),
   rescoreAndResort: () => api.post('/stream-checker/rescore-resort'),
   removeExcludedStreams: () => api.post('/stream-checker/remove-excluded-streams'),
 };

@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2, TestTube, Sparkles } from 'lucide-react'
+import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2, TestTube, Sparkles, StopCircle } from 'lucide-react'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState('')
   const [togglingPlaylist, setTogglingPlaylist] = useState(null)
+  const [checkingM3uStats, setCheckingM3uStats] = useState(null)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -160,6 +161,30 @@ export default function Dashboard() {
     }
   }
 
+  const handleStopAll = async () => {
+    try {
+      setActionLoading('stop-all')
+      const response = await automationAPI.stopAll()
+      const details = response.data.details || {}
+      
+      toast({
+        title: "Services Stopped",
+        description: `Automation: ${details.automation?.stopped ? '✓' : '✗'} | Stream Checker: ${details.stream_checker?.stopped ? '✓' : '✗'}`,
+        variant: response.data.status === 'stopped' ? 'default' : 'destructive'
+      })
+      
+      await loadStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to stop services",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
   const handleTogglePlaylist = async (playlistId, currentlyEnabled) => {
     try {
       setTogglingPlaylist(playlistId)
@@ -214,6 +239,26 @@ export default function Dashboard() {
     }
   }
 
+  const handleCheckM3uStats = async (accountId, accountName) => {
+    try {
+      setCheckingM3uStats(accountId)
+      const response = await streamCheckerAPI.testM3uAccountStreams(accountId)
+      toast({
+        title: "Success",
+        description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${accountName}`
+      })
+      await loadStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || `Failed to check stats for ${accountName}`,
+        variant: "destructive"
+      })
+    } finally {
+      setCheckingM3uStats(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -230,10 +275,15 @@ export default function Dashboard() {
   const totalProcessed = completed; // Define totalProcessed based on completed streams
   
   // Calculate progress for the current batch
+  // Multi-channel mode: Show overall progress across all channels
   const batchTotal = completed + inProgress + queueSize
   const queueProgress = batchTotal > 0 
     ? (completed / batchTotal) * 100
     : 0
+  
+  // Check if multi-channel mode is enabled
+  const multiChannelEnabled = streamCheckerStatus?.config?.concurrent_streams?.multi_channel_enabled || false
+  const maxConcurrentChannels = streamCheckerStatus?.config?.concurrent_streams?.max_concurrent_channels || 5
 
   // Determine if actions should be disabled based on stream checker activity
   const isProcessing = streamCheckerStatus?.stream_checking_mode || false
@@ -401,6 +451,19 @@ export default function Dashboard() {
             <Sparkles className="mr-2 h-4 w-4" />
             {actionLoading === 'rescore-resort' ? 'Re-Scoring...' : 'Re-Score & Re-Sort'}
           </Button>
+
+          <Button
+            onClick={handleStopAll}
+            disabled={actionLoading === 'stop-all'}
+            variant="destructive"
+          >
+            {actionLoading === 'stop-all' ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <StopCircle className="mr-2 h-4 w-4" />
+            )}
+            {actionLoading === 'stop-all' ? 'Stopping...' : 'Stop All'}
+          </Button>
         </CardContent>
       </Card>
 
@@ -474,8 +537,23 @@ export default function Dashboard() {
               </div>
               {queueSize > 0 && (
                 <div className="pt-2">
-                  <Label className="text-xs text-muted-foreground mb-2 block">Processing Progress</Label>
+                  <Label className="text-xs text-muted-foreground mb-2 block">
+                    Processing Progress
+                    {multiChannelEnabled && inProgress > 1 && (
+                      <span className="ml-2 text-blue-600 dark:text-blue-400">
+                        (Multi-Channel: {inProgress}/{maxConcurrentChannels} active)
+                      </span>
+                    )}
+                  </Label>
                   <Progress value={queueProgress} className="h-2" />
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {completed} completed • {inProgress} checking • {queueSize} queued
+                    {multiChannelEnabled && (
+                      <span className="ml-2 text-blue-600 dark:text-blue-400">
+                        • {Math.round(queueProgress)}% overall
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </dl>
@@ -537,11 +615,26 @@ export default function Dashboard() {
                         </p>
                       )}
                     </div>
-                    <Switch
-                      checked={isEnabled}
-                      onCheckedChange={() => handleTogglePlaylist(playlist.id, isEnabled)}
-                      disabled={togglingPlaylist === playlist.id}
-                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleCheckM3uStats(playlist.id, playlist.name)}
+                        disabled={checkingM3uStats === playlist.id || !isStreamCheckerRunning}
+                        title={!isStreamCheckerRunning ? "Stream Checker must be running" : "Check quality stats for all streams from this M3U account"}
+                      >
+                        {checkingM3uStats === playlist.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <TestTube className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Switch
+                        checked={isEnabled}
+                        onCheckedChange={() => handleTogglePlaylist(playlist.id, isEnabled)}
+                        disabled={togglingPlaylist === playlist.id}
+                      />
+                    </div>
                   </div>
                 )
               })}

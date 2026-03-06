@@ -3497,7 +3497,12 @@ class StreamCheckerService:
                 'automation_controls': self.config.get('automation_controls', {}),
                 'check_interval': self.config.get('check_interval'),
                 'global_check_schedule': self.config.get('global_check_schedule'),
-                'queue_settings': self.config.get('queue')
+                'queue_settings': self.config.get('queue'),
+                'concurrent_streams': {
+                    'multi_channel_enabled': self.config.get('concurrent_streams.multi_channel_enabled', False),
+                    'max_concurrent_channels': self.config.get('concurrent_streams.max_concurrent_channels', 5),
+                    'global_limit': self.config.get('concurrent_streams.global_limit', 10)
+                }
             }
         }
     
