@@ -3621,83 +3621,110 @@ def test_m3u_account_streams(account_id):
 
 @app.route('/api/stream-checker/test-all-m3u-streams/<int:account_id>', methods=['POST'])
 def test_all_m3u_streams(account_id):
-    """Test ALL streams from M3U account using a temporary dummy channel.
+    """Test ALL streams from M3U account directly without channel assignment.
     
     This endpoint:
-    1. Creates a temporary dummy channel
-    2. Assigns ALL streams from the M3U account to the dummy channel
-    3. Tests all streams via the dummy channel (bypasses immunity)
-    4. Deletes the dummy channel after testing
-    5. Does NOT run discovery (only tests)
+    1. Gets ALL streams from the M3U account via UDI
+    2. Tests each stream directly using analyze_stream()
+    3. Updates stream stats in UDI after testing
+    4. Runs in background thread to avoid timeout
+    
+    This tests ALL streams from the provider, even those not matching any channel.
     
     Args:
         account_id: The M3U account ID to test
     """
     try:
         from udi.manager import get_udi_manager
+        from stream_check_utils import analyze_stream
+        import threading
         
+        # Get UDI manager
         udi = get_udi_manager()
+        
+        # Get stream checker config for parameters
         service = get_stream_checker_service()
+        config = service.config
         
         # Get all streams from this M3U account
         all_streams = udi.get_streams()
-        account_streams = [s for s in all_streams if s.get('m3u_account') == account_id]
+        m3u_streams = [s for s in all_streams if s.get('m3u_account') == account_id]
         
-        if not account_streams:
+        if not m3u_streams:
             return jsonify({
                 "message": f"No streams found for M3U account {account_id}",
                 "streams_found": 0,
-                "streams_tested": 0
+                "status": "completed"
             })
         
-        # Start stream checker if not running
-        if not service.running:
-            service.start()
-            logger.info(f"Started stream checker service for M3U account {account_id} testing")
+        logger.info(f"Testing {len(m3u_streams)} streams from M3U account {account_id}")
         
-        # Create temporary dummy channel
-        dummy_channel_id = f"_temp_m3u_test_{account_id}"
-        dummy_channel = {
-            'id': dummy_channel_id,
-            'name': f'[TEMP] M3U Test {account_id}',
-            'number': 99999,
-            'enabled': True,
-            'logo': None
-        }
+        # Background function to test all streams
+        def test_streams_background():
+            tested_count = 0
+            success_count = 0
+            
+            for stream in m3u_streams:
+                try:
+                    stream_id = stream.get('id')
+                    stream_url = stream.get('url')
+                    stream_name = stream.get('name', 'Unknown')
+                    
+                    if not stream_url:
+                        continue
+                    
+                    # Test stream using analyze_stream
+                    result = analyze_stream(
+                        stream_url=stream_url,
+                        stream_id=stream_id,
+                        stream_name=stream_name,
+                        ffmpeg_duration=config.get('ffmpeg_duration', 30),
+                        timeout=config.get('timeout', 30),
+                        retries=0,  # No retries for bulk testing
+                        retry_delay=config.get('retry_delay', 10),
+                        user_agent=config.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=config.get('stream_startup_buffer', 10),
+                        proxy=config.get('http_proxy'),
+                        use_cache=True
+                    )
+                    
+                    tested_count += 1
+                    
+                    # Update stream stats in UDI if test was successful
+                    if result.get('status') == 'OK':
+                        success_count += 1
+                        
+                        # Update stream with test results
+                        update_data = {
+                            'video_codec': result.get('video_codec'),
+                            'audio_codec': result.get('audio_codec'),
+                            'resolution': result.get('resolution'),
+                            'fps': result.get('fps'),
+                            'bitrate_kbps': result.get('bitrate_kbps'),
+                            'last_checked': result.get('timestamp')
+                        }
+                        
+                        udi.update_stream(stream_id, update_data)
+                    
+                except Exception as e:
+                    logger.error(f"Error testing stream {stream.get('name', 'Unknown')}: {e}")
+                    continue
+            
+            logger.info(f"Completed testing M3U account {account_id}: {success_count}/{tested_count} streams successful")
         
-        # Add dummy channel to UDI
-        udi.add_channel(dummy_channel)
-        logger.info(f"Created temporary dummy channel {dummy_channel_id} for M3U account {account_id} testing")
-        
-        # Assign all streams from M3U account to dummy channel
-        stream_ids = [s.get('id') for s in account_streams if s.get('id')]
-        for stream_id in stream_ids:
-            udi.add_stream_to_channel(dummy_channel_id, stream_id)
-        
-        logger.info(f"Assigned {len(stream_ids)} streams to dummy channel {dummy_channel_id}")
-        
-        # Queue dummy channel for checking with force_check flag (bypasses immunity)
-        service.queue_channel(dummy_channel_id, priority=10, force_check=True)
+        # Start background thread
+        thread = threading.Thread(target=test_streams_background, daemon=True)
+        thread.start()
         
         return jsonify({
-            "message": f"Testing {len(stream_ids)} stream(s) from M3U account {account_id} via temporary channel",
-            "streams_found": len(account_streams),
-            "streams_tested": len(stream_ids),
-            "channels_affected": 1,
-            "status": "queued",
-            "description": f"Testing all streams from M3U account {account_id}",
-            "note": "Temporary test channel will be removed after testing completes"
+            "message": f"Testing {len(m3u_streams)} stream(s) from M3U account {account_id} in background",
+            "streams_found": len(m3u_streams),
+            "status": "started",
+            "description": "Testing all streams directly (no channel assignment required)"
         })
     
     except Exception as e:
         logger.error(f"Error testing all M3U streams: {e}")
-        # Try to clean up dummy channel if it was created
-        try:
-            if 'dummy_channel_id' in locals():
-                udi.delete_channel(dummy_channel_id)
-                logger.info(f"Cleaned up dummy channel {dummy_channel_id} after error")
-        except:
-            pass
         return jsonify({"error": str(e)}), 500
 
 
