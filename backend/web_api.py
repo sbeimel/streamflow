@@ -3763,26 +3763,10 @@ def discover_and_test_m3u(account_id):
         # Get UDI manager to find assigned streams (even if no NEW streams were assigned)
         udi = get_udi_manager()
         
-        # OPTIMIZED: Get all streams from M3U account first, then find which channels they're in
-        # This is much faster than scanning all channels
-        logger.info(f"Getting all streams from M3U account {account_id}")
-        all_streams = udi.get_streams(log_result=False)
-        
-        # Filter to only streams from this M3U account
-        m3u_streams = {s['id']: s for s in all_streams if s.get('m3u_account') == account_id}
-        logger.info(f"Found {len(m3u_streams)} streams from M3U account {account_id}")
-        
-        if not m3u_streams:
-            return jsonify({
-                "message": f"No streams from M3U account {account_id} found in system",
-                "streams_found": 0,
-                "channels_affected": 0,
-                "status": "completed"
-            })
-        
-        # Now find which channels contain these streams
-        logger.info(f"Scanning channels for M3U {account_id} streams...")
+        # Get all channels
         channels = udi.get_channels()
+        logger.info(f"Scanning {len(channels)} channels for streams from M3U account {account_id}")
+        
         streams_to_test = []
         channels_affected = set()
         
@@ -3791,19 +3775,31 @@ def discover_and_test_m3u(account_id):
             if not channel_id:
                 continue
             
-            # Get stream IDs for this channel
-            channel_stream_ids = channel.get('streams', [])
-            if not channel_stream_ids:
+            # Get streams for this channel
+            streams = udi.get_channel_streams(channel_id)
+            if not streams:
                 continue
             
-            # Check if any of this channel's streams are from our M3U account
-            for stream_id in channel_stream_ids:
-                if stream_id in m3u_streams:
-                    streams_to_test.append({
-                        'stream_id': stream_id,
-                        'channel_id': channel_id
-                    })
-                    channels_affected.add(channel_id)
+            # Find streams from the specified M3U account
+            for stream in streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+                
+                # Get full stream data
+                stream_data = udi.get_stream_by_id(stream_id)
+                if not stream_data:
+                    continue
+                
+                # Check if stream belongs to the specified M3U account
+                if stream_data.get('m3u_account') != account_id:
+                    continue
+                
+                streams_to_test.append({
+                    'stream_id': stream_id,
+                    'channel_id': channel_id
+                })
+                channels_affected.add(channel_id)
         
         logger.info(f"Found {len(streams_to_test)} streams from M3U {account_id} across {len(channels_affected)} channels")
         
