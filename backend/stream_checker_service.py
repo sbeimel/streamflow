@@ -49,6 +49,9 @@ from channel_settings_manager import get_channel_settings_manager
 # Import profile config
 from profile_config import get_profile_config
 
+# Import quality scoring module
+from quality_scoring import calculate_stream_score_enhanced, NOT_STREAMING_THRESHOLD
+
 # Import priority channel queue
 from priority_channel_queue import get_priority_queue
 
@@ -111,6 +114,7 @@ class StreamCheckConfig:
             'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
         },
         'scoring': {
+            'method': 'enhanced',  # 'enhanced' (MACstrom-inspired sigmoid) or 'legacy' (linear)
             'weights': {
                 'bitrate': 0.40,
                 'resolution': 0.35,
@@ -3303,79 +3307,57 @@ class StreamCheckerService:
     def _calculate_stream_score(self, stream_data: Dict, channel_id: Optional[int] = None) -> float:
         """Calculate a quality score for a stream based on analysis.
         
-        Applies M3U account priority bonuses according to priority_mode and
-        channel-specific quality preferences.
+        Supports both enhanced (MACstrom-inspired sigmoid) and legacy (linear) scoring methods.
+        The method can be configured via config['scoring']['method'].
+        
+        Enhanced Method (default):
+            - Codec-aware reference bitrates (HEVC needs less than H.264)
+            - Sigmoid curve for better discrimination
+            - Off-air detection (< 200 kbps)
+            - Resolution ceiling (720p can't beat 1080p)
+        
+        Legacy Method:
+            - Linear weighted sum
+            - Simple bitrate/resolution/fps/codec scoring
         
         Args:
             stream_data: Stream analysis data
             channel_id: Optional channel ID for applying quality preferences
+        
+        Returns:
+            float: Quality score (0.0 - 1.0+, can exceed 1.0 with bonuses)
         """
         # Dead streams always get a score of 0
         if self._is_stream_dead(stream_data):
             return 0.0
         
-        # Fallback scoring for streams without bitrate but with resolution/FPS
-        # These streams work but FFmpeg couldn't extract all metadata (e.g., due to packet corruption)
-        if (stream_data.get('bitrate_kbps', 0) == 0 and 
-            stream_data.get('resolution') not in ['0x0', 'N/A', ''] and
-            stream_data.get('fps', 0) > 0):
-            
-            logger.debug(f"Stream without bitrate info but functional: {stream_data.get('resolution')}@{stream_data.get('fps')}fps - assigning fallback score: 0.40")
-            return 0.40  # Medium score - better than dead streams (0.0), worse than complete streams (0.60-1.0)
+        # Get scoring method from config
+        scoring_method = self.config.get('scoring.method', 'enhanced')
+        use_legacy = (scoring_method == 'legacy')
         
-        weights = self.config.get('scoring.weights', {})
-        score = 0.0
+        # Calculate base quality score
+        if use_legacy:
+            # Use legacy scoring with configured weights
+            weights = self.config.get('scoring.weights', {})
+            score = calculate_stream_score_enhanced(
+                stream_data,
+                use_legacy_scoring=True,
+                legacy_weights=weights
+            )
+        else:
+            # Use enhanced scoring (MACstrom-inspired)
+            score = calculate_stream_score_enhanced(
+                stream_data,
+                use_legacy_scoring=False
+            )
         
-        # Bitrate score (0-1, normalized to typical range 1000-8000 kbps)
-        bitrate = stream_data.get('bitrate_kbps', 0)
-        if isinstance(bitrate, (int, float)) and bitrate > 0:
-            bitrate_score = min(bitrate / 8000, 1.0)
-            score += bitrate_score * weights.get('bitrate', 0.40)
-        
-        # Resolution score (0-1)
-        resolution = stream_data.get('resolution', 'N/A')
-        resolution_score = 0.0
-        if 'x' in str(resolution):
-            try:
-                width, height = map(int, resolution.split('x'))
-                # Score based on vertical resolution
-                if height >= 1080:
-                    resolution_score = 1.0
-                elif height >= 720:
-                    resolution_score = 0.7
-                elif height >= 576:
-                    resolution_score = 0.5
-                else:
-                    resolution_score = 0.3
-            except (ValueError, AttributeError):
-                pass
-        score += resolution_score * weights.get('resolution', 0.35)
-        
-        # FPS score (0-1)
-        fps = stream_data.get('fps', 0)
-        if isinstance(fps, (int, float)) and fps > 0:
-            fps_score = min(fps / 60, 1.0)
-            score += fps_score * weights.get('fps', 0.15)
-        
-        # Codec score (0-1)
-        codec = stream_data.get('video_codec', '').lower()
-        codec_score = 0.0
-        if codec:
-            if 'h265' in codec or 'hevc' in codec:
-                codec_score = 1.0 if self.config.get('scoring.prefer_h265', True) else 0.8
-            elif 'h264' in codec or 'avc' in codec:
-                codec_score = 0.8 if self.config.get('scoring.prefer_h265', True) else 1.0
-            elif codec != 'n/a':
-                codec_score = 0.5
-        score += codec_score * weights.get('codec', 0.10)
-        
-        # Apply M3U account priority bonus if enabled
+        # Apply M3U account priority bonus (unchanged)
         stream_id = stream_data.get('stream_id')
         if stream_id:
             priority_boost = self._get_priority_boost(stream_id, stream_data)
             score += priority_boost
         
-        # Apply channel-specific quality preference boost/penalty
+        # Apply channel-specific quality preference boost/penalty (unchanged)
         if channel_id:
             quality_boost = self._get_quality_preference_boost(stream_data, channel_id)
             score += quality_boost

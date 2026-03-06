@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Loader2, AlertCircle, CheckCircle2, Trash2, Plus, ArrowUp, ArrowDown } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamCheckerAPI, dispatcharrAPI, m3uAPI } from '@/services/api.js'
+import ScoringMethodSettings from '@/components/ScoringMethodSettings.jsx'
 
 // Default values for automation controls
 const DEFAULT_AUTOMATION_CONTROLS = {
@@ -220,11 +221,12 @@ export default function AutomationSettings() {
       </div>
 
       <Tabs defaultValue="connection" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="connection">Connection</TabsTrigger>
           <TabsTrigger value="automation">Automation</TabsTrigger>
           <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
           <TabsTrigger value="queue">Queue</TabsTrigger>
+          <TabsTrigger value="scoring">Scoring</TabsTrigger>
         </TabsList>
         
         <TabsContent value="connection" className="space-y-6">
@@ -777,6 +779,19 @@ export default function AutomationSettings() {
             </Alert>
           )}
 
+          {/* Save Button */}
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving} size="lg">
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Settings
+            </Button>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="scoring" className="space-y-6">
+          {/* Scoring Method Settings */}
+          <ScoringMethodSettings />
+          
           {/* Save Button */}
           <div className="flex justify-end">
             <Button onClick={handleSave} disabled={saving} size="lg">
