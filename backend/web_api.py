@@ -3334,6 +3334,144 @@ def test_streams_without_stats():
     except Exception as e:
         logger.error(f"Error testing streams without stats: {e}")
         return jsonify({"error": str(e)}), 500
+@app.route('/api/stream-checker/test-incomplete-stats', methods=['POST'])
+def test_incomplete_stats():
+    """Test all streams that have incomplete quality stats.
+
+    This is useful for:
+    - Testing streams that only have partial data (e.g., only bitrate but no codec/resolution)
+    - Retesting streams where FFmpeg analysis was interrupted
+    - Ensuring all streams have complete quality data
+
+    Tests streams where stream_stats exists but is missing key fields like:
+    - resolution (missing or N/A or 0x0)
+    - video_codec (missing or N/A)
+    - audio_codec (missing or N/A)
+    - ffmpeg_output_bitrate (missing or 0)
+    """
+    try:
+        service = get_stream_checker_service()
+
+        if not service.running:
+            return jsonify({"error": "Stream checker service is not running"}), 400
+
+        # Get UDI manager to find streams with incomplete stats
+        from udi.manager import get_udi_manager
+        udi = get_udi_manager()
+
+        # Get all channels
+        channels = udi.get_channels()
+        streams_to_test = []
+        channel_count = 0
+
+        for channel in channels:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+
+            # Get streams for this channel
+            streams = udi.get_channel_streams(channel_id)
+            if not streams:
+                continue
+
+            # Find streams with incomplete stats
+            channel_has_streams_to_test = False
+            for stream in streams:
+                stream_id = stream.get('id')
+                if not stream_id:
+                    continue
+
+                # Get full stream data
+                stream_data = udi.get_stream_by_id(stream_id)
+                if not stream_data:
+                    continue
+
+                # Check if this stream should skip quality checking (quality exclusions)
+                if service._should_skip_quality_check(stream_data):
+                    # Skip quality-excluded streams - they don't need quality stats
+                    continue
+
+                # Check if stream has stats
+                stream_stats = stream_data.get('stream_stats')
+
+                # Skip if no stats at all (handled by test-streams-without-stats)
+                if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+                    continue
+
+                # Parse stream_stats if it's a JSON string
+                import json
+                if isinstance(stream_stats, str):
+                    try:
+                        stream_stats = json.loads(stream_stats)
+                    except json.JSONDecodeError:
+                        stream_stats = {}
+
+                # Check if stats are incomplete
+                is_incomplete = False
+
+                # Check resolution
+                resolution = stream_stats.get('resolution')
+                if not resolution or resolution in ['N/A', '0x0', '', 'Unknown']:
+                    is_incomplete = True
+
+                # Check video codec
+                video_codec = stream_stats.get('video_codec')
+                if not video_codec or video_codec in ['N/A', '', 'Unknown']:
+                    is_incomplete = True
+
+                # Check audio codec
+                audio_codec = stream_stats.get('audio_codec')
+                if not audio_codec or audio_codec in ['N/A', '', 'Unknown']:
+                    is_incomplete = True
+
+                # Check bitrate
+                bitrate = stream_stats.get('ffmpeg_output_bitrate')
+                if not bitrate or bitrate == 0 or bitrate == '0':
+                    is_incomplete = True
+
+                if is_incomplete:
+                    streams_to_test.append({
+                        'stream_id': stream_id,
+                        'stream_name': stream.get('name', 'Unknown'),
+                        'channel_id': channel_id,
+                        'channel_name': channel.get('name', f'Channel {channel_id}'),
+                        'missing_fields': {
+                            'resolution': not resolution or resolution in ['N/A', '0x0', '', 'Unknown'],
+                            'video_codec': not video_codec or video_codec in ['N/A', '', 'Unknown'],
+                            'audio_codec': not audio_codec or audio_codec in ['N/A', '', 'Unknown'],
+                            'bitrate': not bitrate or bitrate == 0 or bitrate == '0'
+                        }
+                    })
+                    channel_has_streams_to_test = True
+
+            if channel_has_streams_to_test:
+                channel_count += 1
+
+        if not streams_to_test:
+            return jsonify({
+                "message": "No streams with incomplete stats found",
+                "streams_found": 0,
+                "channels_affected": 0
+            })
+
+        # Queue channels for checking with force_check flag
+        channels_to_check = list(set(s['channel_id'] for s in streams_to_test))
+
+        for channel_id in channels_to_check:
+            service.queue_channel(channel_id, priority=20, force_check=True)
+
+        return jsonify({
+            "message": f"Queued {len(streams_to_test)} stream(s) with incomplete stats for testing",
+            "streams_found": len(streams_to_test),
+            "channels_affected": len(channels_to_check),
+            "status": "queued",
+            "description": f"Testing streams from {len(channels_to_check)} channel(s)"
+        })
+
+    except Exception as e:
+        logger.error(f"Error testing streams with incomplete stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 # ============================================================================
 # Scheduling API Endpoints

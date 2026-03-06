@@ -139,6 +139,26 @@ export default function Dashboard() {
     }
   }
 
+  const handleTestIncompleteStats = async () => {
+    try {
+      setActionLoading('test-incomplete-stats')
+      const response = await streamCheckerAPI.testIncompleteStats()
+      toast({
+        title: "Success",
+        description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
+      })
+      await loadStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to test streams with incomplete stats",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
   const handleRescoreAndResort = async () => {
     try {
       setActionLoading('rescore-resort')
@@ -391,6 +411,15 @@ export default function Dashboard() {
           >
             <TestTube className="mr-2 h-4 w-4" />
             {actionLoading === 'test-without-stats' ? 'Testing...' : 'Test Streams Without Stats'}
+          </Button>
+
+          <Button
+            onClick={handleTestIncompleteStats}
+            disabled={shouldDisableActions}
+            variant="outline"
+          >
+            <TestTube className="mr-2 h-4 w-4" />
+            {actionLoading === 'test-incomplete-stats' ? 'Testing...' : 'Test Incomplete Stats'}
           </Button>
 
           <Button

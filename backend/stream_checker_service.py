@@ -2090,6 +2090,8 @@ class StreamCheckerService:
             
             # Get configuration for analysis
             analysis_params = self.config.get('stream_analysis', {})
+            logger.debug(f"analysis_params loaded: {analysis_params}")
+            logger.debug(f"ffmpeg_duration from config: {analysis_params.get('ffmpeg_duration', 'NOT_FOUND')}")
             global_limit = self.config.get('concurrent_streams.global_limit', 10)
             stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
             
@@ -3072,7 +3074,7 @@ class StreamCheckerService:
                 stream_url=stream_url,
                 stream_id=stream_id,
                 stream_name=stream_name,
-                ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
                 timeout=analysis_params.get('timeout', 30),
                 retries=analysis_params.get('retries', 1),
                 retry_delay=analysis_params.get('retry_delay', 10),
@@ -3101,7 +3103,7 @@ class StreamCheckerService:
                     stream_url=stream_url,
                     stream_id=stream_id,
                     stream_name=stream_name,
-                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
@@ -3191,7 +3193,7 @@ class StreamCheckerService:
                                     stream_url=stream_url,
                                     stream_id=stream_id,
                                     stream_name=stream_name,
-                                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
+                                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
                                     timeout=analysis_params.get('timeout', 30),
                                     retries=analysis_params.get('retries', 1),
                                     retry_delay=analysis_params.get('retry_delay', 10),

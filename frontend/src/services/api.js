@@ -108,6 +108,7 @@ export const streamCheckerAPI = {
   queueAllChannels: () => api.post('/stream-checker/queue-all'),
   triggerGlobalAction: () => api.post('/stream-checker/global-action'),
   testStreamsWithoutStats: () => api.post('/stream-checker/test-streams-without-stats'),
+  testIncompleteStats: () => api.post('/stream-checker/test-incomplete-stats'),
   rescoreAndResort: () => api.post('/stream-checker/rescore-resort'),
   removeExcludedStreams: () => api.post('/stream-checker/remove-excluded-streams'),
 };
