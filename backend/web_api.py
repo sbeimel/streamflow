@@ -3755,13 +3755,13 @@ def discover_and_test_m3u(account_id):
         
         # Run stream discovery (this assigns streams to real channels)
         logger.info(f"Running stream discovery for M3U account {account_id}")
-        assignment_count = automation.discover_and_assign_streams()
+        success, error = automation.discover_and_assign_streams()
         
-        if not assignment_count:
+        if not success:
             return jsonify({
-                "message": "Stream discovery completed but no new streams were assigned",
-                "status": "completed"
-            })
+                "error": f"Stream discovery failed: {error}",
+                "status": "failed"
+            }), 500
         
         # Get UDI manager to find assigned streams
         udi = get_udi_manager()
