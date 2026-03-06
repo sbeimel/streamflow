@@ -3621,23 +3621,22 @@ def test_m3u_account_streams(account_id):
 
 @app.route('/api/stream-checker/test-all-m3u-streams/<int:account_id>', methods=['POST'])
 def test_all_m3u_streams(account_id):
-    """Test ALL streams from M3U account using a temporary dummy channel.
+    """Test ALL streams from a specific M3U account (regardless of channel assignment).
     
     This endpoint:
-    1. Creates a temporary dummy channel
-    2. Assigns ALL streams from the M3U account to the dummy channel
-    3. Tests all streams via the dummy channel (bypasses immunity)
-    4. Deletes the dummy channel after testing
-    5. Does NOT run discovery (only tests)
+    - Tests all streams from the M3U account directly
+    - Does NOT require streams to be assigned to channels
+    - Bypasses stream check immunity
+    - Useful for testing a new provider before assignment
     
     Args:
         account_id: The M3U account ID to test
     """
     try:
         from udi.manager import get_udi_manager
+        from stream_check_utils import check_stream_quality
         
         udi = get_udi_manager()
-        service = get_stream_checker_service()
         
         # Get all streams from this M3U account
         all_streams = udi.get_streams()
@@ -3650,83 +3649,93 @@ def test_all_m3u_streams(account_id):
                 "streams_tested": 0
             })
         
-        # Start stream checker if not running
+        # Start stream checker service if not running
+        service = get_stream_checker_service()
         if not service.running:
             service.start()
             logger.info(f"Started stream checker service for M3U account {account_id} testing")
         
-        # Create temporary dummy channel
-        dummy_channel_id = f"_temp_m3u_test_{account_id}"
-        dummy_channel = {
-            'id': dummy_channel_id,
-            'name': f'[TEMP] M3U Test {account_id}',
-            'number': 99999,
-            'enabled': True,
-            'logo': None
-        }
+        # Test each stream directly (without immunity)
+        tested_count = 0
+        results = []
         
-        # Add dummy channel to UDI
-        udi.add_channel(dummy_channel)
-        logger.info(f"Created temporary dummy channel {dummy_channel_id} for M3U account {account_id} testing")
-        
-        # Assign all streams from M3U account to dummy channel
-        stream_ids = [s.get('id') for s in account_streams if s.get('id')]
-        for stream_id in stream_ids:
-            udi.add_stream_to_channel(dummy_channel_id, stream_id)
-        
-        logger.info(f"Assigned {len(stream_ids)} streams to dummy channel {dummy_channel_id}")
-        
-        # Queue dummy channel for checking with force_check flag (bypasses immunity)
-        service.queue_channel(dummy_channel_id, priority=10, force_check=True)
+        for stream in account_streams[:50]:  # Limit to first 50 streams for safety
+            stream_id = stream.get('id')
+            stream_url = stream.get('url')
+            stream_name = stream.get('name', 'Unknown')
+            
+            if not stream_url:
+                continue
+            
+            try:
+                # Check stream quality directly
+                result = check_stream_quality(
+                    stream_url=stream_url,
+                    stream_name=stream_name,
+                    config=service.config.get('stream_analysis', {}),
+                    user_agent=service.config.get('stream_analysis', {}).get('user_agent', 'VLC/3.0.14')
+                )
+                
+                # Update stream stats in UDI
+                if result.get('success'):
+                    udi.update_stream_stats(stream_id, result)
+                    tested_count += 1
+                    results.append({
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'status': 'success',
+                        'resolution': result.get('resolution'),
+                        'bitrate': result.get('bitrate')
+                    })
+                else:
+                    results.append({
+                        'stream_id': stream_id,
+                        'stream_name': stream_name,
+                        'status': 'failed',
+                        'error': result.get('error')
+                    })
+            except Exception as e:
+                logger.error(f"Error testing stream {stream_id}: {e}")
+                results.append({
+                    'stream_id': stream_id,
+                    'stream_name': stream_name,
+                    'status': 'error',
+                    'error': str(e)
+                })
         
         return jsonify({
-            "message": f"Testing {len(stream_ids)} stream(s) from M3U account {account_id} via temporary channel",
+            "message": f"Tested {tested_count} stream(s) from M3U account {account_id}",
             "streams_found": len(account_streams),
-            "streams_tested": len(stream_ids),
-            "channels_affected": 1,
-            "status": "queued",
-            "description": f"Testing all streams from M3U account {account_id}",
-            "note": "Temporary test channel will be removed after testing completes"
+            "streams_tested": tested_count,
+            "results": results[:10],  # Return first 10 results
+            "status": "completed"
         })
     
     except Exception as e:
         logger.error(f"Error testing all M3U streams: {e}")
-        # Try to clean up dummy channel if it was created
-        try:
-            if 'dummy_channel_id' in locals():
-                udi.delete_channel(dummy_channel_id)
-                logger.info(f"Cleaned up dummy channel {dummy_channel_id} after error")
-        except:
-            pass
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/stream-checker/discover-and-test-m3u/<int:account_id>', methods=['POST'])
 def discover_and_test_m3u(account_id):
-    """Run discovery to assign streams, then test only assigned streams from M3U account.
+    """Discover streams for channels, then test only assigned streams from M3U account.
     
     This endpoint:
-    1. Runs stream discovery to assign streams to real channels
-    2. Finds all channels that got streams from this M3U account
-    3. Tests those channels (bypasses immunity)
-    4. No dummy channel needed - uses real channels
+    1. Runs stream discovery to assign streams to channels
+    2. Tests only streams from this M3U account that got assigned
+    3. Bypasses stream check immunity
+    4. Useful for testing a provider after automatic assignment
     
     Args:
         account_id: The M3U account ID to discover and test
     """
     try:
-        from udi.manager import get_udi_manager
+        from automated_stream_manager import get_automated_stream_manager
         
-        # Get automation manager using the global instance
-        automation = get_automation_manager()
-        service = get_stream_checker_service()
+        # Get automation manager
+        automation = get_automated_stream_manager()
         
-        # Start stream checker if not running
-        if not service.running:
-            service.start()
-            logger.info(f"Started stream checker service for M3U account {account_id} testing")
-        
-        # Run stream discovery (this assigns streams to real channels)
+        # Run stream discovery (this assigns streams to channels)
         logger.info(f"Running stream discovery for M3U account {account_id}")
         success, error = automation.discover_and_assign_streams()
         
@@ -3736,7 +3745,16 @@ def discover_and_test_m3u(account_id):
                 "status": "failed"
             }), 500
         
+        # Now test the assigned streams from this M3U account
+        service = get_stream_checker_service()
+        
+        # Start stream checker if not running
+        if not service.running:
+            service.start()
+            logger.info(f"Started stream checker service for M3U account {account_id} testing")
+        
         # Get UDI manager to find assigned streams
+        from udi.manager import get_udi_manager
         udi = get_udi_manager()
         
         # Get all channels
