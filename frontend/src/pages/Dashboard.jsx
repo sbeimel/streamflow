@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { automationAPI, streamAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
-import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2, TestTube, Sparkles, StopCircle, Zap } from 'lucide-react'
+import { PlayCircle, RefreshCw, Search, Activity, CheckCircle2, AlertCircle, Loader2, TestTube, Sparkles, StopCircle } from 'lucide-react'
 
 export default function Dashboard() {
   const [status, setStatus] = useState(null)
@@ -252,46 +252,6 @@ export default function Dashboard() {
       toast({
         title: "Error",
         description: err.response?.data?.error || `Failed to check stats for ${accountName}`,
-        variant: "destructive"
-      })
-    } finally {
-      setCheckingM3uStats(null)
-    }
-  }
-
-  const handleTestAllM3uStreams = async (accountId, accountName) => {
-    try {
-      setCheckingM3uStats(`all-${accountId}`)
-      const response = await streamCheckerAPI.testAllM3uStreams(accountId)
-      toast({
-        title: "Success",
-        description: response.data.message || `Tested ${response.data.streams_tested} stream(s) from ${accountName}`
-      })
-      await loadStatus()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || `Failed to test all streams from ${accountName}`,
-        variant: "destructive"
-      })
-    } finally {
-      setCheckingM3uStats(null)
-    }
-  }
-
-  const handleDiscoverAndTestM3u = async (accountId, accountName) => {
-    try {
-      setCheckingM3uStats(`discover-${accountId}`)
-      const response = await streamCheckerAPI.discoverAndTestM3u(accountId)
-      toast({
-        title: "Success",
-        description: response.data.message || `Discovery completed for ${accountName}`
-      })
-      await loadStatus()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || `Failed to discover and test ${accountName}`,
         variant: "destructive"
       })
     } finally {
@@ -659,30 +619,14 @@ export default function Dashboard() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleTestAllM3uStreams(playlist.id, playlist.name)}
-                        disabled={checkingM3uStats === `all-${playlist.id}`}
-                        title="Test ALL streams from this M3U account (no channel assignment required, bypasses immunity)"
+                        onClick={() => handleCheckM3uStats(playlist.id, playlist.name)}
+                        disabled={checkingM3uStats === playlist.id || !isStreamCheckerRunning}
+                        title={!isStreamCheckerRunning ? "Stream Checker must be running" : "Check quality stats for all streams from this M3U account"}
                       >
-                        {checkingM3uStats === `all-${playlist.id}` ? (
+                        {checkingM3uStats === playlist.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <TestTube className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDiscoverAndTestM3u(playlist.id, playlist.name)}
-                        disabled={checkingM3uStats === `discover-${playlist.id}`}
-                        title="Discover streams for channels, then test assigned streams from this M3U account (bypasses immunity)"
-                      >
-                        {checkingM3uStats === `discover-${playlist.id}` ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Search className="h-3 w-3 mr-1" />
-                            <TestTube className="h-3 w-3" />
-                          </>
                         )}
                       </Button>
                       <Switch
