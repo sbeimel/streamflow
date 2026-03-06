@@ -2558,29 +2558,6 @@ class StreamCheckerService:
             self.checking = False
             self.progress.clear()
             log_function_return(logger, "_check_channel_concurrent")
-
-    # Check if M3U filter is set for this channel (from Discover & Test for specific M3U)
-    m3u_filter = self.update_tracker.get_m3u_filter_for_channel(channel_id)
-
-    if m3u_filter is not None:
-        original_count = len(streams)
-        streams = [s for s in streams if s.get('m3u_account') == m3u_filter]
-        filtered_count = len(streams)
-
-        logger.info(f"🔍 M3U Filter applied: {original_count} total streams → {filtered_count} from M3U account {m3u_filter}")
-
-        if filtered_count == 0:
-            logger.warning(f"No streams from M3U account {m3u_filter} found in channel {channel_name}")
-            # Clear filter and mark as completed
-            self.update_tracker.clear_m3u_filter(channel_id)
-            self.check_queue.mark_completed(channel_id)
-            self.update_tracker.mark_channel_checked(channel_id)
-            return {
-                'dead_streams_count': 0,
-                'revived_streams_count': 0
-            }
-
-
     
     def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel using sequential checking.
