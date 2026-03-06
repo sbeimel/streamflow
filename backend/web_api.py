@@ -3754,7 +3754,7 @@ def discover_and_test_m3u(account_id):
         
         # Run stream discovery (this assigns streams to real channels)
         logger.info(f"Running stream discovery for M3U account {account_id}")
-        assignment_count = automation.discover_and_assign_streams(m3u_account_id=account_id)
+        assignment_count = automation.discover_and_assign_streams()
         
         if not assignment_count:
             return jsonify({
