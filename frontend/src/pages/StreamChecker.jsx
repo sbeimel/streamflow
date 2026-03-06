@@ -140,27 +140,7 @@ export default function StreamChecker() {
     } catch (err) {
       toast({
         title: "Error",
-        description: err.response?.data?.error || "Failed to test streams without stats",
-        variant: "destructive"
-      })
-    } finally {
-      setActionLoading('')
-    }
-  }
-
-  const handleTestIncompleteStats = async () => {
-    try {
-      setActionLoading('test-incomplete-stats')
-      const response = await streamCheckerAPI.testIncompleteStats()
-      toast({
-        title: "Success",
-        description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
-      })
-      await loadData()
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err.response?.data?.error || "Failed to test streams with incomplete stats",
+        description: err.response?.data?.error || "Failed to test streams without/incomplete stats",
         variant: "destructive"
       })
     } finally {
@@ -445,19 +425,7 @@ export default function StreamChecker() {
             ) : (
               <TestTube className="mr-2 h-4 w-4" />
             )}
-            Test Streams Without Stats
-          </Button>
-          <Button
-            onClick={handleTestIncompleteStats}
-            disabled={actionLoading === 'test-incomplete-stats' || isChecking}
-            variant="outline"
-          >
-            {actionLoading === 'test-incomplete-stats' ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <TestTube className="mr-2 h-4 w-4" />
-            )}
-            Test Incomplete Stats
+            Test Missing/Incomplete Stats
           </Button>
           <Button
             onClick={handleRescoreAndResort}
