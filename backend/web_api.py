@@ -152,9 +152,6 @@ def _auto_start_services():
     except Exception as e:
         logger.error(f"Failed to auto-start services: {e}")
 
-# Call auto-start when module is loaded (works with Gunicorn)
-_auto_start_services()
-
 
 # Global instances
 automation_manager = None
@@ -280,6 +277,11 @@ def check_wizard_complete():
     except Exception as e:
         logger.warning(f"Error checking wizard completion status: {e}")
         return False
+
+
+# Call auto-start when module is loaded (works with Gunicorn)
+# Must be called AFTER check_wizard_complete is defined
+_auto_start_services()
 
 
 def scheduled_event_processor():
