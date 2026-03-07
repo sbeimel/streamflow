@@ -3960,9 +3960,8 @@ class StreamCheckerService:
             # Use the normal update method for other changes
             self.config.update(updates)
         
-        # Save configuration to file (only if we didn't already save it above)
-        if 'account_stream_limits' not in updates:
-            self._save_config()
+        # Configuration is automatically saved by config.update() or config._save_config() above
+        # No need to call self._save_config() here
         
         # Log the changes
         if config_changes:

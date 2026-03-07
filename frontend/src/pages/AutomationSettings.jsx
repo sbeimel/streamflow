@@ -791,14 +791,6 @@ export default function AutomationSettings() {
         <TabsContent value="scoring" className="space-y-6">
           {/* Scoring Method Settings */}
           <ScoringMethodSettings />
-          
-          {/* Save Button */}
-          <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={saving} size="lg">
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save Settings
-            </Button>
-          </div>
         </TabsContent>
       </Tabs>
     </div>
