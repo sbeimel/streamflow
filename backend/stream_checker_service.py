@@ -4173,12 +4173,12 @@ class StreamCheckerService:
                     # Update channel streams if there are changes
                     if streams_after != streams_before or streams_after > 0:
                         try:
-                            # Extract stream IDs in new order
-                            new_stream_ids = [str(s['stream_id']) for s in analyzed_streams]
+                            # Extract stream IDs in new order (as integers)
+                            new_stream_ids = [int(s['stream_id']) for s in analyzed_streams]
                             
                             # Update channel streams in UDI
                             from api_utils import update_channel_streams
-                            success = update_channel_streams(channel_id, [{'id': sid} for sid in new_stream_ids])
+                            success = update_channel_streams(channel_id, new_stream_ids)
                             
                             if success:
                                 stats['channels_updated'] += 1
