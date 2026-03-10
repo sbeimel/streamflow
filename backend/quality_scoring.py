@@ -216,7 +216,8 @@ def calculate_quality_score_fallback(
 def calculate_stream_score_enhanced(
     stream_data: Dict,
     use_legacy_scoring: bool = False,
-    legacy_weights: Optional[Dict] = None
+    legacy_weights: Optional[Dict] = None,
+    avoid_h265: bool = False
 ) -> float:
     """
     Enhanced stream scoring using MACstrom-inspired reference-bitrate sigmoid method.
@@ -232,6 +233,7 @@ def calculate_stream_score_enhanced(
             - status: Stream status ('OK', 'Priority-Only', etc.)
         use_legacy_scoring: If True, use old linear scoring method
         legacy_weights: Legacy scoring weights (only used if use_legacy_scoring=True)
+        avoid_h265: If True, penalize H.265/HEVC streams (for compatibility issues)
     
     Returns:
         Score (0.0 - 1.0 for compatibility with existing code)
@@ -257,6 +259,11 @@ def calculate_stream_score_enhanced(
         else:
             # Use fallback scoring
             score = calculate_quality_score_fallback(resolution, fps)
+            # Apply HEVC penalty if avoiding
+            if avoid_h265:
+                normalized_codec = normalize_codec(codec)
+                if normalized_codec == 'hevc':
+                    score *= 0.7  # 30% penalty for HEVC
             return score / 100.0  # Normalize to 0-1
     
     # Use legacy scoring if requested
@@ -269,10 +276,18 @@ def calculate_stream_score_enhanced(
                 'fps': 0.15,
                 'codec': 0.10
             }
+        # Pass avoid_h265 to legacy scoring
+        legacy_weights['avoid_h265'] = avoid_h265
         return _calculate_legacy_score(stream_data, legacy_weights)
     
     # Use new enhanced scoring (MACstrom-inspired)
     quality_score = calculate_quality_score(bitrate, codec, resolution, fps)
+    
+    # Apply HEVC penalty if avoiding (for enhanced scoring)
+    if avoid_h265:
+        normalized_codec = normalize_codec(codec)
+        if normalized_codec == 'hevc':
+            quality_score *= 0.7  # 30% penalty for HEVC
     
     # Normalize to 0-1 range for compatibility
     return quality_score / 100.0
@@ -312,14 +327,33 @@ def _calculate_legacy_score(stream_data: Dict, weights: Dict) -> float:
         fps_score = min(fps / 60, 1.0)
         score += fps_score * weights.get('fps', 0.15)
     
-    # Codec score
+    # Codec score (respects prefer_h265 and avoid_h265 settings)
     codec = stream_data.get('video_codec', '').lower()
     codec_score = 0.0
+    prefer_h265 = weights.get('prefer_h265', True)
+    avoid_h265 = weights.get('avoid_h265', False)
+    
     if codec:
         if 'h265' in codec or 'hevc' in codec:
-            codec_score = 1.0
+            if avoid_h265:
+                # Penalize H.265/HEVC
+                codec_score = 0.5
+            elif prefer_h265:
+                # Prefer H.265/HEVC
+                codec_score = 1.0
+            else:
+                # Neutral
+                codec_score = 0.8
         elif 'h264' in codec or 'avc' in codec:
-            codec_score = 0.8
+            if avoid_h265:
+                # Prefer H.264 when avoiding HEVC
+                codec_score = 1.0
+            elif prefer_h265:
+                # Lower score for H.264 when preferring HEVC
+                codec_score = 0.8
+            else:
+                # Neutral
+                codec_score = 0.8
         elif codec != 'n/a':
             codec_score = 0.5
     score += codec_score * weights.get('codec', 0.10)

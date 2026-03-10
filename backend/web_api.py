@@ -3153,6 +3153,9 @@ def trigger_global_action():
     1. Reloads enabled M3U accounts
     2. Matches new streams with regex patterns
     3. Checks every channel, bypassing 2-hour immunity
+    
+    Returns immediately (202 Accepted) and runs in background thread.
+    Use /api/stream-checker/status to monitor progress.
     """
     try:
         service = get_stream_checker_service()
@@ -3160,16 +3163,36 @@ def trigger_global_action():
         if not service.running:
             return jsonify({"error": "Stream checker service is not running"}), 400
         
-        success = service.trigger_global_action()
-        
-        if success:
+        # Check if global action is already running
+        if service.global_action_in_progress:
             return jsonify({
-                "message": "Global action triggered successfully",
-                "status": "in_progress",
-                "description": "Update, Match, and Check all channels in progress"
-            })
-        else:
-            return jsonify({"error": "Failed to trigger global action"}), 500
+                "message": "Global action is already in progress",
+                "status": "running",
+                "info": "Use /api/stream-checker/status to monitor progress"
+            }), 409  # 409 Conflict
+        
+        # Start global action in background thread
+        import threading
+        
+        def run_global_action():
+            """Background thread for global action."""
+            try:
+                service.trigger_global_action()
+                logger.info("Global action completed successfully")
+            except Exception as e:
+                logger.error(f"Global action failed in background thread: {e}")
+        
+        thread = threading.Thread(target=run_global_action, daemon=True, name="GlobalActionThread")
+        thread.start()
+        
+        logger.info("Global action started in background thread")
+        
+        return jsonify({
+            "message": "Global action started in background",
+            "status": "running",
+            "info": "Use /api/stream-checker/status to monitor progress. This may take several hours depending on the number of channels and streams.",
+            "estimated_duration": "Can take 1-24 hours depending on setup"
+        }), 202  # 202 Accepted
     
     except Exception as e:
         logger.error(f"Error triggering global action: {e}")
@@ -3194,6 +3217,9 @@ def rescore_and_resort_all_channels():
     
     Useful after changing configuration without wanting to run time-consuming quality checks.
     Much faster than Global Action since it skips ffmpeg analysis.
+    
+    Returns immediately (202 Accepted) and runs in background thread.
+    Use /api/stream-checker/status to monitor progress.
     """
     try:
         service = get_stream_checker_service()
@@ -3201,27 +3227,42 @@ def rescore_and_resort_all_channels():
         if not service.running:
             return jsonify({"error": "Stream checker service is not running"}), 400
         
-        result = service.rescore_and_resort_all_channels()
-        
-        if result.get('success'):
+        # Check if operation is already running
+        if hasattr(service, 'rescore_in_progress') and service.rescore_in_progress:
             return jsonify({
-                "message": "Re-score and re-sort completed successfully",
-                "status": "completed",
-                "stats": {
-                    "channels_processed": result.get('channels_processed', 0),
-                    "channels_updated": result.get('channels_updated', 0),
-                    "streams_before": result.get('total_streams_before', 0),
-                    "streams_after": result.get('total_streams_after', 0),
-                    "streams_removed": result.get('streams_removed_by_limits', 0),
-                    "duration_seconds": result.get('duration_seconds', 0)
-                },
-                "channels_with_changes": result.get('channels_with_changes', [])
-            })
-        else:
-            return jsonify({"error": result.get('error', 'Unknown error')}), 500
+                "message": "Rescore & resort is already in progress",
+                "status": "running",
+                "info": "Use /api/stream-checker/status to monitor progress"
+            }), 409  # 409 Conflict
+        
+        # Start rescore in background thread
+        import threading
+        
+        def run_rescore():
+            """Background thread for rescore & resort."""
+            try:
+                service.rescore_in_progress = True
+                service.rescore_and_resort_all_channels()
+                logger.info("Rescore & resort completed successfully")
+            except Exception as e:
+                logger.error(f"Rescore & resort failed in background thread: {e}")
+            finally:
+                service.rescore_in_progress = False
+        
+        thread = threading.Thread(target=run_rescore, daemon=True, name="RescoreThread")
+        thread.start()
+        
+        logger.info("Rescore & resort started in background thread")
+        
+        return jsonify({
+            "message": "Rescore & resort started in background",
+            "status": "running",
+            "info": "Use /api/stream-checker/status to monitor progress. This may take several minutes depending on the number of channels.",
+            "estimated_duration": "1-5 minutes for typical setups"
+        }), 202  # 202 Accepted
     
     except Exception as e:
-        logger.error(f"Error during re-score and re-sort: {e}")
+        logger.error(f"Error starting rescore & resort: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -3237,6 +3278,9 @@ def remove_excluded_streams():
     
     Useful for cleaning up streams from accounts that are no longer wanted,
     since quality-excluded streams are normally protected from removal.
+    
+    Returns immediately (202 Accepted) and runs in background thread.
+    Use /api/stream-checker/status to monitor progress.
     """
     try:
         service = get_stream_checker_service()
@@ -3253,22 +3297,43 @@ def remove_excluded_streams():
         if not excluded_accounts:
             return jsonify({"error": "No excluded accounts configured"}), 400
         
-        result = service.remove_streams_from_excluded_accounts(excluded_accounts)
-        
-        if result.get('success'):
+        # Check if operation is already running
+        if hasattr(service, 'remove_excluded_in_progress') and service.remove_excluded_in_progress:
             return jsonify({
-                "message": f"Removed {result.get('removed_count', 0)} streams from {result.get('channels_affected', 0)} channels",
-                "status": "completed",
-                "removed_count": result.get('removed_count', 0),
-                "channels_affected": result.get('channels_affected', 0),
-                "excluded_accounts": list(excluded_accounts),
-                "channels_with_changes": result.get('channels_with_changes', [])
-            })
-        else:
-            return jsonify({"error": result.get('error', 'Unknown error')}), 500
+                "message": "Remove excluded streams is already in progress",
+                "status": "running",
+                "info": "Use /api/stream-checker/status to monitor progress"
+            }), 409  # 409 Conflict
+        
+        # Start removal in background thread
+        import threading
+        
+        def run_removal():
+            """Background thread for removing excluded streams."""
+            try:
+                service.remove_excluded_in_progress = True
+                service.remove_streams_from_excluded_accounts(excluded_accounts)
+                logger.info("Remove excluded streams completed successfully")
+            except Exception as e:
+                logger.error(f"Remove excluded streams failed in background thread: {e}")
+            finally:
+                service.remove_excluded_in_progress = False
+        
+        thread = threading.Thread(target=run_removal, daemon=True, name="RemoveExcludedThread")
+        thread.start()
+        
+        logger.info("Remove excluded streams started in background thread")
+        
+        return jsonify({
+            "message": "Remove excluded streams started in background",
+            "status": "running",
+            "excluded_accounts": list(excluded_accounts),
+            "info": "Use /api/stream-checker/status to monitor progress. This may take several minutes depending on the number of channels.",
+            "estimated_duration": "1-3 minutes for typical setups"
+        }), 202  # 202 Accepted
     
     except Exception as e:
-        logger.error(f"Error removing excluded streams: {e}")
+        logger.error(f"Error starting remove excluded streams: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -3279,6 +3344,9 @@ def apply_account_limits_to_channels():
     This removes excess streams per account from all channels, keeping only the 
     highest-scored streams based on existing quality data. Useful for applying 
     new limits without running a full quality check.
+    
+    Returns immediately (202 Accepted) and runs in background thread.
+    Use /api/stream-checker/status to monitor progress.
     """
     try:
         service = get_stream_checker_service()
@@ -3294,22 +3362,42 @@ def apply_account_limits_to_channels():
         if global_limit == 0 and not account_specific_limits:
             return jsonify({"error": "No account limits configured"}), 400
         
-        # Apply limits to existing channels
-        results = service.apply_account_limits_to_existing_channels()
-        
-        if results['success']:
+        # Check if operation is already running
+        if hasattr(service, 'apply_limits_in_progress') and service.apply_limits_in_progress:
             return jsonify({
-                "message": "Account limits applied successfully",
-                "channels_processed": results['channels_processed'],
-                "channels_modified": results['channels_modified'],
-                "streams_removed": results['streams_removed'],
-                "details": results['details'][:10]  # Limit details to first 10 channels
-            })
-        else:
-            return jsonify({"error": results.get('error', 'Unknown error')}), 500
+                "message": "Apply account limits is already in progress",
+                "status": "running",
+                "info": "Use /api/stream-checker/status to monitor progress"
+            }), 409  # 409 Conflict
+        
+        # Start apply limits in background thread
+        import threading
+        
+        def run_apply_limits():
+            """Background thread for applying account limits."""
+            try:
+                service.apply_limits_in_progress = True
+                service.apply_account_limits_to_existing_channels()
+                logger.info("Apply account limits completed successfully")
+            except Exception as e:
+                logger.error(f"Apply account limits failed in background thread: {e}")
+            finally:
+                service.apply_limits_in_progress = False
+        
+        thread = threading.Thread(target=run_apply_limits, daemon=True, name="ApplyLimitsThread")
+        thread.start()
+        
+        logger.info("Apply account limits started in background thread")
+        
+        return jsonify({
+            "message": "Apply account limits started in background",
+            "status": "running",
+            "info": "Use /api/stream-checker/status to monitor progress. This may take several minutes depending on the number of channels.",
+            "estimated_duration": "1-3 minutes for typical setups"
+        }), 202  # 202 Accepted
     
     except Exception as e:
-        logger.error(f"Error applying account limits: {e}")
+        logger.error(f"Error starting apply account limits: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -3329,6 +3417,9 @@ def test_streams_without_stats():
     
     This is faster than Global Check because it only tests streams that need it,
     but ensures ALL streams get a chance to be tested by temporarily disabling limits.
+    
+    Returns immediately (202 Accepted) and runs in background thread.
+    Use /api/stream-checker/status to monitor progress.
     """
     try:
         service = get_stream_checker_service()
@@ -3336,190 +3427,163 @@ def test_streams_without_stats():
         if not service.running:
             return jsonify({"error": "Stream checker service is not running"}), 400
         
-        logger.info("=" * 80)
-        logger.info("TEST STREAMS WITHOUT/INCOMPLETE STATS")
-        logger.info("=" * 80)
-        
-        # Step 1: Save and disable account limits temporarily
-        account_limits_config = service.config.get('account_stream_limits', {})
-        original_limits_enabled = account_limits_config.get('enabled', True)
-        
-        if original_limits_enabled:
-            logger.info("Step 1/4: Temporarily disabling account limits to test ALL streams...")
-            account_limits_config['enabled'] = False
-        else:
-            logger.info("Step 1/4: Account limits already disabled")
-        
-        # Step 2: Discover and assign ALL matching streams (limits disabled)
-        logger.info("Step 2/4: Discovering and assigning ALL matching streams...")
-        try:
-            from automated_stream_manager import AutomatedStreamManager
-            automation_manager = AutomatedStreamManager()
-            assignments = automation_manager.discover_and_assign_streams(force=True)
-            if assignments:
-                logger.info(f"✓ Assigned ALL matching streams to {len(assignments)} channels")
-            else:
-                logger.info("✓ No new stream assignments")
-        except Exception as e:
-            logger.error(f"✗ Failed to discover streams: {e}")
-            # Continue anyway - test what we have
-        
-        # Step 3: Find streams without stats or with incomplete stats
-        logger.info("Step 3/4: Finding streams without stats or with incomplete stats...")
-        
-        from udi.manager import get_udi_manager
-        udi = get_udi_manager()
-        
-        # Refresh channels to get updated assignments
-        udi.refresh_channels()
-        
-        channels = udi.get_channels()
-        streams_to_test = []
-        
-        total_streams_checked = 0
-        streams_without_stats = 0
-        streams_with_incomplete_stats = 0
-        quality_excluded_count = 0
-        
-        for channel in channels:
-            channel_id = channel.get('id')
-            if not channel_id:
-                continue
-            
-            # Get streams for this channel
-            streams = udi.get_channel_streams(channel_id)
-            if not streams:
-                continue
-            
-            # Find streams without stats or with incomplete stats
-            for stream in streams:
-                total_streams_checked += 1
-                stream_id = stream.get('id')
-                if not stream_id:
-                    continue
-                
-                # Check if this stream should skip quality checking (quality exclusions)
-                if service._should_skip_quality_check(stream):
-                    quality_excluded_count += 1
-                    continue
-                
-                # Check if stream has stats
-                stream_stats = stream.get('stream_stats')
-                
-                # Case 1: No stats at all
-                if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
-                    streams_without_stats += 1
-                    streams_to_test.append({
-                        'stream_id': stream_id,
-                        'stream_name': stream.get('name', 'Unknown'),
-                        'channel_id': channel_id,
-                        'channel_name': channel.get('name', f'Channel {channel_id}'),
-                        'reason': 'no_stats'
-                    })
-                    continue
-                
-                # Case 2: Has stats but incomplete
-                import json
-                if isinstance(stream_stats, str):
-                    try:
-                        stream_stats = json.loads(stream_stats)
-                    except json.JSONDecodeError:
-                        stream_stats = {}
-                
-                # Check if stats are incomplete
-                is_incomplete = False
-                missing_fields = []
-                
-                resolution = stream_stats.get('resolution')
-                if not resolution or resolution in ['N/A', '0x0', '', 'Unknown']:
-                    is_incomplete = True
-                    missing_fields.append('resolution')
-                
-                video_codec = stream_stats.get('video_codec')
-                if not video_codec or video_codec in ['N/A', '', 'Unknown']:
-                    is_incomplete = True
-                    missing_fields.append('video_codec')
-                
-                audio_codec = stream_stats.get('audio_codec')
-                if not audio_codec or audio_codec in ['N/A', '', 'Unknown']:
-                    is_incomplete = True
-                    missing_fields.append('audio_codec')
-                
-                bitrate = stream_stats.get('ffmpeg_output_bitrate')
-                if not bitrate or bitrate == 0 or bitrate == '0':
-                    is_incomplete = True
-                    missing_fields.append('bitrate')
-                
-                if is_incomplete:
-                    streams_with_incomplete_stats += 1
-                    logger.debug(f"Found incomplete stats for stream {stream_id} ({stream.get('name')}): missing {', '.join(missing_fields)}")
-                    streams_to_test.append({
-                        'stream_id': stream_id,
-                        'stream_name': stream.get('name', 'Unknown'),
-                        'channel_id': channel_id,
-                        'channel_name': channel.get('name', f'Channel {channel_id}'),
-                        'reason': 'incomplete_stats',
-                        'missing_fields': missing_fields
-                    })
-        
-        logger.info(f"Scan complete: {total_streams_checked} streams checked, "
-                   f"{streams_without_stats} without stats, {streams_with_incomplete_stats} with incomplete stats, "
-                   f"{quality_excluded_count} quality-excluded, {len(streams_to_test)} need testing")
-        
-        if not streams_to_test:
-            # Re-enable limits even if no streams to test
-            if original_limits_enabled:
-                account_limits_config['enabled'] = True
-            
+        # Check if operation is already running
+        if hasattr(service, 'test_streams_in_progress') and service.test_streams_in_progress:
             return jsonify({
-                "message": "No streams without stats or incomplete stats found",
-                "streams_found": 0,
-                "channels_affected": 0,
-                "debug_info": {
-                    "total_streams_checked": total_streams_checked,
-                    "streams_without_stats": streams_without_stats,
-                    "streams_with_incomplete_stats": streams_with_incomplete_stats,
-                    "quality_excluded": quality_excluded_count
-                }
-            })
+                "message": "Test streams without stats is already in progress",
+                "status": "running",
+                "info": "Use /api/stream-checker/status to monitor progress"
+            }), 409  # 409 Conflict
         
-        # Step 4: Queue channels for checking with force_check flag
-        logger.info(f"Step 4/4: Queueing {len(streams_to_test)} stream(s) for testing...")
-        channels_affected = list(set(s['channel_id'] for s in streams_to_test))
+        # Start test streams in background thread
+        import threading
         
-        for channel_id in channels_affected:
-            service.queue_channel(channel_id, priority=20, force_check=True)
+        def run_test_streams():
+            """Background thread for testing streams without stats."""
+            try:
+                service.test_streams_in_progress = True
+                
+                logger.info("=" * 80)
+                logger.info("TEST STREAMS WITHOUT/INCOMPLETE STATS")
+                logger.info("=" * 80)
+                
+                # Step 1: Save and disable account limits temporarily
+                account_limits_config = service.config.get('account_stream_limits', {})
+                original_limits_enabled = account_limits_config.get('enabled', True)
+                
+                if original_limits_enabled:
+                    logger.info("Step 1/4: Temporarily disabling account limits to test ALL streams...")
+                    account_limits_config['enabled'] = False
+                else:
+                    logger.info("Step 1/4: Account limits already disabled")
+                
+                # Step 2: Discover and assign ALL matching streams (limits disabled)
+                logger.info("Step 2/4: Discovering and assigning ALL matching streams...")
+                try:
+                    from automated_stream_manager import AutomatedStreamManager
+                    automation_manager = AutomatedStreamManager()
+                    assignments = automation_manager.discover_and_assign_streams(force=True)
+                    if assignments:
+                        logger.info(f"✓ Assigned ALL matching streams to {len(assignments)} channels")
+                    else:
+                        logger.info("✓ No new stream assignments")
+                except Exception as e:
+                    logger.error(f"✗ Failed to discover streams: {e}")
+                
+                # Step 3: Find and queue streams without stats
+                logger.info("Step 3/4: Finding streams without stats or with incomplete stats...")
+                
+                from udi.manager import get_udi_manager
+                udi = get_udi_manager()
+                udi.refresh_channels()
+                
+                channels = udi.get_channels()
+                streams_to_test = []
+                total_streams_checked = 0
+                streams_without_stats = 0
+                streams_with_incomplete_stats = 0
+                quality_excluded_count = 0
+                
+                for channel in channels:
+                    channel_id = channel.get('id')
+                    if not channel_id:
+                        continue
+                    
+                    streams = udi.get_channel_streams(channel_id)
+                    if not streams:
+                        continue
+                    
+                    for stream in streams:
+                        total_streams_checked += 1
+                        stream_id = stream.get('id')
+                        if not stream_id:
+                            continue
+                        
+                        if service._should_skip_quality_check(stream):
+                            quality_excluded_count += 1
+                            continue
+                        
+                        stream_stats = stream.get('stream_stats')
+                        
+                        # No stats at all
+                        if not stream_stats or stream_stats == '{}' or stream_stats == 'null':
+                            streams_without_stats += 1
+                            streams_to_test.append({
+                                'stream_id': stream_id,
+                                'channel_id': channel_id,
+                                'reason': 'no_stats'
+                            })
+                            continue
+                        
+                        # Has stats but incomplete
+                        import json
+                        if isinstance(stream_stats, str):
+                            try:
+                                stream_stats = json.loads(stream_stats)
+                            except json.JSONDecodeError:
+                                stream_stats = {}
+                        
+                        is_incomplete = False
+                        if not stream_stats.get('resolution') or stream_stats.get('resolution') in ['N/A', '0x0', '', 'Unknown']:
+                            is_incomplete = True
+                        if not stream_stats.get('video_codec') or stream_stats.get('video_codec') in ['N/A', '', 'Unknown']:
+                            is_incomplete = True
+                        if not stream_stats.get('audio_codec') or stream_stats.get('audio_codec') in ['N/A', '', 'Unknown']:
+                            is_incomplete = True
+                        if not stream_stats.get('ffmpeg_output_bitrate') or stream_stats.get('ffmpeg_output_bitrate') == 0:
+                            is_incomplete = True
+                        
+                        if is_incomplete:
+                            streams_with_incomplete_stats += 1
+                            streams_to_test.append({
+                                'stream_id': stream_id,
+                                'channel_id': channel_id,
+                                'reason': 'incomplete_stats'
+                            })
+                
+                logger.info(f"Scan complete: {total_streams_checked} streams checked, "
+                           f"{streams_without_stats} without stats, {streams_with_incomplete_stats} with incomplete stats, "
+                           f"{quality_excluded_count} quality-excluded, {len(streams_to_test)} need testing")
+                
+                # Step 4: Queue channels for checking
+                if streams_to_test:
+                    logger.info(f"Step 4/4: Queueing {len(streams_to_test)} stream(s) for testing...")
+                    channels_affected = list(set(s['channel_id'] for s in streams_to_test))
+                    
+                    for channel_id in channels_affected:
+                        service.queue_channel(channel_id, priority=20, force_check=True)
+                    
+                    logger.info(f"✓ Queued {len(channels_affected)} channels for testing")
+                
+                # Re-enable account limits
+                if original_limits_enabled:
+                    logger.info("Re-enabling account limits...")
+                    account_limits_config['enabled'] = True
+                    logger.info("✓ Account limits re-enabled")
+                
+                logger.info("=" * 80)
+                logger.info(f"TEST STREAMS SETUP COMPLETE: {len(streams_to_test)} streams queued")
+                logger.info("=" * 80)
+                
+            except Exception as e:
+                logger.error(f"Test streams without stats failed in background thread: {e}")
+            finally:
+                service.test_streams_in_progress = False
         
-        # Re-enable account limits (will be applied as channels complete)
-        if original_limits_enabled:
-            logger.info("Re-enabling account limits (will be applied as channels complete)...")
-            account_limits_config['enabled'] = True
-            logger.info("✓ Account limits re-enabled - will be applied based on NEW quality scores")
+        thread = threading.Thread(target=run_test_streams, daemon=True, name="TestStreamsThread")
+        thread.start()
         
-        logger.info("=" * 80)
-        logger.info(f"QUEUED {len(streams_to_test)} STREAMS FOR TESTING")
-        logger.info("=" * 80)
+        logger.info("Test streams without stats started in background thread")
         
         return jsonify({
-            "message": f"Queued {len(streams_to_test)} stream(s) for testing",
-            "streams_found": len(streams_to_test),
-            "channels_affected": len(channels_affected),
-            "status": "queued",
-            "description": f"Testing streams from {len(channels_affected)} channel(s)",
-            "breakdown": {
-                "without_stats": streams_without_stats,
-                "incomplete_stats": streams_with_incomplete_stats
-            }
-        })
+            "message": "Test streams without stats started in background",
+            "status": "running",
+            "info": "Use /api/stream-checker/status to monitor progress. This may take 5-30 minutes depending on the number of streams.",
+            "estimated_duration": "5-30 minutes for typical setups"
+        }), 202  # 202 Accepted
     
     except Exception as e:
-        logger.error(f"Error testing streams without/incomplete stats: {e}")
-        # Restore limits on error
-        try:
-            if 'original_limits_enabled' in locals() and original_limits_enabled:
-                account_limits_config['enabled'] = True
-        except:
-            pass
+        logger.error(f"Error starting test streams without stats: {e}")
         return jsonify({"error": str(e)}), 500
 @app.route('/api/stream-checker/test-incomplete-stats', methods=['POST'])
 def test_incomplete_stats():

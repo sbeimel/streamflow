@@ -111,11 +111,21 @@ export default function StreamChecker() {
   const handleTriggerGlobalAction = async () => {
     try {
       setActionLoading('global-action')
-      await streamCheckerAPI.triggerGlobalAction()
-      toast({
-        title: "Success",
-        description: "Global action initiated successfully"
-      })
+      const response = await streamCheckerAPI.triggerGlobalAction()
+      
+      // Check if it's async (202 Accepted) or sync response
+      if (response.status === 202) {
+        toast({
+          title: "Global Action gestartet",
+          description: "Läuft im Hintergrund. Dies kann 1-24 Stunden dauern. Status wird automatisch aktualisiert."
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: "Global action initiated successfully"
+        })
+      }
+      
       await loadData()
     } catch (err) {
       toast({
@@ -132,10 +142,20 @@ export default function StreamChecker() {
     try {
       setActionLoading('test-without-stats')
       const response = await streamCheckerAPI.testStreamsWithoutStats()
-      toast({
-        title: "Success",
-        description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
-      })
+      
+      // Check if it's async (202 Accepted) or sync response
+      if (response.status === 202) {
+        toast({
+          title: "Test Streams gestartet",
+          description: "Läuft im Hintergrund. Dies kann 5-30 Minuten dauern. Status wird automatisch aktualisiert."
+        })
+      } else {
+        toast({
+          title: "Success",
+          description: response.data.message || `Testing ${response.data.streams_found} stream(s) from ${response.data.channels_affected} channel(s)`
+        })
+      }
+      
       await loadData()
     } catch (err) {
       toast({
@@ -152,11 +172,21 @@ export default function StreamChecker() {
     try {
       setActionLoading('rescore-resort')
       const response = await streamCheckerAPI.rescoreAndResort()
-      const stats = response.data.stats || {}
-      toast({
-        title: "Success",
-        description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
-      })
+      
+      // Check if it's async (202 Accepted) or sync response
+      if (response.status === 202) {
+        toast({
+          title: "Rescore & Resort gestartet",
+          description: "Läuft im Hintergrund. Dies kann 1-5 Minuten dauern. Status wird automatisch aktualisiert."
+        })
+      } else {
+        const stats = response.data.stats || {}
+        toast({
+          title: "Success",
+          description: `Re-scored ${stats.channels_processed || 0} channel(s) in ${stats.duration_seconds || 0}s. ${stats.streams_removed || 0} stream(s) removed by limits.`
+        })
+      }
+      
       await loadData()
     } catch (err) {
       toast({
@@ -364,10 +394,21 @@ export default function StreamChecker() {
       }
       
       const data = await response.json()
-      toast({
-        title: "Account Limits Applied",
-        description: `${data.channels_modified} channels modified, ${data.streams_removed} streams removed`
-      })
+      
+      // Check if it's async (202 Accepted) or sync response
+      if (response.status === 202) {
+        toast({
+          title: "Apply Account Limits gestartet",
+          description: "Läuft im Hintergrund. Dies kann 1-3 Minuten dauern. Status wird automatisch aktualisiert."
+        })
+      } else {
+        toast({
+          title: "Account Limits Applied",
+          description: `${data.channels_modified} channels modified, ${data.streams_removed} streams removed`
+        })
+      }
+      
+      await loadData()
     } catch (err) {
       toast({
         title: "Error",
@@ -1009,13 +1050,34 @@ export default function StreamChecker() {
                     <div className="space-y-0.5">
                       <Label htmlFor="prefer_h265">Prefer H.265/HEVC</Label>
                       <p className="text-xs text-muted-foreground">
-                        Give preference to H.265 codec over H.264
+                        Give preference to H.265 codec over H.264 (⚠️ Legacy scoring only)
                       </p>
                     </div>
                     <Switch
                       id="prefer_h265"
                       checked={editedConfig?.scoring?.prefer_h265 !== false}
                       onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
+                      disabled={!configEditing || editedConfig?.scoring?.avoid_h265}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="avoid_h265">Avoid H.265/HEVC</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Penalize H.265/HEVC streams - prefer H.264 (✅ Works with both scoring methods)
+                      </p>
+                    </div>
+                    <Switch
+                      id="avoid_h265"
+                      checked={editedConfig?.scoring?.avoid_h265 === true}
+                      onCheckedChange={(checked) => {
+                        updateConfigValue('scoring.avoid_h265', checked)
+                        // Disable prefer_h265 when avoid_h265 is enabled
+                        if (checked) {
+                          updateConfigValue('scoring.prefer_h265', false)
+                        }
+                      }}
                       disabled={!configEditing}
                     />
                   </div>

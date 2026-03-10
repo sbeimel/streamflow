@@ -17,6 +17,7 @@ services:
       - DEBUG_MODE=true
       - GUNICORN_WORKERS=1  # Single worker to maintain consistent state
       - GUNICORN_THREADS=8  # Use threads for parallelism instead
+      - GUNICORN_TIMEOUT=300  # 5 minutes (API requests should return quickly, long operations run in background)
       # Alternative: Specify environment variables directly instead of using .env file
       # Uncomment the lines below and comment out 'env_file' section to use env vars only
       # - DISPATCHARR_BASE_URL=http://your-dispatcharr-instance.com:9191

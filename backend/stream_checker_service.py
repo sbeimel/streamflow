@@ -122,7 +122,8 @@ class StreamCheckConfig:
                 'codec': 0.10
             },
             'min_score': 0.0,  # minimum score to keep stream
-            'prefer_h265': True  # prefer h265 over h264
+            'prefer_h265': True,  # prefer h265 over h264
+            'avoid_h265': False  # avoid h265/hevc (prefer h264 instead)
         },
         'queue': {
             'max_size': 1000,
@@ -989,6 +990,12 @@ class StreamCheckerService:
         self.worker_thread = None
         self.scheduler_thread = None
         self.lock = threading.Lock()
+        
+        # Operation flags for async operations
+        self.rescore_in_progress = False
+        self.remove_excluded_in_progress = False
+        self.apply_limits_in_progress = False
+        self.test_streams_in_progress = False
         
         # Event for immediate triggering of updated channels check
         self.check_trigger = threading.Event()
@@ -3334,21 +3341,27 @@ class StreamCheckerService:
         # Get scoring method from config
         scoring_method = self.config.get('scoring.method', 'enhanced')
         use_legacy = (scoring_method == 'legacy')
+        avoid_h265 = self.config.get('scoring.avoid_h265', False)
         
         # Calculate base quality score
         if use_legacy:
             # Use legacy scoring with configured weights
             weights = self.config.get('scoring.weights', {})
+            # Add codec preferences to weights
+            weights['prefer_h265'] = self.config.get('scoring.prefer_h265', True)
+            weights['avoid_h265'] = avoid_h265
             score = calculate_stream_score_enhanced(
                 stream_data,
                 use_legacy_scoring=True,
-                legacy_weights=weights
+                legacy_weights=weights,
+                avoid_h265=avoid_h265
             )
         else:
             # Use enhanced scoring (MACstrom-inspired)
             score = calculate_stream_score_enhanced(
                 stream_data,
-                use_legacy_scoring=False
+                use_legacy_scoring=False,
+                avoid_h265=avoid_h265
             )
         
         # Apply M3U account priority bonus (unchanged)
