@@ -49,7 +49,16 @@ class AccountStreamLimiter:
         self.account_checking_counts: Dict[int, int] = {}  # Track streams currently being checked
         self.lock = threading.Lock()
         self.udi_manager = udi_manager
-        logger.info("AccountStreamLimiter initialized")
+        
+        # Track when each account last had activity for cleanup
+        self.account_last_activity: Dict[int, float] = {}
+        
+        # Start cleanup thread
+        self.cleanup_thread = None
+        self.cleanup_running = False
+        self._start_cleanup_thread()
+        
+        logger.info("AccountStreamLimiter initialized with automatic cleanup")
     
     def set_account_limit(self, account_id: int, max_streams: int, profiles: List[Dict[str, Any]] = None):
         """
@@ -194,6 +203,10 @@ class AccountStreamLimiter:
                 if total_in_use < limit:
                     # We have a slot available, increment checking count
                     self.account_checking_counts[account_id] = checking_count + 1
+                    
+                    # Update last activity timestamp
+                    self.account_last_activity[account_id] = time.time()
+                    
                     logger.debug(
                         f"Acquired stream slot for account {account_id} "
                         f"({active_count} active + {checking_count + 1} checking = "
@@ -235,6 +248,10 @@ class AccountStreamLimiter:
             checking_count = self.account_checking_counts.get(account_id, 0)
             if checking_count > 0:
                 self.account_checking_counts[account_id] = checking_count - 1
+                
+                # Update last activity timestamp
+                self.account_last_activity[account_id] = time.time()
+                
                 logger.debug(
                     f"Released stream slot for account {account_id} "
                     f"(now {self.account_checking_counts[account_id]} checking)"
@@ -250,7 +267,72 @@ class AccountStreamLimiter:
         with self.lock:
             self.account_limits.clear()
             self.account_checking_counts.clear()
+            self.account_last_activity.clear()
         logger.info("Cleared all account limits")
+    
+    def _start_cleanup_thread(self):
+        """Start the background cleanup thread."""
+        if self.cleanup_thread is not None and self.cleanup_thread.is_alive():
+            return
+        
+        self.cleanup_running = True
+        self.cleanup_thread = threading.Thread(
+            target=self._cleanup_loop,
+            daemon=True,
+            name="AccountLimiterCleanup"
+        )
+        self.cleanup_thread.start()
+        logger.info("Started account limiter cleanup thread")
+    
+    def _cleanup_loop(self):
+        """Background loop that periodically cleans up stale checking counts."""
+        import time
+        
+        # Cleanup every 5 minutes
+        cleanup_interval = 300  # seconds
+        
+        # Consider an account stale if no activity for 10 minutes
+        stale_threshold = 600  # seconds
+        
+        while self.cleanup_running:
+            try:
+                time.sleep(cleanup_interval)
+                
+                current_time = time.time()
+                stale_accounts = []
+                
+                with self.lock:
+                    for account_id, checking_count in list(self.account_checking_counts.items()):
+                        if checking_count == 0:
+                            continue
+                        
+                        last_activity = self.account_last_activity.get(account_id, current_time)
+                        time_since_activity = current_time - last_activity
+                        
+                        if time_since_activity > stale_threshold:
+                            # Account has been checking for > 10 minutes without activity
+                            # Likely stuck/zombie threads
+                            stale_accounts.append((account_id, checking_count, time_since_activity))
+                            self.account_checking_counts[account_id] = 0
+                            logger.warning(
+                                f"Cleaned up stale checking count for account {account_id}: "
+                                f"{checking_count} streams stuck for {time_since_activity/60:.1f} minutes"
+                            )
+                
+                if stale_accounts:
+                    logger.info(
+                        f"Cleanup: Reset {len(stale_accounts)} stale account(s) with stuck streams"
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error in cleanup loop: {e}")
+    
+    def stop_cleanup(self):
+        """Stop the cleanup thread."""
+        self.cleanup_running = False
+        if self.cleanup_thread:
+            self.cleanup_thread.join(timeout=1)
+        logger.info("Stopped account limiter cleanup thread")
 
 
 class SmartStreamScheduler:
