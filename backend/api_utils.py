@@ -526,6 +526,49 @@ def update_channel_streams(
                 f"{status}"
             )
             return False
+    except requests.exceptions.HTTPError as e:
+        # Handle 400 errors with invalid stream IDs (common with multiple Gunicorn workers)
+        if e.response.status_code == 400:
+            try:
+                error_data = e.response.json()
+                if 'streams' in error_data and isinstance(error_data['streams'], list):
+                    # Extract invalid stream IDs from error message
+                    # Format: "Invalid pk \"123\" - object does not exist."
+                    import re
+                    invalid_ids = set()
+                    for error_msg in error_data['streams']:
+                        if isinstance(error_msg, str):
+                            match = re.search(r'Invalid pk "(\d+)"', error_msg)
+                            if match:
+                                invalid_ids.add(int(match.group(1)))
+                    
+                    if invalid_ids:
+                        logger.warning(
+                            f"Channel {channel_id}: Removing {len(invalid_ids)} invalid stream ID(s) "
+                            f"reported by API: {invalid_ids}"
+                        )
+                        # Retry without invalid IDs
+                        retry_stream_ids = [sid for sid in filtered_stream_ids if sid not in invalid_ids]
+                        if retry_stream_ids:
+                            logger.info(f"Channel {channel_id}: Retrying with {len(retry_stream_ids)} valid streams")
+                            data = {"streams": retry_stream_ids}
+                            response = patch_request(url, data)
+                            if response and response.status_code in [200, 204]:
+                                logger.info(
+                                    f"Successfully updated channel {channel_id} with "
+                                    f"{len(retry_stream_ids)} streams (after filtering invalid IDs)"
+                                )
+                                return True
+                        else:
+                            logger.warning(f"Channel {channel_id}: No valid streams remaining after filtering")
+                            return False
+            except (ValueError, KeyError, AttributeError) as parse_error:
+                logger.debug(f"Could not parse 400 error response: {parse_error}")
+        
+        logger.error(
+            f"Failed to update channel {channel_id} streams: {e}"
+        )
+        raise
     except Exception as e:
         logger.error(
             f"Failed to update channel {channel_id} streams: {e}"

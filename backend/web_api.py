@@ -2554,7 +2554,8 @@ def get_setup_wizard_status():
                     channels = udi.get_channels()
                     status["dispatcharr_connection"] = channels is not None
                     status["has_channels"] = bool(channels)
-                except:
+                except Exception as e:
+                    logger.debug(f"Could not check Dispatcharr connection: {e}")
                     pass
         
         # Patterns are now optional - wizard can be completed without them
@@ -3545,15 +3546,57 @@ def test_streams_without_stats():
                            f"{streams_without_stats} without stats, {streams_with_incomplete_stats} with incomplete stats, "
                            f"{quality_excluded_count} quality-excluded, {len(streams_to_test)} need testing")
                 
-                # Step 4: Queue channels for checking
+                # Step 4: Queue channels for checking (only streams without stats)
                 if streams_to_test:
                     logger.info(f"Step 4/4: Queueing {len(streams_to_test)} stream(s) for testing...")
-                    channels_affected = list(set(s['channel_id'] for s in streams_to_test))
                     
-                    for channel_id in channels_affected:
-                        service.queue_channel(channel_id, priority=20, force_check=True)
+                    # Group streams by channel
+                    from collections import defaultdict
+                    streams_by_channel = defaultdict(list)
+                    for stream_info in streams_to_test:
+                        streams_by_channel[stream_info['channel_id']].append(stream_info['stream_id'])
                     
-                    logger.info(f"✓ Queued {len(channels_affected)} channels for testing")
+                    # For each channel, remove the streams-to-test from checked_stream_ids
+                    # This makes the immunity system think these streams haven't been checked yet
+                    for channel_id, stream_ids in streams_by_channel.items():
+                        # Get current checked stream IDs
+                        checked_ids = service.update_tracker.get_checked_stream_ids(channel_id)
+                        
+                        # Remove the streams we want to test from the checked list
+                        updated_checked_ids = [sid for sid in checked_ids if sid not in stream_ids]
+                        
+                        # Update the channel info to exclude these streams from immunity
+                        with service.update_tracker.lock:
+                            channel_key = str(channel_id)
+                            
+                            # Ensure channel entry exists
+                            if 'channels' not in service.update_tracker.updates:
+                                service.update_tracker.updates['channels'] = {}
+                            
+                            from datetime import datetime
+                            now = datetime.now().isoformat()
+                            
+                            if channel_key not in service.update_tracker.updates['channels']:
+                                # Create new entry if channel hasn't been checked before
+                                service.update_tracker.updates['channels'][channel_key] = {
+                                    'last_update': now,
+                                    'last_check': now,  # Set to now so immunity is active
+                                    'stream_count': None,
+                                    'checked_stream_ids': [],
+                                    'needs_check': False
+                                }
+                            
+                            # Update checked_stream_ids to exclude streams we want to test
+                            # Also update last_check to ensure immunity is active
+                            service.update_tracker.updates['channels'][channel_key]['checked_stream_ids'] = updated_checked_ids
+                            service.update_tracker.updates['channels'][channel_key]['last_check'] = now
+                            logger.debug(f"Channel {channel_id}: Removed {len(stream_ids)} stream(s) from immunity (checked_ids: {len(checked_ids)} → {len(updated_checked_ids)})")
+                        
+                        # Queue the channel (WITHOUT force_check to respect immunity for other streams)
+                        service.queue_channel(channel_id, priority=20, force_check=False)
+                    
+                    logger.info(f"✓ Queued {len(streams_by_channel)} channels for testing (only streams without stats will be checked)")
+                
                 
                 # Re-enable account limits
                 if original_limits_enabled:

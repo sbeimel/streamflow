@@ -619,7 +619,8 @@ class ChannelUpdateTracker:
                 immunity_config = service.config.get('stream_check_immunity', {})
                 immunity_enabled = immunity_config.get('enabled', True)
                 immunity_hours = immunity_config.get('duration_hours', 2)
-            except:
+            except Exception as e:
+                logger.debug(f"Could not get immunity config: {e}")
                 # Fallback to defaults if service not available
                 immunity_enabled = True
                 immunity_hours = 2
@@ -647,7 +648,8 @@ class ChannelUpdateTracker:
                             return []
                         else:
                             logger.debug(f"Channel {channel_id}: Immunity active ({elapsed_hours:.1f}h < {immunity_hours}h)")
-                    except:
+                    except Exception as e:
+                        logger.debug(f"Could not parse last_check_time for channel {channel_id}: {e}")
                         # If parsing fails, return empty list (check all streams)
                         return []
                 
@@ -1467,7 +1469,8 @@ class StreamCheckerService:
             if 'original_limits_enabled' in locals() and original_limits_enabled:
                 try:
                     account_limits_config['enabled'] = True
-                except:
+                except Exception as e:
+                    logger.debug(f"Could not enable account limits: {e}")
                     pass
         finally:
             # Always clear the flag, even if there was an error
@@ -2504,7 +2507,8 @@ class StreamCheckerService:
                 try:
                     try:
                         channel_name = channel_data.get('name', f'Channel {channel_id}')
-                    except:
+                    except (KeyError, AttributeError, TypeError) as e:
+                        logger.debug(f"Could not get channel name: {e}")
                         channel_name = f'Channel {channel_id}'
                     
                     # Add failed check to batch
@@ -3041,7 +3045,8 @@ class StreamCheckerService:
                     # Try to get channel name if available
                     try:
                         channel_name = channel_data.get('name', f'Channel {channel_id}')
-                    except:
+                    except (KeyError, AttributeError, TypeError) as e:
+                        logger.debug(f"Could not get channel name: {e}")
                         channel_name = f'Channel {channel_id}'
                     
                     self._add_to_batch_changelog({
