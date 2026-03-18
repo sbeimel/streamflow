@@ -2436,28 +2436,24 @@ def update_m3u_account_priority(account_id):
             if not isinstance(priority, int) or priority < 0:
                 return jsonify({"error": "Priority must be a non-negative integer"}), 400
             
-            # Update via Dispatcharr API
-            from api_utils import _get_base_url, _get_auth_headers
+            # Update via Dispatcharr API with automatic token refresh
+            from api_utils import _get_base_url, patch_request
             base_url = _get_base_url()
-            headers = _get_auth_headers()
             
-            if not base_url or not headers:
+            if not base_url:
                 return jsonify({"error": "Dispatcharr not configured"}), 500
             
-            # PATCH request to update priority
+            # PATCH request to update priority (with automatic token refresh on 401)
             url = f"{base_url}/api/m3u/accounts/{account_id}/"
-            resp = requests.patch(
-                url,
-                headers=headers,
-                json={"priority": priority},
-                timeout=10
-            )
-            
-            if resp.status_code not in [200, 201]:
-                logger.error(f"Failed to update priority in Dispatcharr: {resp.status_code} - {resp.text}")
-                return jsonify({"error": f"Failed to update priority: {resp.text}"}), resp.status_code
-            
-            logger.info(f"Updated priority for M3U account {account_id} to {priority} in Dispatcharr")
+            try:
+                resp = patch_request(url, {"priority": priority})
+                logger.info(f"Updated priority for M3U account {account_id} to {priority} in Dispatcharr")
+            except requests.exceptions.HTTPError as e:
+                logger.error(f"Failed to update priority in Dispatcharr: {e.response.status_code} - {e.response.text}")
+                return jsonify({"error": f"Failed to update priority: {e.response.text}"}), e.response.status_code
+            except Exception as e:
+                logger.error(f"Failed to update priority in Dispatcharr: {e}")
+                return jsonify({"error": f"Failed to update priority: {str(e)}"}), 500
         
         # Store priority_mode locally (StreamFlow-specific configuration)
         if 'priority_mode' in data:
