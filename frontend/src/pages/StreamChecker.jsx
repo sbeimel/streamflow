@@ -308,13 +308,7 @@ export default function StreamChecker() {
       
       // Validate that backend returned the page we requested
       if (paginationData.page && paginationData.page !== page) {
-        // Page mismatch - backend returned different page than requested
-        // This could happen if the requested page is out of bounds
-        toast({
-          title: "Warning",
-          description: `Requested page ${page} but received page ${paginationData.page}`,
-          variant: "default"
-        })
+        console.warn(`Requested page ${page} but received page ${paginationData.page} (page out of bounds?)`)
       }
       
       setDeadStreams(deadStreamsData)
@@ -1606,7 +1600,7 @@ export default function StreamChecker() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={loadDeadStreams}
+                            onClick={() => loadDeadStreams()}
                             disabled={deadStreamsLoading}
                           >
                             {deadStreamsLoading ? (

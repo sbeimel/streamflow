@@ -1582,6 +1582,11 @@ class StreamCheckerService:
         Returns:
             bool: True if stream is dead, False otherwise
         """
+        # Quality-excluded streams (priority-only) are never checked via FFmpeg,
+        # so they have no bitrate/resolution data. Never mark them as dead.
+        if stream_data.get('quality_check_excluded'):
+            return False
+
         # Get dead stream handling configuration
         dead_stream_config = self.config.get('dead_stream_handling', {})
         
