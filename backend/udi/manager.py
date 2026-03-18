@@ -707,6 +707,19 @@ class UDIManager:
                 self.storage.save_channel_profiles(profiles)
             self.cache.mark_refreshed('channel_profiles')
             
+            # Initialize profile slots for semaphore tracking (prevents memory leak)
+            try:
+                import profile_check_semaphores as pcs
+                profiles_by_id = {
+                    p.get('id'): p.get('max_streams', 0) 
+                    for p in profiles 
+                    if p.get('id') is not None
+                }
+                pcs.initialize_profile_slots(profiles_by_id)
+                logger.info(f"Initialized profile check slots for {len(profiles_by_id)} profiles")
+            except Exception as e:
+                logger.warning(f"Failed to initialize profile check slots: {e}")
+            
             # Also refresh profile channel associations
             profile_ids = [p.get('id') for p in profiles if p.get('id')]
             if profile_ids:

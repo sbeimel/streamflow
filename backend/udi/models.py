@@ -261,6 +261,7 @@ class M3UAccount:
     updated_at: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     user_agent: Optional[str] = None
+    proxy: Optional[str] = None  # HTTP proxy for stream checks
     profiles: List['M3UAccountProfile'] = field(default_factory=list)
     locked: bool = False
     channel_groups: List[int] = field(default_factory=list)
@@ -304,6 +305,7 @@ class M3UAccount:
             updated_at=data.get('updated_at'),
             filters=data.get('filters'),
             user_agent=data.get('user_agent'),
+            proxy=data.get('proxy'),
             profiles=profiles,
             locked=data.get('locked', False),
             channel_groups=data.get('channel_groups', []),
@@ -337,6 +339,7 @@ class M3UAccount:
             'updated_at': self.updated_at,
             'filters': self.filters,
             'user_agent': self.user_agent,
+            'proxy': self.proxy,
             'profiles': [p.to_dict() for p in self.profiles] if self.profiles else [],
             'locked': self.locked,
             'channel_groups': self.channel_groups,

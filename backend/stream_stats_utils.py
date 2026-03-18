@@ -391,6 +391,12 @@ def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -
     if bitrate in [0, None] or (isinstance(bitrate, (int, float)) and bitrate == 0):
         return True
     
+    # Check against off-air threshold (streams below this are placeholder/color bars)
+    if isinstance(bitrate, (int, float)) and bitrate > 0:
+        from quality_scoring import NOT_STREAMING_THRESHOLD
+        if bitrate < NOT_STREAMING_THRESHOLD:
+            return True
+    
     # Check against configured minimum bitrate if provided
     if config and bitrate:
         min_bitrate = config.get('min_bitrate_kbps', 0)
