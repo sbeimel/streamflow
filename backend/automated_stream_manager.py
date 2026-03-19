@@ -1189,13 +1189,16 @@ class AutomatedStreamManager:
                 # Process chunks in parallel
                 with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                     # Submit all chunks
+                    # When skip_check_trigger=True (manual discover), include dead streams so they
+                    # get assigned and can be re-evaluated on the next real quality check.
+                    match_dead_removal = self._is_dead_stream_removal_enabled() and not skip_check_trigger
                     futures = {
                         executor.submit(
                             self._match_chunk,
                             chunk,
                             channel_streams,
                             self.dead_streams_tracker,
-                            self._is_dead_stream_removal_enabled()
+                            match_dead_removal
                         ): idx
                         for idx, chunk in enumerate(chunks)
                     }
@@ -1247,16 +1250,13 @@ class AutomatedStreamManager:
                         continue
                     
                     # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
-                    # Dead streams should not be added to channels during subsequent matches
+                    # Exception: when skip_check_trigger=True (manual discover), always include dead
+                    # streams so they get assigned and can be re-evaluated on the next quality check.
                     stream_url = stream.get('url', '')
-                    if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                        # Check if dead stream removal is enabled
-                        dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
-                        if dead_stream_removal_enabled:
+                    if not skip_check_trigger and self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                        if self._is_dead_stream_removal_enabled():
                             logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
                             continue
-                        else:
-                            logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
                     
                     # Get stream's m3u_account for M3U account filtering
                     stream_m3u_account = stream.get('m3u_account')
@@ -1368,7 +1368,12 @@ class AutomatedStreamManager:
             logger.info(f"Stream discovery completed. Assigned {total_assigned} new streams across {len(assignment_count)} channels")
             
             # Mark channels that received new streams for stream quality checking
-            if total_assigned > 0 and assignment_count:
+            # Skip entirely if caller requested no check trigger (e.g. manual "Discover Streams" button)
+            # This prevents the worker loop from picking up channels and running quality checks
+            # that were never requested. Dead stream detection also must not happen here,
+            # otherwise newly-assigned streams with missing stats would be marked dead and
+            # never get a real quality check.
+            if total_assigned > 0 and assignment_count and not skip_check_trigger:
                 try:
                     # Get updated stream counts for channels that received new streams
                     channel_ids_to_mark = []
@@ -1393,16 +1398,13 @@ class AutomatedStreamManager:
                             stream_checker = get_stream_checker_service()
                             stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts, force_check=False)
                             logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for automatic quality checking (respects 2-hour immunity)")
-                            # Trigger immediate check instead of waiting for scheduled interval
-                            # Skip if caller will handle the check (e.g., check_single_channel)
-                            if not skip_check_trigger:
-                                stream_checker.trigger_check_updated_channels()
-                            else:
-                                logger.debug("Skipping automatic check trigger (will be handled by caller)")
+                            stream_checker.trigger_check_updated_channels()
                         except Exception as sc_error:
                             logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
                 except Exception as mark_error:
                     logger.debug(f"Could not mark channels for stream checking after discovery: {mark_error}")
+            elif total_assigned > 0 and skip_check_trigger:
+                logger.info(f"Skipping quality check trigger for {total_assigned} assigned streams (skip_check_trigger=True)")
             
             return assignment_count
             

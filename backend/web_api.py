@@ -3459,7 +3459,7 @@ def test_streams_without_stats():
                 try:
                     from automated_stream_manager import AutomatedStreamManager
                     automation_manager = AutomatedStreamManager()
-                    assignments = automation_manager.discover_and_assign_streams(force=True)
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
                     if assignments:
                         logger.info(f"✓ Assigned ALL matching streams to {len(assignments)} channels")
                     else:
