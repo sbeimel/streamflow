@@ -111,7 +111,8 @@ class StreamCheckConfig:
             'stream_startup_buffer': 10,  # seconds buffer for stream startup (max time before stream starts)
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
-            'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
+            'user_agent': 'VLC/3.0.14',  # user agent for ffmpeg/ffprobe
+            'probe_mode': 'ffmpeg'  # 'ffmpeg' (full bitrate measurement) or 'ffprobe' (faster two-pass)
         },
         'scoring': {
             'method': 'enhanced',  # 'enhanced' (MACstrom-inspired sigmoid) or 'legacy' (linear)
@@ -3085,7 +3086,8 @@ class StreamCheckerService:
                     retry_delay=analysis_params.get('retry_delay', 10),
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
                     stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
-                    proxy=proxy
+                    proxy=proxy,
+                    probe_mode=analysis_params.get('probe_mode', 'ffmpeg')
                 )
 
             # Get all active profiles for this account (order = priority order)
@@ -3104,7 +3106,8 @@ class StreamCheckerService:
                     retry_delay=analysis_params.get('retry_delay', 10),
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
                     stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
-                    proxy=proxy
+                    proxy=proxy,
+                    probe_mode=analysis_params.get('probe_mode', 'ffmpeg')
                 )
 
             # Failover config
@@ -3157,7 +3160,8 @@ class StreamCheckerService:
                         retry_delay=analysis_params.get('retry_delay', 10),
                         user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
                         stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
-                        proxy=proxy
+                        proxy=proxy,
+                        probe_mode=analysis_params.get('probe_mode', 'ffmpeg')
                     )
                     result['used_profile_id'] = profile_id
                     result['used_profile_name'] = profile_name

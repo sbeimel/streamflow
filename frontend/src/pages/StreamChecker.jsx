@@ -679,6 +679,28 @@ export default function StreamChecker() {
                 {/* Stream Analysis Tab */}
                 <TabsContent value="analysis" className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label htmlFor="probe_mode">Analysis Engine</Label>
+                          <p className="text-xs text-muted-foreground">
+                            ffmpeg: full bitrate measurement (~10-30s per stream, most accurate) —
+                            ffprobe: two-pass TS validator + ffprobe (~1-5s per stream, faster)
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">ffmpeg</span>
+                          <Switch
+                            id="probe_mode"
+                            checked={editedConfig?.stream_analysis?.probe_mode === 'ffprobe'}
+                            onCheckedChange={(checked) => updateConfigValue('stream_analysis.probe_mode', checked ? 'ffprobe' : 'ffmpeg')}
+                            disabled={!configEditing}
+                          />
+                          <span className="text-xs text-muted-foreground">ffprobe (fast)</span>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="ffmpeg_duration">FFmpeg Duration (seconds)</Label>
                       <Input

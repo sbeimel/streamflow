@@ -793,6 +793,202 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
     return bitrate, status, elapsed
 
 
+def get_stream_info_and_bitrate_ffprobe(
+    url: str,
+    timeout: int = 30,
+    user_agent: str = 'VLC/3.0.14',
+    stream_startup_buffer: int = 10,
+    proxy: Optional[str] = None,
+    read_mb: float = 3.0,
+) -> Dict[str, Any]:
+    """
+    Fast stream analysis using a single HTTP connection — MACstrom-style pipe approach.
+
+    Flow (one network connection):
+      1. Python opens HTTP connection to the stream
+      2. Reads ~read_mb MB into memory, measuring bytes + elapsed time → bitrate
+      3. Pipes the buffer via stdin to ffprobe (no URL re-connection)
+      4. ffprobe extracts codec / resolution / FPS from the buffer
+      5. Connection is closed
+
+    Pass 0 — TS validator (first 32 KB):
+        Checks for MPEG-TS sync bytes (0x47 every 188 bytes).
+        Dead streams are detected immediately without running ffprobe.
+
+    Args:
+        url: Stream URL to analyze
+        timeout: Connect + read timeout in seconds
+        user_agent: User agent string
+        stream_startup_buffer: Extra seconds to wait for stream startup
+        proxy: HTTP proxy URL (e.g. 'http://proxy:8080')
+        read_mb: Megabytes to download for analysis (default: 3 MB)
+
+    Returns:
+        Same dict format as get_stream_info_and_bitrate()
+    """
+    result_data = {
+        'video_codec': 'N/A',
+        'audio_codec': 'N/A',
+        'resolution': '0x0',
+        'fps': 0,
+        'bitrate_kbps': None,
+        'status': 'OK',
+        'elapsed_time': 0,
+        'early_exit': False,
+        'probe_mode': 'ffprobe'
+    }
+
+    if not url or not isinstance(url, str):
+        result_data['status'] = 'Error'
+        return result_data
+
+    url_lower = url.lower()
+    if not (url_lower.startswith('http://') or url_lower.startswith('https://') or
+            url_lower.startswith('rtmp://') or url_lower.startswith('rtmps://')):
+        result_data['status'] = 'Error'
+        return result_data
+
+    start = time.time()
+    read_bytes_target = int(read_mb * 1024 * 1024)
+
+    # --- Step 1: Download stream data into memory (single connection) ---
+    buffer = bytearray()
+    try:
+        import urllib.request
+        import urllib.error
+
+        headers = {'User-Agent': user_agent}
+        if proxy and proxy.strip():
+            proxy_handler = urllib.request.ProxyHandler({
+                'http': proxy.strip(),
+                'https': proxy.strip()
+            })
+            opener = urllib.request.build_opener(proxy_handler)
+        else:
+            opener = urllib.request.build_opener()
+
+        req = urllib.request.Request(url, headers=headers)
+        connect_timeout = timeout + stream_startup_buffer
+
+        with opener.open(req, timeout=connect_timeout) as resp:
+            read_start = time.time()
+            chunk_size = 65536  # 64 KB chunks
+            while len(buffer) < read_bytes_target:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+
+        read_elapsed = max(time.time() - read_start, 0.001)  # avoid division by zero
+
+    except urllib.error.URLError as e:
+        logger.debug(f"  ffprobe pipe: HTTP error: {e}")
+        result_data['status'] = 'Error'
+        result_data['elapsed_time'] = time.time() - start
+        return result_data
+    except Exception as e:
+        logger.debug(f"  ffprobe pipe: connection failed: {e}")
+        result_data['status'] = 'Error'
+        result_data['elapsed_time'] = time.time() - start
+        return result_data
+
+    bytes_read = len(buffer)
+    if bytes_read == 0:
+        result_data['status'] = 'Error'
+        result_data['elapsed_time'] = time.time() - start
+        return result_data
+
+    # --- Step 2: TS validator (first 32 KB) ---
+    ts_valid = False
+    check_len = min(bytes_read, 32 * 1024)
+    min_ts_bytes = 188 * 5  # need at least 5 packets for sync check
+    if check_len >= min_ts_bytes:
+        for i in range(min(4096, check_len - min_ts_bytes)):
+            if buffer[i] == 0x47:
+                valid = all(
+                    (i + j * 188) < check_len and buffer[i + j * 188] == 0x47
+                    for j in range(1, 6)
+                )
+                if valid:
+                    ts_valid = True
+                    break
+
+    if not ts_valid:
+        logger.debug(f"  ffprobe pipe: no MPEG-TS sync in {bytes_read} bytes — stream dead/off-air")
+        # Not an error — stream is reachable but off-air (placeholder/color bars)
+        result_data['elapsed_time'] = time.time() - start
+        return result_data
+
+    # --- Step 3: Bitrate from bytes / time (MACstrom-style) ---
+    # Only use if read took long enough to be meaningful (>0.5s = real stream rate, not local cache)
+    # For very fast reads (local proxy, LAN), bitrate would be artificially inflated
+    if read_elapsed >= 0.5:
+        result_data['bitrate_kbps'] = round((bytes_read * 8) / 1000 / read_elapsed, 2)
+        logger.debug(f"  ffprobe pipe: {bytes_read} bytes in {read_elapsed:.2f}s → {result_data['bitrate_kbps']:.0f} kbps")
+    else:
+        logger.debug(f"  ffprobe pipe: read too fast ({read_elapsed:.3f}s) for accurate bitrate — skipping bitrate calc")
+
+    # --- Step 4: ffprobe via stdin pipe (no second network connection) ---
+    # probesize = actual buffer size so ffprobe uses all available data
+    # analyzeduration = 5s in microseconds — enough for HEVC long-GOP streams
+    cmd = [
+        'ffprobe',
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_streams',
+        '-probesize', str(bytes_read),
+        '-analyzeduration', '5000000',  # 5s in microseconds
+        '-i', 'pipe:0'  # read from stdin
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=bytes(buffer),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15
+        )
+
+        if proc.returncode == 0 and proc.stdout.strip():
+            data = json.loads(proc.stdout)
+            for s in data.get('streams', []):
+                codec_type = s.get('codec_type', '')
+                codec_name = s.get('codec_name', 'N/A')
+
+                if codec_type == 'video' and result_data['video_codec'] == 'N/A':
+                    result_data['video_codec'] = _sanitize_codec_name(codec_name)
+                    w = s.get('width', 0)
+                    h = s.get('height', 0)
+                    if w and h:
+                        result_data['resolution'] = f"{w}x{h}"
+                    r_fps = s.get('r_frame_rate', '0/1')
+                    try:
+                        num, den = r_fps.split('/')
+                        fps = float(num) / float(den) if float(den) > 0 else 0
+                        result_data['fps'] = round(min(fps, 120.0), 2)
+                    except Exception:
+                        pass
+
+                elif codec_type == 'audio' and result_data['audio_codec'] == 'N/A':
+                    result_data['audio_codec'] = _sanitize_codec_name(codec_name)
+        else:
+            logger.debug(f"  ffprobe pipe: ffprobe returned rc={proc.returncode}")
+
+    except subprocess.TimeoutExpired:
+        logger.debug("  ffprobe pipe: ffprobe timed out on buffer analysis")
+    except Exception as e:
+        logger.debug(f"  ffprobe pipe: ffprobe error: {e}")
+
+    result_data['elapsed_time'] = time.time() - start
+    logger.debug(
+        f"  ffprobe pipe: {result_data['resolution']}, {result_data['fps']}fps, "
+        f"{result_data['video_codec']}/{result_data['audio_codec']}, "
+        f"{result_data['bitrate_kbps']} kbps ({result_data['elapsed_time']:.2f}s total)"
+    )
+    return result_data
+
+
 def analyze_stream(
     stream_url: str,
     stream_id: int,
@@ -803,7 +999,8 @@ def analyze_stream(
     retry_delay: int = 10,
     user_agent: str = 'VLC/3.0.14',
     stream_startup_buffer: int = 10,
-    proxy: Optional[str] = None
+    proxy: Optional[str] = None,
+    probe_mode: str = 'ffmpeg'
 ) -> Dict[str, Any]:
     """
     Perform complete stream analysis including codec, resolution, FPS, bitrate, and audio.
@@ -824,6 +1021,8 @@ def analyze_stream(
         user_agent: User agent string to use for HTTP requests
         stream_startup_buffer: Buffer in seconds for stream startup (default: 10s)
         proxy: HTTP proxy URL for FFmpeg (e.g., 'http://proxy:8080')
+        probe_mode: Analysis engine — 'ffmpeg' (default, full bitrate measurement) or
+                    'ffprobe' (faster two-pass: TS validator + ffprobe with limited probesize)
 
     Returns:
         Dictionary containing analysis results with keys:
@@ -873,15 +1072,37 @@ def analyze_stream(
             try:
                 # Use single ffmpeg call to get all stream information
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.info("  Analyzing stream (single ffmpeg call)...")
-                result_data = get_stream_info_and_bitrate(
-                    url=stream_url,
-                    duration=ffmpeg_duration,
-                    timeout=timeout,
-                    user_agent=user_agent,
-                    stream_startup_buffer=stream_startup_buffer,
-                    proxy=proxy
-                )
+                    mode_label = 'ffprobe pipe' if probe_mode == 'ffprobe' else 'ffmpeg'
+                    logger.info(f"  Analyzing stream ({mode_label})...")
+                if probe_mode == 'ffprobe':
+                    # RTMP streams not supported by urllib — fall back to ffmpeg
+                    if stream_url.lower().startswith('rtmp'):
+                        logger.debug(f"  ffprobe mode: RTMP stream detected, falling back to ffmpeg")
+                        result_data = get_stream_info_and_bitrate(
+                            url=stream_url,
+                            duration=ffmpeg_duration,
+                            timeout=timeout,
+                            user_agent=user_agent,
+                            stream_startup_buffer=stream_startup_buffer,
+                            proxy=proxy
+                        )
+                    else:
+                        result_data = get_stream_info_and_bitrate_ffprobe(
+                            url=stream_url,
+                            timeout=timeout,
+                            user_agent=user_agent,
+                            stream_startup_buffer=stream_startup_buffer,
+                            proxy=proxy
+                        )
+                else:
+                    result_data = get_stream_info_and_bitrate(
+                        url=stream_url,
+                        duration=ffmpeg_duration,
+                        timeout=timeout,
+                        user_agent=user_agent,
+                        stream_startup_buffer=stream_startup_buffer,
+                        proxy=proxy
+                    )
 
                 # Build result dictionary with metadata
                 result = {
