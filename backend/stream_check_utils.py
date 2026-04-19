@@ -403,6 +403,20 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             
             try:
                 # Read output line by line in real-time
+                # Hard timeout via watchdog thread: kills ffmpeg if readline() blocks forever
+                import threading as _threading
+                def _watchdog(proc, deadline):
+                    remaining = deadline - time.time()
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    if proc.poll() is None:
+                        logger.warning(f"  ⚠ ffmpeg watchdog timeout — killing hung process")
+                        proc.kill()
+
+                deadline = start + actual_timeout
+                _wd = _threading.Thread(target=_watchdog, args=(process, deadline), daemon=True)
+                _wd.start()
+
                 while True:
                     line = process.stderr.readline()
                     if not line:
@@ -486,9 +500,14 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-                
+
                 elapsed = time.time() - start
                 result_data['elapsed_time'] = elapsed
+
+                # Mark as timeout if watchdog killed the process
+                if elapsed >= actual_timeout and result_data['status'] == 'OK':
+                    if result_data['bitrate_kbps'] is None and result_data['resolution'] == '0x0':
+                        result_data['status'] = 'Timeout'
                 
                 # Log if Early Exit didn't trigger (for debugging)
                 if not early_exit_triggered and elapsed >= min_runtime:
@@ -793,6 +812,175 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
     return bitrate, status, elapsed
 
 
+def _calc_pts_bitrate(buffer: bytes) -> Optional[float]:
+    """Calculate stream bitrate from MPEG-TS PTS timestamps — MACstrom-style.
+
+    Reads video PTS values from MPEG-TS packets in the buffer and computes:
+        bitrate = total_bytes * 8 / pts_duration_seconds
+
+    This gives the real encoded bitrate regardless of network speed, making it
+    accurate for both local proxies (fast download) and remote streams.
+
+    MPEG-TS packet structure (188 bytes):
+        [0]     sync byte 0x47
+        [1-2]   flags + PID (13 bits)
+        [3]     continuity + adaptation flags
+        [4+]    adaptation field (optional) + payload
+
+    PES header (in payload when payload_unit_start_indicator=1):
+        [0-2]   start code 0x000001
+        [3]     stream_id
+        [4-5]   PES packet length
+        [6]     flags
+        [7]     flags2
+        [8]     PES header data length
+        [9-13]  PTS (if pts_dts_flags & 0x80)
+
+    Returns:
+        Bitrate in kbps, or None if not enough PTS data found
+    """
+    TS_PACKET_SIZE = 188
+    PTS_CLOCK = 90000.0  # 90 kHz PTS clock
+
+    if len(buffer) < TS_PACKET_SIZE * 10:
+        return None
+
+    first_pts: Optional[int] = None
+    last_pts: Optional[int] = None
+    total_video_bytes = 0
+    video_pid: Optional[int] = None
+
+    # First pass: find video PID from PMT
+    # Scan for PAT (PID 0) to get PMT PID, then PMT to get video PID
+    try:
+        i = 0
+        pmt_pid: Optional[int] = None
+        while i + TS_PACKET_SIZE <= len(buffer) and pmt_pid is None:
+            if buffer[i] != 0x47:
+                i += 1
+                continue
+            pid = ((buffer[i+1] & 0x1F) << 8) | buffer[i+2]
+            pusi = (buffer[i+1] >> 6) & 1
+            if pid == 0 and pusi:
+                # PAT — find first program's PMT PID
+                # Skip pointer field
+                af_flag = (buffer[i+3] >> 5) & 1
+                af_len = buffer[i+4] if af_flag else 0
+                payload_start = i + 4 + af_len
+                ptr = buffer[payload_start]
+                section_start = payload_start + 1 + ptr
+                # PAT section: table_id(1) + flags(2) + ts_id(2) + version(1) + section_num(1) + last_section(1)
+                # Then 4-byte entries: program_number(2) + PMT_PID(2)
+                entry_start = section_start + 8
+                while entry_start + 4 <= i + TS_PACKET_SIZE:
+                    prog_num = (buffer[entry_start] << 8) | buffer[entry_start+1]
+                    pid_val = ((buffer[entry_start+2] & 0x1F) << 8) | buffer[entry_start+3]
+                    if prog_num != 0:  # skip NIT
+                        pmt_pid = pid_val
+                        break
+                    entry_start += 4
+            i += TS_PACKET_SIZE
+
+        # Second pass: find video PID from PMT
+        if pmt_pid is not None:
+            i = 0
+            while i + TS_PACKET_SIZE <= len(buffer) and video_pid is None:
+                if buffer[i] != 0x47:
+                    i += 1
+                    continue
+                pid = ((buffer[i+1] & 0x1F) << 8) | buffer[i+2]
+                pusi = (buffer[i+1] >> 6) & 1
+                if pid == pmt_pid and pusi:
+                    af_flag = (buffer[i+3] >> 5) & 1
+                    af_len = buffer[i+4] if af_flag else 0
+                    payload_start = i + 4 + af_len
+                    ptr = buffer[payload_start]
+                    section_start = payload_start + 1 + ptr
+                    # PMT: skip to stream loop (section_start + 3 + 2 + 2 + program_info_length)
+                    prog_info_len = ((buffer[section_start+10] & 0x0F) << 8) | buffer[section_start+11]
+                    stream_start = section_start + 12 + prog_info_len
+                    while stream_start + 5 <= i + TS_PACKET_SIZE:
+                        stream_type = buffer[stream_start]
+                        es_pid = ((buffer[stream_start+1] & 0x1F) << 8) | buffer[stream_start+2]
+                        es_info_len = ((buffer[stream_start+3] & 0x0F) << 8) | buffer[stream_start+4]
+                        # Video stream types: 0x01=MPEG1, 0x02=MPEG2, 0x1B=H.264, 0x24=HEVC, 0x10=MPEG4
+                        if stream_type in (0x01, 0x02, 0x10, 0x1B, 0x24, 0x42):
+                            video_pid = es_pid
+                            break
+                        stream_start += 5 + es_info_len
+                i += TS_PACKET_SIZE
+    except Exception:
+        pass  # PAT/PMT parsing failed — fall back to scanning all PIDs
+
+    # Third pass: collect PTS from video PID packets
+    i = 0
+    while i + TS_PACKET_SIZE <= len(buffer):
+        if buffer[i] != 0x47:
+            i += 1
+            continue
+
+        pid = ((buffer[i+1] & 0x1F) << 8) | buffer[i+2]
+        pusi = (buffer[i+1] >> 6) & 1
+        af_flag = (buffer[i+3] >> 5) & 1
+        has_payload = (buffer[i+3] >> 4) & 1
+
+        # Only process video PID (or any non-null PID if video_pid unknown)
+        if video_pid is not None and pid != video_pid:
+            i += TS_PACKET_SIZE
+            continue
+        if pid == 0x1FFF:  # null packet
+            i += TS_PACKET_SIZE
+            continue
+
+        if has_payload:
+            total_video_bytes += TS_PACKET_SIZE
+
+        # Extract PTS from PES header when PUSI is set
+        if pusi and has_payload:
+            try:
+                af_len = buffer[i+4] if af_flag else 0
+                pes_start = i + 4 + (1 + af_len if af_flag else 0)
+
+                # Check PES start code 0x000001
+                if (pes_start + 14 <= len(buffer) and
+                        buffer[pes_start] == 0x00 and
+                        buffer[pes_start+1] == 0x00 and
+                        buffer[pes_start+2] == 0x01):
+
+                    pts_dts_flags = (buffer[pes_start+7] >> 6) & 0x03
+                    if pts_dts_flags & 0x02:  # PTS present
+                        p = pes_start + 9
+                        pts = (
+                            ((buffer[p] & 0x0E) << 29) |
+                            ((buffer[p+1]) << 22) |
+                            ((buffer[p+2] & 0xFE) << 14) |
+                            ((buffer[p+3]) << 7) |
+                            ((buffer[p+4] & 0xFE) >> 1)
+                        )
+                        if first_pts is None:
+                            first_pts = pts
+                        last_pts = pts
+            except (IndexError, TypeError):
+                pass
+
+        i += TS_PACKET_SIZE
+
+    if first_pts is None or last_pts is None or first_pts == last_pts:
+        return None
+
+    # Handle PTS wraparound (33-bit counter wraps at 2^33)
+    pts_diff = last_pts - first_pts
+    if pts_diff < 0:
+        pts_diff += (1 << 33)
+
+    duration_s = pts_diff / PTS_CLOCK
+    if duration_s < 0.1:
+        return None
+
+    bitrate_kbps = (total_video_bytes * 8) / 1000 / duration_s
+    return round(bitrate_kbps, 2)
+
+
 def get_stream_info_and_bitrate_ffprobe(
     url: str,
     timeout: int = 30,
@@ -872,8 +1060,13 @@ def get_stream_info_and_bitrate_ffprobe(
 
         with opener.open(req, timeout=connect_timeout) as resp:
             read_start = time.time()
+            read_deadline = read_start + connect_timeout
             chunk_size = 65536  # 64 KB chunks
             while len(buffer) < read_bytes_target:
+                # Check read deadline to prevent hanging on slow/stalled streams
+                if time.time() > read_deadline:
+                    logger.debug(f"  ffprobe pipe: read deadline exceeded after {len(buffer)} bytes")
+                    break
                 chunk = resp.read(chunk_size)
                 if not chunk:
                     break
@@ -919,14 +1112,19 @@ def get_stream_info_and_bitrate_ffprobe(
         result_data['elapsed_time'] = time.time() - start
         return result_data
 
-    # --- Step 3: Bitrate from bytes / time (MACstrom-style) ---
-    # Only use if read took long enough to be meaningful (>0.5s = real stream rate, not local cache)
-    # For very fast reads (local proxy, LAN), bitrate would be artificially inflated
-    if read_elapsed >= 0.5:
+    # --- Step 3: Bitrate — PTS-based (primary) with bytes/time fallback ---
+    # PTS-based: reads actual encoded bitrate from MPEG-TS timestamps
+    # This is accurate regardless of network speed (local proxy or remote stream)
+    pts_bitrate = _calc_pts_bitrate(bytes(buffer))
+    if pts_bitrate is not None and pts_bitrate > 0:
+        result_data['bitrate_kbps'] = pts_bitrate
+        logger.debug(f"  ffprobe pipe: PTS bitrate = {pts_bitrate:.0f} kbps")
+    elif read_elapsed >= 0.5:
+        # Fallback: bytes/time (only reliable for remote streams with slow download)
         result_data['bitrate_kbps'] = round((bytes_read * 8) / 1000 / read_elapsed, 2)
-        logger.debug(f"  ffprobe pipe: {bytes_read} bytes in {read_elapsed:.2f}s → {result_data['bitrate_kbps']:.0f} kbps")
+        logger.debug(f"  ffprobe pipe: bytes/time bitrate = {result_data['bitrate_kbps']:.0f} kbps (PTS unavailable)")
     else:
-        logger.debug(f"  ffprobe pipe: read too fast ({read_elapsed:.3f}s) for accurate bitrate — skipping bitrate calc")
+        logger.debug(f"  ffprobe pipe: no bitrate available (PTS failed, read too fast {read_elapsed:.3f}s)")
 
     # --- Step 4: ffprobe via stdin pipe (no second network connection) ---
     # probesize = actual buffer size so ffprobe uses all available data
@@ -1000,7 +1198,8 @@ def analyze_stream(
     user_agent: str = 'VLC/3.0.14',
     stream_startup_buffer: int = 10,
     proxy: Optional[str] = None,
-    probe_mode: str = 'ffmpeg'
+    probe_mode: str = 'ffmpeg',
+    ffprobe_read_mb: float = 4.0
 ) -> Dict[str, Any]:
     """
     Perform complete stream analysis including codec, resolution, FPS, bitrate, and audio.
@@ -1092,7 +1291,8 @@ def analyze_stream(
                             timeout=timeout,
                             user_agent=user_agent,
                             stream_startup_buffer=stream_startup_buffer,
-                            proxy=proxy
+                            proxy=proxy,
+                            read_mb=ffprobe_read_mb
                         )
                 else:
                     result_data = get_stream_info_and_bitrate(
@@ -1115,7 +1315,8 @@ def analyze_stream(
                     'resolution': result_data['resolution'],
                     'fps': result_data['fps'],
                     'bitrate_kbps': result_data['bitrate_kbps'],
-                    'status': result_data['status']
+                    'status': result_data['status'],
+                    'probe_mode': result_data.get('probe_mode', probe_mode)
                 }
 
                 # Log results
@@ -1143,13 +1344,12 @@ def analyze_stream(
                         logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
                 else:
                     # Non-debug mode: one-liner for results
+                    mode_tag = '[ffprobe]' if probe_mode == 'ffprobe' else '[ffmpeg]'
                     if result['status'] == "OK":
-                        # Success: one line with key metrics
                         bitrate_str = f"{result['bitrate_kbps']:.2f} kbps" if result['bitrate_kbps'] is not None else "N/A"
-                        logger.info(f"  ✓ {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']} ({result_data['elapsed_time']:.2f}s)")
+                        logger.info(f"  ✓ {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']} ({result_data['elapsed_time']:.2f}s) {mode_tag}")
                     else:
-                        # Failure: one-liner with status and elapsed time
-                        logger.warning(f"  ✗ {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s)")
+                        logger.warning(f"  ✗ {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s) {mode_tag}")
                 
                 # Break on success
                 if result['status'] == "OK":

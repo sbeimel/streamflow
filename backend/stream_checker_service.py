@@ -112,7 +112,8 @@ class StreamCheckConfig:
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
             'user_agent': 'VLC/3.0.14',  # user agent for ffmpeg/ffprobe
-            'probe_mode': 'ffmpeg'  # 'ffmpeg' (full bitrate measurement) or 'ffprobe' (faster two-pass)
+            'probe_mode': 'ffmpeg',  # 'ffmpeg' (full bitrate measurement) or 'ffprobe' (faster two-pass)
+            'ffprobe_read_mb': 4.0  # MB to download for ffprobe analysis (more = better PTS accuracy, slower)
         },
         'scoring': {
             'method': 'enhanced',  # 'enhanced' (MACstrom-inspired sigmoid) or 'legacy' (linear)
@@ -1587,6 +1588,13 @@ class StreamCheckerService:
         # so they have no bitrate/resolution data. Never mark them as dead.
         if stream_data.get('quality_check_excluded'):
             return False
+
+        # ffprobe-mode streams may have no bitrate (read too fast for measurement)
+        # but valid resolution/codec — they are alive, not dead
+        if stream_data.get('probe_mode') == 'ffprobe' and stream_data.get('bitrate_kbps') is None:
+            resolution = stream_data.get('resolution', '0x0')
+            if resolution and resolution not in ('0x0', 'N/A', ''):
+                return False  # Has valid resolution → stream is alive
 
         # Get dead stream handling configuration
         dead_stream_config = self.config.get('dead_stream_handling', {})
@@ -3087,7 +3095,8 @@ class StreamCheckerService:
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
                     stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
                     proxy=proxy,
-                    probe_mode=analysis_params.get('probe_mode', 'ffmpeg')
+                    probe_mode=analysis_params.get('probe_mode', 'ffmpeg'),
+                    ffprobe_read_mb=analysis_params.get('ffprobe_read_mb', 4.0)
                 )
 
             # Get all active profiles for this account (order = priority order)
@@ -3107,7 +3116,8 @@ class StreamCheckerService:
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
                     stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
                     proxy=proxy,
-                    probe_mode=analysis_params.get('probe_mode', 'ffmpeg')
+                    probe_mode=analysis_params.get('probe_mode', 'ffmpeg'),
+                    ffprobe_read_mb=analysis_params.get('ffprobe_read_mb', 4.0)
                 )
 
             # Failover config
@@ -3161,7 +3171,8 @@ class StreamCheckerService:
                         user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
                         stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10),
                         proxy=proxy,
-                        probe_mode=analysis_params.get('probe_mode', 'ffmpeg')
+                        probe_mode=analysis_params.get('probe_mode', 'ffmpeg'),
+                        ffprobe_read_mb=analysis_params.get('ffprobe_read_mb', 4.0)
                     )
                     result['used_profile_id'] = profile_id
                     result['used_profile_name'] = profile_name

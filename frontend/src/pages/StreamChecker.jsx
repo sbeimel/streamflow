@@ -701,6 +701,25 @@ export default function StreamChecker() {
                       </div>
                     </div>
 
+                    {editedConfig?.stream_analysis?.probe_mode === 'ffprobe' && (
+                      <div className="space-y-2 md:col-span-2">
+                        <Label htmlFor="ffprobe_read_mb">ffprobe Download Size (MB)</Label>
+                        <Input
+                          id="ffprobe_read_mb"
+                          type="number"
+                          value={editedConfig?.stream_analysis?.ffprobe_read_mb ?? 4.0}
+                          onChange={(e) => updateConfigValue('stream_analysis.ffprobe_read_mb', parseFloat(e.target.value) || 4.0)}
+                          disabled={!configEditing}
+                          min={1}
+                          max={12}
+                          step={0.5}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          MB to download per stream for analysis. More = better PTS bitrate accuracy, slower. (1-12 MB, default: 4)
+                        </p>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
                       <Label htmlFor="ffmpeg_duration">FFmpeg Duration (seconds)</Label>
                       <Input
@@ -754,7 +773,7 @@ export default function StreamChecker() {
                       <Input
                         id="retries"
                         type="number"
-                        value={editedConfig?.stream_analysis?.retries || 1}
+                        value={editedConfig?.stream_analysis?.retries ?? 1}
                         onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value))}
                         disabled={!configEditing}
                         min={0}
